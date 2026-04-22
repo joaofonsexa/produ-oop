@@ -15,6 +15,7 @@ const state = {
   myRecord: null,
   operators: [],
   adminSelectedUserId: "",
+  overviewSelectedUserId: "all",
   adminSelectedRecord: null,
   operationRecords: [],
   importInProgress: false,
@@ -36,6 +37,7 @@ const elements = {
   loginPassword: document.querySelector("#login-password"),
   loginError: document.querySelector("#login-error"),
   appShell: document.querySelector("#app-shell"),
+  heroHeader: document.querySelector(".hero-header"),
   bootLoader: document.querySelector("#boot-loader"),
   navLinks: Array.from(document.querySelectorAll(".nav-link")),
   adminNavLink: document.querySelector("#admin-nav-link"),
@@ -132,15 +134,23 @@ function bindEvents() {
   elements.adminForm?.addEventListener("submit", handleAdminSave);
   elements.adminUser?.addEventListener("change", () => {
     state.adminSelectedUserId = String(elements.adminUser.value || "");
+    if (state.overviewSelectedUserId !== "all") {
+      state.overviewSelectedUserId = state.adminSelectedUserId;
+    }
     hydrateAdminFormFromRecord();
     void loadAdminSelectedRecord();
     syncGlobalOperatorSelect();
   });
   elements.globalOperatorSelect?.addEventListener("change", () => {
-    state.adminSelectedUserId = String(elements.globalOperatorSelect.value || "");
-    syncAdminOperatorSelect();
-    hydrateAdminFormFromRecord();
-    void loadAdminSelectedRecord();
+    state.overviewSelectedUserId = String(elements.globalOperatorSelect.value || "all");
+    if (state.overviewSelectedUserId !== "all") {
+      state.adminSelectedUserId = state.overviewSelectedUserId;
+      syncAdminOperatorSelect();
+      hydrateAdminFormFromRecord();
+      void loadAdminSelectedRecord();
+    } else {
+      renderAll();
+    }
   });
   elements.adminHistoryWrapper?.addEventListener("click", (event) => void handleAdminHistoryClick(event));
   elements.historyTableWrapper?.addEventListener("click", (event) => void handleHistoryTableClick(event));
@@ -313,6 +323,13 @@ async function loadOperators() {
   if (!state.adminSelectedUserId || !state.operators.some((user) => user.id === state.adminSelectedUserId)) {
     state.adminSelectedUserId = state.operators[0]?.id || "";
   }
+  if (
+    state.overviewSelectedUserId !== "all" &&
+    !state.operators.some((user) => user.id === state.overviewSelectedUserId)
+  ) {
+    state.overviewSelectedUserId = state.adminSelectedUserId || "all";
+  }
+  if (!state.overviewSelectedUserId) state.overviewSelectedUserId = "all";
 
   renderOperatorSelect();
   hydrateAdminFormFromRecord();
@@ -999,11 +1016,13 @@ function buildAnalyticsTrendPanel(entries) {
 }
 
 function renderHero() {
-  const viewRecord = getPrimaryViewRecord();
+  const viewRecord = getOverviewViewRecord();
   const latest = getLatestEntry(viewRecord);
-  const selectedOperatorName = getSelectedOperatorName();
+  const selectedOperatorName = getOverviewSelectedOperatorName();
   const role = ACCESS_LEVELS[state.session?.role] || ACCESS_LEVELS.operador;
-  if (canManage() && selectedOperatorName) {
+  if (canManage() && state.overviewSelectedUserId === "all") {
+    elements.heroTitle.textContent = "Visao geral de toda operacao";
+  } else if (canManage() && selectedOperatorName) {
     elements.heroTitle.textContent = `Visao do operador ${selectedOperatorName}`;
   } else {
     elements.heroTitle.textContent = state.session?.name
@@ -1037,7 +1056,7 @@ function renderHero() {
 }
 
 function renderDashboard() {
-  const viewRecord = getPrimaryViewRecord();
+  const viewRecord = getOverviewViewRecord();
   const latest = getLatestEntry(viewRecord);
   const averages = getRecordAverages(viewRecord);
   const metrics = [
@@ -1482,10 +1501,12 @@ function syncGlobalOperatorSelect() {
     elements.globalOperatorSelect.innerHTML = "";
     return;
   }
-  elements.globalOperatorSelect.innerHTML = state.operators.length
-    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`).join("")
-    : `<option value="">Nenhum operador encontrado</option>`;
-  elements.globalOperatorSelect.value = state.adminSelectedUserId || "";
+  const options = [
+    `<option value="all">Todos os operadores</option>`,
+    ...state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`)
+  ];
+  elements.globalOperatorSelect.innerHTML = options.join("");
+  elements.globalOperatorSelect.value = state.overviewSelectedUserId || "all";
 }
 
 function hydrateAdminFormFromRecord() {
@@ -1502,6 +1523,7 @@ function setSection(sectionId) {
   state.section = sectionId;
   elements.sections.forEach((section) => section.classList.toggle("active", section.id === sectionId));
   elements.navLinks.forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
+  elements.heroHeader?.classList.toggle("hidden", sectionId !== "dashboard");
 }
 
 function canManage() {
@@ -1774,10 +1796,88 @@ function getPrimaryViewRecord() {
   return state.adminSelectedRecord || state.myRecord;
 }
 
+function getOverviewViewRecord() {
+  if (!canManage()) return state.myRecord;
+  if (state.overviewSelectedUserId === "all") {
+    return buildOperationAggregateRecord();
+  }
+  const selected = (state.operationRecords || []).find((record) => record?.userId === state.overviewSelectedUserId);
+  return selected || state.adminSelectedRecord || state.myRecord;
+}
+
 function getSelectedOperatorName() {
   if (!canManage()) return "";
   const selected = state.operators.find((user) => user.id === state.adminSelectedUserId);
   return String(selected?.name || selected?.username || "").trim();
+}
+
+function getOverviewSelectedOperatorName() {
+  if (!canManage()) return "";
+  if (state.overviewSelectedUserId === "all") return "Todos os operadores";
+  const selected = state.operators.find((user) => user.id === state.overviewSelectedUserId);
+  return String(selected?.name || selected?.username || "").trim();
+}
+
+function buildOperationAggregateRecord() {
+  const byDate = new Map();
+  for (const record of state.operationRecords || []) {
+    for (const entry of record?.entries || []) {
+      const date = normalizeDateKey(entry?.date);
+      if (!date) continue;
+      const prev = byDate.get(date) || {
+        date,
+        productionTotal: 0,
+        effectivenessSum: 0,
+        qualitySum: 0,
+        count: 0,
+        updatedAt: "",
+        updatedByName: "Gestor",
+        updatedById: ""
+      };
+      prev.productionTotal += Number(entry?.productionTotal || 0);
+      prev.effectivenessSum += Number(entry?.effectiveness || 0);
+      prev.qualitySum += Number(entry?.qualityScore || 0);
+      prev.count += 1;
+
+      const currentUpdated = Date.parse(prev.updatedAt || "") || 0;
+      const nextUpdated = Date.parse(entry?.updatedAt || "") || 0;
+      if (nextUpdated >= currentUpdated) {
+        prev.updatedAt = String(entry?.updatedAt || "");
+        prev.updatedByName = String(entry?.updatedByName || "Gestor");
+        prev.updatedById = String(entry?.updatedById || "");
+      }
+      byDate.set(date, prev);
+    }
+  }
+
+  const entries = [...byDate.values()]
+    .map((item) => ({
+      date: item.date,
+      productionTotal: item.productionTotal,
+      effectiveness: item.count ? item.effectivenessSum / item.count : 0,
+      qualityScore: item.count ? item.qualitySum / item.count : 0,
+      updatedAt: item.updatedAt,
+      updatedByName: item.updatedByName,
+      updatedById: item.updatedById
+    }))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (!entries.length) return null;
+  const latest = entries[entries.length - 1];
+  return {
+    userId: "all",
+    userName: "Todos os operadores",
+    username: "",
+    entries,
+    daysCount: entries.length,
+    productionAverage: entries.reduce((sum, entry) => sum + entry.productionTotal, 0) / entries.length,
+    productionTotal: latest.productionTotal,
+    effectiveness: latest.effectiveness,
+    qualityScore: latest.qualityScore,
+    updatedAt: latest.updatedAt,
+    updatedById: latest.updatedById,
+    updatedByName: latest.updatedByName
+  };
 }
 
 function renderMetricCard(metric) {
