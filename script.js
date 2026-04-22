@@ -53,6 +53,7 @@ const elements = {
   sessionNameMenu: document.querySelector("#session-name-menu"),
   sessionRoleMenu: document.querySelector("#session-role-menu"),
   profileAvatar: document.querySelector("#profile-avatar"),
+  heroGrid: document.querySelector(".portal-hero-grid"),
   heroTitle: document.querySelector("#hero-title"),
   heroDescription: document.querySelector("#hero-description"),
   latestUpdateTitle: document.querySelector("#latest-update-title"),
@@ -1551,7 +1552,8 @@ function setSection(sectionId) {
   state.section = sectionId;
   elements.sections.forEach((section) => section.classList.toggle("active", section.id === sectionId));
   elements.navLinks.forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
-  elements.heroHeader?.classList.toggle("hidden", sectionId !== "dashboard");
+  elements.heroHeader?.classList.remove("hidden");
+  elements.heroGrid?.classList.toggle("hidden", sectionId !== "dashboard");
 }
 
 function canManage() {
