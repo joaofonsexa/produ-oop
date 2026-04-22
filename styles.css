@@ -1997,14 +1997,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .trend-svg {
-  width: max(100%, 480px);
+  width: 100%;
   height: 180px;
   display: block;
 }
 
-.trend-scroll:not(.is-scrollable) .trend-svg {
-  width: min(620px, 100%);
-  margin-inline: auto;
+.trend-scroll.is-scrollable .trend-svg {
+  width: max(100%, 480px);
 }
 
 .trend-scroll {

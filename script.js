@@ -2132,7 +2132,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
 
   return `
     <div class="trend-scroll${isScrollable ? " is-scrollable" : ""}">
-      <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Grafico de tendencia">
+      <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
         <defs>
           <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
