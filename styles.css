@@ -2064,6 +2064,10 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   gap: 18px;
 }
 
+#dashboard > .info-grid + .info-grid {
+  margin-top: 10px;
+}
+
 #dashboard > .info-grid:not(.single) {
   grid-template-columns: 1fr;
 }
