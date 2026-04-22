@@ -1048,7 +1048,6 @@ function renderHero() {
   const viewRecord = getOverviewViewRecord();
   const latest = getLatestEntry(viewRecord);
   const selectedOperatorName = getOverviewSelectedOperatorName();
-  const role = ACCESS_LEVELS[state.session?.role] || ACCESS_LEVELS.operador;
   if (canManage() && state.overviewSelectedUserId === "all") {
     elements.heroTitle.textContent = "Visao geral de toda operacao";
   } else if (canManage() && selectedOperatorName) {
@@ -1063,7 +1062,6 @@ function renderHero() {
     : "Use este portal para consultar seu desempenho diario com a mesma credencial da Central do Operador.";
 
   const stats = [
-    { label: "Perfil", value: role.label },
     { label: "Ultima data", value: latest ? formatDate(latest.date) : "--" },
     { label: "Dias lancados", value: viewRecord?.daysCount ?? 0 }
   ];
