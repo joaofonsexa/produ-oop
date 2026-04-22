@@ -1521,6 +1521,37 @@ body[data-theme="dark"] .callout.success { color: #b9f0d0; }
   color: var(--muted);
 }
 
+.upload-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.upload-status::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--primary);
+  animation: boot-spin 0.85s linear infinite;
+}
+
+.upload-status.success::before {
+  animation: none;
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.upload-status.error::before {
+  animation: none;
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
 .admin-form input,
 .admin-form select,
 .admin-form textarea {

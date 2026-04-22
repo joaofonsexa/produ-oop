@@ -17,6 +17,7 @@ const state = {
   adminSelectedUserId: "",
   adminSelectedRecord: null,
   operationRecords: [],
+  importInProgress: false,
   analytics: {
     attendantQuery: "",
     selectedAttendantId: "all",
@@ -81,6 +82,7 @@ const elements = {
   adminQuality: document.querySelector("#admin-quality"),
   adminUploadForm: document.querySelector("#admin-upload-form"),
   uploadFile: document.querySelector("#upload-file"),
+  uploadStatus: document.querySelector("#upload-status"),
   downloadTemplate: document.querySelector("#download-template"),
   adminHistoryWrapper: document.querySelector("#admin-history-wrapper"),
   sections: Array.from(document.querySelectorAll(".content-section"))
@@ -362,6 +364,11 @@ async function handleAdminSave(event) {
 
 async function handleSpreadsheetUpload(event) {
   if (!canManage()) return;
+  if (state.importInProgress) {
+    window.alert("Ja existe uma importacao em andamento. Aguarde a conclusao para enviar outra planilha.");
+    if (event.target) event.target.value = "";
+    return;
+  }
   const file = event.target?.files?.[0];
   if (!file) return;
   if (!window.XLSX) {
@@ -370,7 +377,10 @@ async function handleSpreadsheetUpload(event) {
     return;
   }
 
-  setBusy(true);
+  state.importInProgress = true;
+  if (elements.uploadFile) elements.uploadFile.disabled = true;
+  setUploadStatus("Importando planilha em segundo plano. Voce pode continuar navegando no portal.", "loading");
+
   try {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
@@ -479,6 +489,7 @@ async function handleSpreadsheetUpload(event) {
     await loadAdminSelectedRecord();
     if (state.session?.id) await loadMyResults();
     renderAll();
+    setUploadStatus(`Importacao concluida: ${updatedCount} linha(s) gravada(s).`, "success");
     window.alert(
       `Carga concluida.\n` +
       `- Linhas lidas: ${totalRows}\n` +
@@ -489,10 +500,15 @@ async function handleSpreadsheetUpload(event) {
       `- Falhas no servidor: ${bulkFailed}`
     );
   } catch (error) {
+    setUploadStatus(error?.message || "Falha ao processar a planilha.", "error");
     window.alert(error?.message || "Nao foi possivel processar a planilha.");
   } finally {
     if (event.target) event.target.value = "";
-    setBusy(false);
+    state.importInProgress = false;
+    if (elements.uploadFile) elements.uploadFile.disabled = false;
+    window.setTimeout(() => {
+      if (!state.importInProgress) setUploadStatus("");
+    }, 8000);
   }
 }
 function handleDownloadTemplate() {
@@ -1406,6 +1422,22 @@ function showLoginError(message) {
 function clearLoginError() {
   elements.loginError.textContent = "";
   elements.loginError.classList.add("hidden");
+}
+
+function setUploadStatus(message, tone = "loading") {
+  if (!elements.uploadStatus) return;
+  const text = String(message || "").trim();
+  elements.uploadStatus.classList.remove("hidden", "success", "error");
+
+  if (!text) {
+    elements.uploadStatus.textContent = "";
+    elements.uploadStatus.classList.add("hidden");
+    return;
+  }
+
+  elements.uploadStatus.textContent = text;
+  if (tone === "success") elements.uploadStatus.classList.add("success");
+  if (tone === "error") elements.uploadStatus.classList.add("error");
 }
 
 function setBusy(isBusy) {
