@@ -2064,13 +2064,18 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   gap: 18px;
 }
 
+#dashboard > .info-grid:not(.single) {
+  grid-template-columns: 1fr;
+}
+
 #dashboard .panel {
   padding: 20px;
   align-self: start;
+  height: auto;
 }
 
 #dashboard-trend-chart .chart-card {
-  min-height: 200px;
+  min-height: 0;
 }
 
 #dashboard-illustrated-cards {
@@ -2079,17 +2084,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 #dashboard-illustrated-cards .visual-card {
-  min-height: 132px;
+  min-height: 120px;
   align-content: start;
-}
-
-#dashboard .info-grid:nth-of-type(2) .panel {
-  min-height: 0;
 }
 
 #latest-result-card .admin-item,
 #dashboard-note .admin-item {
-  min-height: 170px;
+  min-height: 0;
   align-content: start;
 }
 
