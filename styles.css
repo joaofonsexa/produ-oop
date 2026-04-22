@@ -2447,12 +2447,17 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-trend-two {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
 .analytics-workdays {
   margin-top: 14px;
+}
+
+.analytics-workdays:empty {
+  display: none;
+  margin-top: 0;
 }
 
 .analytics-days-card {
@@ -2472,6 +2477,11 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-days-card span {
   color: var(--muted);
+}
+
+.analytics-days-card-inline {
+  min-height: 100%;
+  align-content: center;
 }
 
 .analytics-new-views-grid {

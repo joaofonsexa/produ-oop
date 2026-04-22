@@ -950,14 +950,9 @@ function renderDashboardAnalytics() {
   elements.analyticsPerformanceBands.innerHTML = buildAnalyticsPerformanceBands(filtered);
   elements.analyticsDailyBars.innerHTML = buildAnalyticsDailyBars(filtered);
   elements.analyticsTagsBars.innerHTML = buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest);
-  elements.analyticsDepartments.innerHTML = buildAnalyticsTrendPanel(filtered);
+  elements.analyticsDepartments.innerHTML = buildAnalyticsTrendPanel(filtered, filtered.length);
   elements.analyticsTopDays.innerHTML = buildAnalyticsTopDays(filtered);
-  elements.analyticsWorkdays.innerHTML = `
-    <article class="analytics-days-card">
-      <strong>${escapeHtml(String(filtered.length))}</strong>
-      <span>Dias Trabalhados</span>
-    </article>
-  `;
+  elements.analyticsWorkdays.innerHTML = "";
 }
 
 function renderDashboardAnalyticsFilters() {
@@ -1158,7 +1153,7 @@ function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, l
   }).join("");
 }
 
-function buildAnalyticsTrendPanel(entries) {
+function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
   const effectivenessChart = buildLineChartSvg(entries, "effectiveness", "#2f80ed", 100);
   const qualityChart = buildLineChartSvg(entries, "qualityScore", "#22f300", 100);
   return `
@@ -1171,6 +1166,10 @@ function buildAnalyticsTrendPanel(entries) {
         <p class="chart-title">Qualidade (%)</p>
         ${qualityChart}
       </div>
+      <article class="analytics-days-card analytics-days-card-inline">
+        <strong>${escapeHtml(String(workdaysCount))}</strong>
+        <span>Dias Trabalhados</span>
+      </article>
     </div>
   `;
 }
