@@ -1976,6 +1976,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: stretch;
 }
 
 .chart-card {
@@ -2054,6 +2055,31 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   padding: 14px;
   display: grid;
   gap: 8px;
+}
+
+#dashboard .info-grid {
+  align-items: stretch;
+}
+
+#dashboard .panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+#dashboard-trend-chart .chart-card {
+  min-height: 210px;
+}
+
+#dashboard-illustrated-cards {
+  align-items: stretch;
+}
+
+#dashboard-illustrated-cards .visual-card {
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
 .visual-label {
@@ -2538,6 +2564,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .analytics-top-day-info {
   display: grid;
   gap: 3px;
+  min-width: 0;
+}
+
+.analytics-top-day-info strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .analytics-top-day-info p {

@@ -1,4 +1,4 @@
-const SESSION_KEY = "operator-results-session-v1";
+﻿const SESSION_KEY = "operator-results-session-v1";
 const THEME_KEY = "operator-results-theme-v1";
 const DEFAULT_THEME = "dark";
 const REMOTE_API_BASE = "/api";
@@ -931,16 +931,17 @@ function renderDashboardAnalytics() {
   const avgEffectiveness = filtered.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0) / filtered.length;
   const avgQuality = filtered.reduce((sum, entry) => sum + Number(entry.qualityScore || 0), 0) / filtered.length;
   const avgProduction = totalProposals / filtered.length;
+  const avgProductionRounded = Math.round(avgProduction);
   const latest = filtered[filtered.length - 1];
 
   elements.analyticsKpiRow.innerHTML = `
-    ${buildAnalyticsKpi("Qtd Propostas", formatMetric(totalProposals))}
-    ${buildAnalyticsKpi("Efetividade %", formatMetric(avgEffectiveness, "%"))}
-    ${buildAnalyticsKpi("Qualidade %", formatMetric(avgQuality, "%"))}
+    ${buildAnalyticsKpi("Media Producao", formatMetric(avgProductionRounded))}
+    ${buildAnalyticsKpi("Media Efetividade", formatMetric(avgEffectiveness, "%"))}
+    ${buildAnalyticsKpi("Media Qualidade", formatMetric(avgQuality, "%"))}
   `;
 
   elements.analyticsGauges.innerHTML = `
-    ${buildGaugeCard("Produção média dia", avgProduction, 0, Math.max(100, avgProduction * 1.4), "")}
+    ${buildGaugeCard("Producao media dia", avgProductionRounded, 0, Math.max(100, avgProductionRounded * 1.4), "")}
     ${buildGaugeCard("Efetividade", avgEffectiveness, 0, 100, "%")}
     ${buildGaugeCard("Qualidade", avgQuality, 0, 100, "%")}
   `;
@@ -1137,10 +1138,10 @@ function buildAnalyticsDailyBars(entries) {
 
 function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest) {
   const items = [
-    { label: "Produção total", value: totalProposals, tone: "green", suffix: "" },
-    { label: "Efetividade média", value: avgEffectiveness, tone: "gray", suffix: "%" },
-    { label: "Qualidade média", value: avgQuality, tone: "lime", suffix: "%" },
-    { label: "Produção último dia", value: Number(latest?.productionTotal || 0), tone: "red", suffix: "" }
+    { label: "ProduÃ§Ã£o total", value: totalProposals, tone: "green", suffix: "" },
+    { label: "Efetividade mÃ©dia", value: avgEffectiveness, tone: "gray", suffix: "%" },
+    { label: "Qualidade mÃ©dia", value: avgQuality, tone: "lime", suffix: "%" },
+    { label: "ProduÃ§Ã£o Ãºltimo dia", value: Number(latest?.productionTotal || 0), tone: "red", suffix: "" }
   ];
   const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
   return items.map((item) => {
@@ -1263,23 +1264,39 @@ function buildAnalyticsPerformanceBands(entries) {
 
 function buildAnalyticsTopDays(entries) {
   const entriesWithQualityRef = applyMonthlyQualityReference(entries);
-  const maxProduction = Math.max(...entriesWithQualityRef.map((entry) => Number(entry.productionTotal || 0)), 1);
-  const ranked = entriesWithQualityRef.map((entry) => {
+  const deduped = dedupeRankingEntries(entriesWithQualityRef);
+  const maxProduction = Math.max(...deduped.map((entry) => Number(entry.productionTotal || 0)), 1);
+  const PRODUCTION_WEIGHT = 0.4;
+  const EFFECTIVENESS_WEIGHT = 0.3;
+  const QUALITY_WEIGHT = 0.3;
+
+  const ranked = deduped.map((entry) => {
     const productionScore = (Number(entry.productionTotal || 0) / Math.max(maxProduction, 1)) * 100;
     const effectiveness = clampPercent(entry.effectiveness);
     const quality = clampPercent(entry.qualityReferenceScore);
-    const score = (productionScore * 0.4) + (effectiveness * 0.3) + (quality * 0.3);
-    return { ...entry, score };
+    const score =
+      (productionScore * PRODUCTION_WEIGHT) +
+      (effectiveness * EFFECTIVENESS_WEIGHT) +
+      (quality * QUALITY_WEIGHT);
+    return {
+      ...entry,
+      score,
+      operatorLabel: resolveAnalyticsOperatorLabel(entry)
+    };
   }).sort((a, b) => b.score - a.score);
 
   const topDays = ranked.slice(0, 5);
+  if (!topDays.length) {
+    return emptyState("Sem ranking", "Nao ha dados suficientes para calcular o top 5.");
+  }
+
   return `
     <div class="analytics-top-days-list">
       ${topDays.map((entry, index) => `
         <article class="analytics-top-day-item">
           <div class="analytics-top-day-rank">${escapeHtml(String(index + 1))}</div>
           <div class="analytics-top-day-info">
-            <strong>${escapeHtml(formatDate(entry.date))}</strong>
+            <strong>${escapeHtml(formatDate(entry.date))} - ${escapeHtml(entry.operatorLabel)}</strong>
             <p>Prod ${escapeHtml(formatMetric(entry.productionTotal))} | Eff ${escapeHtml(formatMetric(entry.effectiveness, "%"))} | Qual M ${escapeHtml(formatMetric(entry.qualityReferenceScore, "%"))}</p>
           </div>
           <div class="analytics-top-day-score">${escapeHtml(formatMetric(entry.score, "%"))}</div>
@@ -1287,6 +1304,27 @@ function buildAnalyticsTopDays(entries) {
       `).join("")}
     </div>
   `;
+}
+
+function dedupeRankingEntries(entries) {
+  const map = new Map();
+  entries.forEach((entry) => {
+    const userId = String(entry?.userId || "");
+    const date = normalizeDateKey(entry?.date);
+    if (!date) return;
+    const key = `${userId}__${date}`;
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, entry);
+      return;
+    }
+    const prevUpdated = Date.parse(prev?.updatedAt || "") || 0;
+    const nextUpdated = Date.parse(entry?.updatedAt || "") || 0;
+    if (nextUpdated >= prevUpdated) {
+      map.set(key, entry);
+    }
+  });
+  return [...map.values()];
 }
 
 function applyMonthlyQualityReference(entries) {
@@ -2511,3 +2549,4 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
