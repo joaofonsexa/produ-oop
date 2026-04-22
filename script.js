@@ -719,7 +719,7 @@ function syncAuthView() {
   elements.loginScreen?.classList.toggle("hidden", isLogged);
   elements.appShell?.classList.toggle("hidden", !isLogged);
   elements.adminNavLink?.classList.toggle("hidden", !canManage());
-  elements.globalOperatorFilter?.classList.toggle("hidden", !canManage());
+  updateGlobalOperatorFilterVisibility();
   elements.historyDeleteAll?.classList.toggle("hidden", !canManage());
 
   if (!isLogged) return;
@@ -1554,6 +1554,12 @@ function setSection(sectionId) {
   elements.navLinks.forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
   elements.heroHeader?.classList.remove("hidden");
   elements.heroGrid?.classList.toggle("hidden", sectionId !== "dashboard");
+  updateGlobalOperatorFilterVisibility();
+}
+
+function updateGlobalOperatorFilterVisibility() {
+  const shouldShow = canManage() && state.section === "dashboard";
+  elements.globalOperatorFilter?.classList.toggle("hidden", !shouldShow);
 }
 
 function canManage() {
