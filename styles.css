@@ -2009,11 +2009,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .trend-point-label {
   font-size: 10px;
   font-weight: 700;
-  fill: #a9b7c8;
-  paint-order: stroke;
-  stroke: rgba(5, 8, 14, 0.85);
-  stroke-width: 2px;
-  stroke-linejoin: round;
+  fill: #d9e7fb;
+}
+
+.trend-point-chip rect {
+  fill: rgba(10, 20, 35, 0.86);
+  stroke: rgba(122, 170, 230, 0.35);
+  stroke-width: 1;
 }
 
 .bars-grid {
@@ -2394,9 +2396,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-tag-row {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr) 90px;
+  grid-template-columns: 190px minmax(0, 1fr) 90px;
   gap: 10px;
   align-items: center;
+}
+
+.analytics-tag-row > span {
+  line-height: 1.25;
 }
 
 .analytics-tag-track {
@@ -2601,9 +2607,10 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .analytics-top-day-info strong {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.3;
 }
 
 .analytics-top-day-info p {

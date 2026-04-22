@@ -1138,10 +1138,10 @@ function buildAnalyticsDailyBars(entries) {
 
 function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest) {
   const items = [
-    { label: "ProduÃ§Ã£o total", value: totalProposals, tone: "green", suffix: "" },
-    { label: "Efetividade mÃ©dia", value: avgEffectiveness, tone: "gray", suffix: "%" },
-    { label: "Qualidade mÃ©dia", value: avgQuality, tone: "lime", suffix: "%" },
-    { label: "ProduÃ§Ã£o Ãºltimo dia", value: Number(latest?.productionTotal || 0), tone: "red", suffix: "" }
+    { label: "Producao total", value: totalProposals, tone: "green", suffix: "" },
+    { label: "Efetividade media", value: avgEffectiveness, tone: "gray", suffix: "%" },
+    { label: "Qualidade media", value: avgQuality, tone: "lime", suffix: "%" },
+    { label: "Producao ultimo dia", value: Number(latest?.productionTotal || 0), tone: "red", suffix: "" }
   ];
   const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
   return items.map((item) => {
@@ -1264,24 +1264,48 @@ function buildAnalyticsPerformanceBands(entries) {
 
 function buildAnalyticsTopDays(entries) {
   const entriesWithQualityRef = applyMonthlyQualityReference(entries);
-  const deduped = dedupeRankingEntries(entriesWithQualityRef);
-  const maxProduction = Math.max(...deduped.map((entry) => Number(entry.productionTotal || 0)), 1);
+  const byOperator = new Map();
+  entriesWithQualityRef.forEach((entry) => {
+    const userId = String(entry?.userId || "");
+    const operatorLabel = resolveAnalyticsOperatorLabel(entry);
+    const previous = byOperator.get(userId) || {
+      userId,
+      operatorLabel,
+      days: 0,
+      productionSum: 0,
+      effectivenessSum: 0,
+      qualitySum: 0
+    };
+    previous.days += 1;
+    previous.productionSum += Number(entry?.productionTotal || 0);
+    previous.effectivenessSum += clampPercent(entry?.effectiveness);
+    previous.qualitySum += clampPercent(entry?.qualityReferenceScore);
+    byOperator.set(userId, previous);
+  });
+
+  const aggregates = [...byOperator.values()].map((item) => ({
+    ...item,
+    avgProduction: item.days ? item.productionSum / item.days : 0,
+    avgEffectiveness: item.days ? item.effectivenessSum / item.days : 0,
+    avgQuality: item.days ? item.qualitySum / item.days : 0
+  }));
+
+  const maxProduction = Math.max(...aggregates.map((entry) => Number(entry.avgProduction || 0)), 1);
   const PRODUCTION_WEIGHT = 0.4;
   const EFFECTIVENESS_WEIGHT = 0.3;
   const QUALITY_WEIGHT = 0.3;
 
-  const ranked = deduped.map((entry) => {
-    const productionScore = (Number(entry.productionTotal || 0) / Math.max(maxProduction, 1)) * 100;
-    const effectiveness = clampPercent(entry.effectiveness);
-    const quality = clampPercent(entry.qualityReferenceScore);
+  const ranked = aggregates.map((entry) => {
+    const productionScore = (Number(entry.avgProduction || 0) / Math.max(maxProduction, 1)) * 100;
+    const effectiveness = clampPercent(entry.avgEffectiveness);
+    const quality = clampPercent(entry.avgQuality);
     const score =
       (productionScore * PRODUCTION_WEIGHT) +
       (effectiveness * EFFECTIVENESS_WEIGHT) +
       (quality * QUALITY_WEIGHT);
     return {
       ...entry,
-      score,
-      operatorLabel: resolveAnalyticsOperatorLabel(entry)
+      score
     };
   }).sort((a, b) => b.score - a.score);
 
@@ -1296,35 +1320,14 @@ function buildAnalyticsTopDays(entries) {
         <article class="analytics-top-day-item">
           <div class="analytics-top-day-rank">${escapeHtml(String(index + 1))}</div>
           <div class="analytics-top-day-info">
-            <strong>${escapeHtml(formatDate(entry.date))} - ${escapeHtml(entry.operatorLabel)}</strong>
-            <p>Prod ${escapeHtml(formatMetric(entry.productionTotal))} | Eff ${escapeHtml(formatMetric(entry.effectiveness, "%"))} | Qual M ${escapeHtml(formatMetric(entry.qualityReferenceScore, "%"))}</p>
+            <strong>${escapeHtml(entry.operatorLabel)}</strong>
+            <p>Prod media ${escapeHtml(formatMetric(entry.avgProduction))} | Eff media ${escapeHtml(formatMetric(entry.avgEffectiveness, "%"))} | Qual media ${escapeHtml(formatMetric(entry.avgQuality, "%"))} | Dias ${escapeHtml(String(entry.days))}</p>
           </div>
           <div class="analytics-top-day-score">${escapeHtml(formatMetric(entry.score, "%"))}</div>
         </article>
       `).join("")}
     </div>
   `;
-}
-
-function dedupeRankingEntries(entries) {
-  const map = new Map();
-  entries.forEach((entry) => {
-    const userId = String(entry?.userId || "");
-    const date = normalizeDateKey(entry?.date);
-    if (!date) return;
-    const key = `${userId}__${date}`;
-    const prev = map.get(key);
-    if (!prev) {
-      map.set(key, entry);
-      return;
-    }
-    const prevUpdated = Date.parse(prev?.updatedAt || "") || 0;
-    const nextUpdated = Date.parse(entry?.updatedAt || "") || 0;
-    if (nextUpdated >= prevUpdated) {
-      map.set(key, entry);
-    }
-  });
-  return [...map.values()];
 }
 
 function applyMonthlyQualityReference(entries) {
@@ -1444,7 +1447,9 @@ function renderDashboard() {
       ? "Nenhum lancamento encontrado para o operador selecionado."
       : "Seu gestor ainda nao cadastrou nenhum lancamento.";
     elements.latestResultCard.innerHTML = emptyState("Sem resultados", noDataMessage);
-    elements.dashboardNote.innerHTML = emptyState("Aguardando atualizacao", "Assim que houver um lancamento, este painel passa a resumir seu cenario.");
+    if (elements.dashboardNote) {
+      elements.dashboardNote.innerHTML = emptyState("Aguardando atualizacao", "Assim que houver um lancamento, este painel passa a resumir seu cenario.");
+    }
     return;
   }
 
@@ -1464,21 +1469,23 @@ function renderDashboard() {
   `;
 
   const message = buildPerformanceMessage(latest);
-  elements.dashboardNote.innerHTML = `
-    <article class="admin-item">
-      <div class="admin-item-top">
-        <div>
-          <strong>${escapeHtml(message.title)}</strong>
-          <p>${escapeHtml(message.copy)}</p>
+  if (elements.dashboardNote) {
+    elements.dashboardNote.innerHTML = `
+      <article class="admin-item">
+        <div class="admin-item-top">
+          <div>
+            <strong>${escapeHtml(message.title)}</strong>
+            <p>${escapeHtml(message.copy)}</p>
+          </div>
+          <span class="badge faq">${escapeHtml(message.badge)}</span>
         </div>
-        <span class="badge faq">${escapeHtml(message.badge)}</span>
-      </div>
-      <p>Media acumulada de producao: ${escapeHtml(formatMetric(averages.production))}</p>
-      <p>Media acumulada de efetividade: ${escapeHtml(formatMetric(averages.effectiveness, "%"))}</p>
-      <p>Media acumulada de qualidade: ${escapeHtml(formatMetric(averages.quality, "%"))}</p>
-      <p>Dias com lancamento: ${escapeHtml(String(viewRecord?.daysCount || 0))}</p>
-    </article>
-  `;
+        <p>Media acumulada de producao: ${escapeHtml(formatMetric(averages.production))}</p>
+        <p>Media acumulada de efetividade: ${escapeHtml(formatMetric(averages.effectiveness, "%"))}</p>
+        <p>Media acumulada de qualidade: ${escapeHtml(formatMetric(averages.quality, "%"))}</p>
+        <p>Dias com lancamento: ${escapeHtml(String(viewRecord?.daysCount || 0))}</p>
+      </article>
+    `;
+  }
 }
 
 function renderMyResults() {
@@ -2116,14 +2123,30 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
       <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
       ${points.map((point, index) => {
         if (points.length > 8 && index % 2 === 1 && index !== points.length - 1) return "";
-        const labelY = Math.max(padY + 9, point.y - 8);
+        const labelText = formatMetric(point.value, valueSuffix);
+        const labelWidth = Math.max(28, (labelText.length * 6.2) + 12);
+        const labelX = Math.max(
+          padX,
+          Math.min(point.x - (labelWidth / 2), (width - padX) - labelWidth)
+        );
+        const labelY = Math.max(padY + 2, point.y - 24);
         return `
-          <text
-            x="${point.x.toFixed(2)}"
-            y="${labelY.toFixed(2)}"
-            class="trend-point-label"
-            text-anchor="middle"
-          >${escapeHtml(formatMetric(point.value, valueSuffix))}</text>
+          <g class="trend-point-chip">
+            <rect
+              x="${labelX.toFixed(2)}"
+              y="${labelY.toFixed(2)}"
+              width="${labelWidth.toFixed(2)}"
+              height="18"
+              rx="6"
+              ry="6"
+            ></rect>
+            <text
+              x="${(labelX + (labelWidth / 2)).toFixed(2)}"
+              y="${(labelY + 12).toFixed(2)}"
+              class="trend-point-label"
+              text-anchor="middle"
+            >${escapeHtml(labelText)}</text>
+          </g>
         `;
       }).join("")}
       ${points.map((point) => `
