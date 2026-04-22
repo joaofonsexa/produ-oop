@@ -1997,8 +1997,15 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .trend-svg {
-  width: 100%;
+  width: max(100%, 480px);
   height: 180px;
+  display: block;
+}
+
+.trend-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
 }
 
 .trend-axis {
@@ -2024,6 +2031,16 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
   gap: 10px;
   align-items: end;
+}
+
+.bars-grid-wide {
+  min-width: max-content;
+}
+
+.bars-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
 }
 
 .bar-item {

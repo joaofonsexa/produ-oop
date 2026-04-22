@@ -2088,7 +2088,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const values = entries.map((entry) => Number(entry?.[field] || 0));
   const maxValue = Number.isFinite(fixedMax) ? fixedMax : Math.max(...values, 1);
   const minValue = 0;
-  const width = 480;
+  const width = Math.max(480, (Math.max(values.length, 2) - 1) * 62 + 28);
   const height = 170;
   const padX = 14;
   const padY = 18;
@@ -2111,55 +2111,62 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const valueSuffix = field === "effectiveness" || field === "qualityScore" ? "%" : "";
 
   return `
-    <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
-      <defs>
-        <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
-          <stop offset="100%" stop-color="${color}" stop-opacity="0.02"></stop>
-        </linearGradient>
-      </defs>
-      <path d="M ${padX} ${height - padY} L ${width - padX} ${height - padY}" class="trend-axis"></path>
-      <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
-      <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
-      ${points.map((point, index) => {
-        if (points.length > 8 && index % 2 === 1 && index !== points.length - 1) return "";
-        const labelText = formatMetric(point.value, valueSuffix);
-        const labelWidth = Math.max(28, (labelText.length * 6.2) + 12);
-        const labelX = Math.max(
-          padX,
-          Math.min(point.x - (labelWidth / 2), (width - padX) - labelWidth)
-        );
-        const labelY = Math.max(padY + 2, point.y - 24);
-        return `
-          <g class="trend-point-chip">
-            <rect
-              x="${labelX.toFixed(2)}"
-              y="${labelY.toFixed(2)}"
-              width="${labelWidth.toFixed(2)}"
-              height="18"
-              rx="6"
-              ry="6"
-            ></rect>
-            <text
-              x="${(labelX + (labelWidth / 2)).toFixed(2)}"
-              y="${(labelY + 12).toFixed(2)}"
-              class="trend-point-label"
-              text-anchor="middle"
-            >${escapeHtml(labelText)}</text>
-          </g>
-        `;
-      }).join("")}
-      ${points.map((point) => `
-        <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
-      `).join("")}
-    </svg>
+    <div class="trend-scroll">
+      <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
+        <defs>
+          <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.02"></stop>
+          </linearGradient>
+        </defs>
+        <path d="M ${padX} ${height - padY} L ${width - padX} ${height - padY}" class="trend-axis"></path>
+        <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
+        <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        ${points.map((point, index) => {
+          const shouldShowLabel = points.length <= 5 || index === 0 || index === points.length - 1;
+          if (!shouldShowLabel) return "";
+          const labelText = formatMetric(point.value, valueSuffix);
+          const labelWidth = Math.max(28, (labelText.length * 6.2) + 12);
+          const labelX = Math.max(
+            padX,
+            Math.min(point.x - (labelWidth / 2), (width - padX) - labelWidth)
+          );
+          const labelY = Math.max(padY + 2, point.y - 24);
+          return `
+            <g class="trend-point-chip">
+              <rect
+                x="${labelX.toFixed(2)}"
+                y="${labelY.toFixed(2)}"
+                width="${labelWidth.toFixed(2)}"
+                height="18"
+                rx="6"
+                ry="6"
+              ></rect>
+              <text
+                x="${(labelX + (labelWidth / 2)).toFixed(2)}"
+                y="${(labelY + 12).toFixed(2)}"
+                class="trend-point-label"
+                text-anchor="middle"
+              >${escapeHtml(labelText)}</text>
+            </g>
+          `;
+        }).join("")}
+        ${points.map((point) => `
+          <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
+        `).join("")}
+      </svg>
+    </div>
   `;
 }
 
 function buildMiniBars(items, color) {
   const maxValue = Math.max(...items.map((item) => Number(item.value || 0)), 1);
+  const hasManyItems = items.length > 8;
+  const gridClass = hasManyItems ? "bars-grid bars-grid-wide" : "bars-grid";
+  const gridStyle = hasManyItems ? ` style="grid-template-columns: repeat(${items.length}, minmax(62px, 62px));"` : "";
   return `
-    <div class="bars-grid">
+    <div class="bars-scroll">
+      <div class="${gridClass}"${gridStyle}>
       ${items.map((item) => {
         const heightPercent = (Number(item.value || 0) / maxValue) * 100;
         return `
@@ -2172,6 +2179,7 @@ function buildMiniBars(items, color) {
           </div>
         `;
       }).join("")}
+      </div>
     </div>
   `;
 }
