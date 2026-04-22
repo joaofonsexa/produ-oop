@@ -529,6 +529,30 @@ body[data-theme="dark"] .filter-pill {
   gap: 12px;
 }
 
+.global-operator-filter {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.global-operator-filter span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.global-operator-filter select {
+  height: 42px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 0 12px;
+  font-weight: 600;
+}
+
 .notification-menu {
   position: relative;
 }
@@ -2107,6 +2131,19 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .data-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.table-actions-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.table-actions-inline .ghost-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 0.78rem;
 }
 
 .analytics-layout {

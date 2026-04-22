@@ -40,6 +40,8 @@ const elements = {
   navLinks: Array.from(document.querySelectorAll(".nav-link")),
   adminNavLink: document.querySelector("#admin-nav-link"),
   refreshButton: document.querySelector("#refresh-button"),
+  globalOperatorFilter: document.querySelector("#global-operator-filter"),
+  globalOperatorSelect: document.querySelector("#global-operator-select"),
   themeToggle: document.querySelector("#theme-toggle"),
   profileTrigger: document.querySelector("#profile-trigger"),
   profileDropdown: document.querySelector("#profile-dropdown"),
@@ -132,8 +134,16 @@ function bindEvents() {
     state.adminSelectedUserId = String(elements.adminUser.value || "");
     hydrateAdminFormFromRecord();
     void loadAdminSelectedRecord();
+    syncGlobalOperatorSelect();
+  });
+  elements.globalOperatorSelect?.addEventListener("change", () => {
+    state.adminSelectedUserId = String(elements.globalOperatorSelect.value || "");
+    syncAdminOperatorSelect();
+    hydrateAdminFormFromRecord();
+    void loadAdminSelectedRecord();
   });
   elements.adminHistoryWrapper?.addEventListener("click", (event) => void handleAdminHistoryClick(event));
+  elements.historyTableWrapper?.addEventListener("click", (event) => void handleHistoryTableClick(event));
   elements.adminUploadForm?.addEventListener("submit", (event) => event.preventDefault());
   elements.importUpload?.addEventListener("click", () => void handleSpreadsheetUpload());
   elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
@@ -664,6 +674,7 @@ function syncAuthView() {
   elements.loginScreen?.classList.toggle("hidden", isLogged);
   elements.appShell?.classList.toggle("hidden", !isLogged);
   elements.adminNavLink?.classList.toggle("hidden", !canManage());
+  elements.globalOperatorFilter?.classList.toggle("hidden", !canManage());
 
   if (!isLogged) return;
 
@@ -673,6 +684,7 @@ function syncAuthView() {
   elements.sessionNameMenu.textContent = state.session.name || "Operador";
   elements.sessionRoleMenu.textContent = role.label;
   elements.profileAvatar.textContent = getInitials(state.session.name || "Operador");
+  syncGlobalOperatorSelect();
 }
 
 function renderAll() {
@@ -784,8 +796,7 @@ function renderDashboardAnalyticsFilters() {
     state.analytics.selectedAttendantId = canManage() ? "all" : (state.session?.id || "");
   } else {
     const allowed = new Set(allDates);
-    const selected = (state.analytics.selectedDates || []).filter((date) => allowed.has(date));
-    state.analytics.selectedDates = selected.length ? selected : [...allDates];
+    state.analytics.selectedDates = (state.analytics.selectedDates || []).filter((date) => allowed.has(date));
   }
 
   const query = normalizeLooseText(state.analytics.attendantQuery || "");
@@ -1120,11 +1131,106 @@ function renderMyResults() {
 }
 
 function renderHistory() {
-  const viewRecord = getPrimaryViewRecord();
-  const message = canManage()
-    ? "Sem historico para o operador selecionado."
-    : "Voce ainda nao possui historico cadastrado.";
-  elements.historyTableWrapper.innerHTML = renderRecordTable(viewRecord, message);
+  if (!canManage()) {
+    const viewRecord = getPrimaryViewRecord();
+    elements.historyTableWrapper.innerHTML = renderRecordTable(viewRecord, "Voce ainda nao possui historico cadastrado.");
+    return;
+  }
+
+  const entries = getManagerHistoryEntries();
+  if (!entries.length) {
+    elements.historyTableWrapper.innerHTML = emptyState("Sem historico", "Nenhum registro encontrado na operacao.");
+    return;
+  }
+
+  elements.historyTableWrapper.innerHTML = renderManagerHistoryTable(entries);
+}
+
+function getManagerHistoryEntries() {
+  const rows = [];
+  for (const record of state.operationRecords || []) {
+    const operatorName = String(record?.userName || record?.username || "Operador");
+    for (const entry of record?.entries || []) {
+      rows.push({
+        userId: String(record?.userId || ""),
+        operatorName,
+        date: String(entry?.date || ""),
+        productionTotal: Number(entry?.productionTotal || 0),
+        effectiveness: Number(entry?.effectiveness || 0),
+        qualityScore: Number(entry?.qualityScore || 0),
+        updatedByName: String(entry?.updatedByName || "Gestor"),
+        updatedAt: String(entry?.updatedAt || "")
+      });
+    }
+  }
+
+  rows.sort((a, b) => {
+    const aTime = Date.parse(a.updatedAt || "") || 0;
+    const bTime = Date.parse(b.updatedAt || "") || 0;
+    if (aTime !== bTime) return bTime - aTime;
+    if (a.date !== b.date) return String(b.date).localeCompare(String(a.date));
+    return String(a.operatorName).localeCompare(String(b.operatorName), "pt-BR");
+  });
+  return rows;
+}
+
+function renderManagerHistoryTable(entries) {
+  return `
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Operador</th>
+            <th>Data</th>
+            <th>Producao</th>
+            <th>Efetividade</th>
+            <th>Qualidade</th>
+            <th>Lancado por</th>
+            <th>Atualizado em</th>
+            <th>Acoes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map((entry) => `
+            <tr>
+              <td>${escapeHtml(entry.operatorName)}</td>
+              <td>${escapeHtml(formatDate(entry.date))}</td>
+              <td>${escapeHtml(formatMetric(entry.productionTotal))}</td>
+              <td>${escapeHtml(formatMetric(entry.effectiveness, "%"))}</td>
+              <td>${escapeHtml(formatMetric(entry.qualityScore, "%"))}</td>
+              <td>${escapeHtml(entry.updatedByName)}</td>
+              <td>${escapeHtml(formatDateTime(entry.updatedAt))}</td>
+              <td>
+                <div class="table-actions-inline">
+                  <button
+                    type="button"
+                    class="ghost-button edit-result-button"
+                    data-action="edit-result"
+                    data-user-id="${escapeHtml(entry.userId)}"
+                    data-date="${escapeHtml(entry.date)}"
+                    data-production="${escapeHtml(String(entry.productionTotal))}"
+                    data-effectiveness="${escapeHtml(String(entry.effectiveness))}"
+                    data-quality="${escapeHtml(String(entry.qualityScore))}"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    class="ghost-button danger delete-result-button"
+                    data-action="delete-result"
+                    data-user-id="${escapeHtml(entry.userId)}"
+                    data-date="${escapeHtml(entry.date)}"
+                  >
+                    Excluir
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 function renderDashboardVisuals(viewRecord) {
@@ -1205,7 +1311,7 @@ function renderAdminHistory() {
   elements.adminHistoryWrapper.innerHTML = renderRecordTable(
     state.adminSelectedRecord,
     "Selecione um operador com lancamentos para visualizar o historico.",
-    { allowDelete: true, userId: state.adminSelectedUserId || "" }
+    { allowDelete: true, allowEdit: true, userId: state.adminSelectedUserId || "" }
   );
 }
 
@@ -1213,6 +1319,7 @@ function renderRecordTable(record, emptyMessage, options = {}) {
   const entries = [...(record?.entries || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   if (!entries.length) return emptyState("Sem historico", emptyMessage);
   const allowDelete = Boolean(options?.allowDelete && options?.userId);
+  const allowEdit = Boolean(options?.allowEdit && options?.userId);
   const userId = String(options?.userId || "");
 
   return `
@@ -1226,7 +1333,7 @@ function renderRecordTable(record, emptyMessage, options = {}) {
             <th>Qualidade</th>
             <th>Lancado por</th>
             <th>Atualizado em</th>
-            ${allowDelete ? "<th>Acoes</th>" : ""}
+            ${(allowDelete || allowEdit) ? "<th>Acoes</th>" : ""}
           </tr>
         </thead>
         <tbody>
@@ -1238,17 +1345,35 @@ function renderRecordTable(record, emptyMessage, options = {}) {
               <td>${escapeHtml(formatMetric(entry.qualityScore, "%"))}</td>
               <td>${escapeHtml(entry.updatedByName || "Gestor")}</td>
               <td>${escapeHtml(formatDateTime(entry.updatedAt))}</td>
-              ${allowDelete ? `
+              ${(allowDelete || allowEdit) ? `
                 <td>
-                  <button
-                    type="button"
-                    class="ghost-button danger delete-result-button"
-                    data-action="delete-result"
-                    data-user-id="${escapeHtml(userId)}"
-                    data-date="${escapeHtml(String(entry.date || ""))}"
-                  >
-                    Excluir
-                  </button>
+                  <div class="table-actions-inline">
+                    ${allowEdit ? `
+                      <button
+                        type="button"
+                        class="ghost-button edit-result-button"
+                        data-action="edit-result"
+                        data-user-id="${escapeHtml(userId)}"
+                        data-date="${escapeHtml(String(entry.date || ""))}"
+                        data-production="${escapeHtml(String(entry.productionTotal || 0))}"
+                        data-effectiveness="${escapeHtml(String(entry.effectiveness || 0))}"
+                        data-quality="${escapeHtml(String(entry.qualityScore || 0))}"
+                      >
+                        Editar
+                      </button>
+                    ` : ""}
+                    ${allowDelete ? `
+                      <button
+                        type="button"
+                        class="ghost-button danger delete-result-button"
+                        data-action="delete-result"
+                        data-user-id="${escapeHtml(userId)}"
+                        data-date="${escapeHtml(String(entry.date || ""))}"
+                      >
+                        Excluir
+                      </button>
+                    ` : ""}
+                  </div>
                 </td>
               ` : ""}
             </tr>
@@ -1261,9 +1386,50 @@ function renderRecordTable(record, emptyMessage, options = {}) {
 
 async function handleAdminHistoryClick(event) {
   if (!canManage()) return;
-  const button = event.target?.closest?.("button[data-action='delete-result']");
+  const button = event.target?.closest?.("button[data-action]");
   if (!button) return;
+  await handleHistoryActionButton(button);
+}
 
+async function handleHistoryTableClick(event) {
+  if (!canManage()) return;
+  const button = event.target?.closest?.("button[data-action]");
+  if (!button) return;
+  await handleHistoryActionButton(button);
+}
+
+async function handleHistoryActionButton(button) {
+  const action = String(button.getAttribute("data-action") || "");
+  if (action === "edit-result") {
+    const userId = String(button.getAttribute("data-user-id") || "").trim();
+    const date = normalizeDateKey(button.getAttribute("data-date"));
+    const productionTotal = parseMetricInput(button.getAttribute("data-production"));
+    const effectiveness = parseMetricInput(button.getAttribute("data-effectiveness"));
+    const qualityScore = parseMetricInput(button.getAttribute("data-quality"));
+    if (!userId || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
+      window.alert("Nao foi possivel carregar os dados do registro para edicao.");
+      return;
+    }
+
+    state.adminSelectedUserId = userId;
+    syncAdminOperatorSelect();
+    syncGlobalOperatorSelect();
+    hydrateAdminFormFromRecord();
+    if (elements.adminDate) elements.adminDate.value = date;
+    if (elements.adminProduction) elements.adminProduction.value = String(productionTotal);
+    if (elements.adminEffectiveness) elements.adminEffectiveness.value = String(effectiveness);
+    if (elements.adminQuality) elements.adminQuality.value = String(qualityScore);
+    setSection("admin");
+    window.alert("Registro carregado no formulario de Gestao. Ajuste os campos e clique em Salvar resultado.");
+    return;
+  }
+
+  if (action === "delete-result") {
+    await handleDeleteResultButton(button);
+  }
+}
+
+async function handleDeleteResultButton(button) {
   const userId = String(button.getAttribute("data-user-id") || "").trim();
   const date = normalizeDateKey(button.getAttribute("data-date"));
   if (!userId || !date) {
@@ -1282,6 +1448,9 @@ async function handleAdminHistoryClick(event) {
       body: JSON.stringify({ userId, date })
     });
 
+    state.adminSelectedUserId = userId;
+    syncAdminOperatorSelect();
+    syncGlobalOperatorSelect();
     if (canManage()) await loadOperationRecords();
     await loadAdminSelectedRecord();
     if (state.session?.id === userId) await loadMyResults();
@@ -1295,11 +1464,28 @@ async function handleAdminHistoryClick(event) {
 }
 
 function renderOperatorSelect() {
+  syncAdminOperatorSelect();
+  syncGlobalOperatorSelect();
+}
+
+function syncAdminOperatorSelect() {
   if (!elements.adminUser) return;
   elements.adminUser.innerHTML = state.operators.length
     ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`).join("")
     : `<option value="">Nenhum operador encontrado</option>`;
   elements.adminUser.value = state.adminSelectedUserId || "";
+}
+
+function syncGlobalOperatorSelect() {
+  if (!elements.globalOperatorSelect) return;
+  if (!canManage()) {
+    elements.globalOperatorSelect.innerHTML = "";
+    return;
+  }
+  elements.globalOperatorSelect.innerHTML = state.operators.length
+    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`).join("")
+    : `<option value="">Nenhum operador encontrado</option>`;
+  elements.globalOperatorSelect.value = state.adminSelectedUserId || "";
 }
 
 function hydrateAdminFormFromRecord() {
