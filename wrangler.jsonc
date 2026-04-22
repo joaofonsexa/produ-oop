@@ -13,5 +13,18 @@
     "SSO_EXPECTED_ISSUER": "https://baseconhecimentokra.pages.dev",
     // Deve casar com o campo aud do token SSO.
     "SSO_EXPECTED_AUDIENCE": "https://testepordu.pages.dev"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "prod_db",
+      "database_id": "1eb253fa-43f9-4f7b-9db2-725f21c417d5"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "IMPORTS_BUCKET",
+      "bucket_name": "r2prod"
+    }
+  ]
 }
