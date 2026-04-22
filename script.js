@@ -83,7 +83,9 @@ const elements = {
   adminUploadForm: document.querySelector("#admin-upload-form"),
   uploadFile: document.querySelector("#upload-file"),
   uploadStatus: document.querySelector("#upload-status"),
+  importUpload: document.querySelector("#import-upload"),
   downloadTemplate: document.querySelector("#download-template"),
+  removeUpload: document.querySelector("#remove-upload"),
   adminHistoryWrapper: document.querySelector("#admin-history-wrapper"),
   sections: Array.from(document.querySelectorAll(".content-section"))
 };
@@ -131,9 +133,11 @@ function bindEvents() {
     hydrateAdminFormFromRecord();
     void loadAdminSelectedRecord();
   });
+  elements.adminHistoryWrapper?.addEventListener("click", (event) => void handleAdminHistoryClick(event));
   elements.adminUploadForm?.addEventListener("submit", (event) => event.preventDefault());
-  elements.uploadFile?.addEventListener("change", handleSpreadsheetUpload);
+  elements.importUpload?.addEventListener("click", () => void handleSpreadsheetUpload());
   elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
+  elements.removeUpload?.addEventListener("click", () => void handleSpreadsheetRemoval());
   elements.analyticsClearFilters?.addEventListener("click", handleAnalyticsClearFilters);
   elements.analyticsAttendantSearch?.addEventListener("input", handleAnalyticsAttendantSearchInput);
   elements.analyticsDateList?.addEventListener("change", handleAnalyticsDateChange);
@@ -362,98 +366,38 @@ async function handleAdminSave(event) {
   }
 }
 
-async function handleSpreadsheetUpload(event) {
+async function handleSpreadsheetUpload() {
   if (!canManage()) return;
   if (state.importInProgress) {
     window.alert("Ja existe uma importacao em andamento. Aguarde a conclusao para enviar outra planilha.");
-    if (event.target) event.target.value = "";
     return;
   }
-  const file = event.target?.files?.[0];
-  if (!file) return;
+  const file = elements.uploadFile?.files?.[0];
+  if (!file) {
+    window.alert("Selecione uma planilha para importar.");
+    return;
+  }
   if (!window.XLSX) {
     window.alert("Biblioteca de planilha indisponivel no momento.");
-    if (event.target) event.target.value = "";
     return;
   }
 
   state.importInProgress = true;
   if (elements.uploadFile) elements.uploadFile.disabled = true;
+  if (elements.importUpload) elements.importUpload.disabled = true;
+  if (elements.removeUpload) elements.removeUpload.disabled = true;
   setUploadStatus("Importando planilha em segundo plano. Voce pode continuar navegando no portal.", "loading");
 
   try {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
-    if (!rows.length) throw new Error("Planilha vazia.");
-
-    const header = rows[0].map((item) => normalizeLooseText(item));
-    const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
-    const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
-    const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
-    const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
-    const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
-    const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
-
-    if (idxEffectiveness < 0 || idxProduction < 0 || idxQuality < 0) {
-      throw new Error("A planilha precisa ter as colunas de Producao, Efetividade e Qualidade.");
-    }
-    if (idxName < 0 && idxUsername < 0) {
-      throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
-    }
-    if (idxDate < 0) {
-      throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
-    }
-
-    const operatorByName = new Map(state.operators.map((operator) => [normalizeLooseText(operator.name), operator]));
-    const operatorByUsername = new Map(state.operators.map((operator) => [normalizeLooseText(operator.username), operator]));
+    const {
+      importItems,
+      totalRows,
+      unmatchedOperatorCount,
+      invalidMetricCount,
+      invalidDateCount,
+      buffer
+    } = await parseSpreadsheetImportFile(file);
     let updatedCount = 0;
-    let unmatchedOperatorCount = 0;
-    let invalidMetricCount = 0;
-    let invalidDateCount = 0;
-    let totalRows = 0;
-    const importItems = [];
-
-    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const row = rows[rowIndex] || [];
-      if (!row.length) continue;
-      totalRows += 1;
-
-      const operator =
-        operatorByUsername.get(normalizeLooseText(idxUsername >= 0 ? row[idxUsername] : "")) ||
-        operatorByName.get(normalizeLooseText(idxName >= 0 ? row[idxName] : ""));
-      if (!operator) {
-        unmatchedOperatorCount += 1;
-        continue;
-      }
-
-      const date = normalizeSpreadsheetDate(row[idxDate]);
-      const effectiveness = parseMetricInput(row[idxEffectiveness], { percent: true });
-      const productionTotal = parseMetricInput(row[idxProduction]);
-      const qualityScore = parseMetricInput(row[idxQuality], { percent: true });
-      if (!date) {
-        invalidDateCount += 1;
-        continue;
-      }
-
-      if (!Number.isFinite(effectiveness) || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
-        invalidMetricCount += 1;
-        continue;
-      }
-
-      importItems.push({
-        userId: operator.id,
-        userName: operator.name || "",
-        username: operator.username || "",
-        date,
-        productionTotal,
-        effectiveness,
-        qualityScore,
-        updatedById: state.session?.id || "",
-        updatedByName: state.session?.name || "Gestor"
-      });
-    }
 
     if (!importItems.length) {
       throw new Error(
@@ -503,13 +447,192 @@ async function handleSpreadsheetUpload(event) {
     setUploadStatus(error?.message || "Falha ao processar a planilha.", "error");
     window.alert(error?.message || "Nao foi possivel processar a planilha.");
   } finally {
-    if (event.target) event.target.value = "";
     state.importInProgress = false;
     if (elements.uploadFile) elements.uploadFile.disabled = false;
+    if (elements.importUpload) elements.importUpload.disabled = false;
+    if (elements.removeUpload) elements.removeUpload.disabled = false;
     window.setTimeout(() => {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
   }
+}
+
+async function handleSpreadsheetRemoval() {
+  if (!canManage()) return;
+  if (state.importInProgress) {
+    window.alert("Ja existe uma operacao de planilha em andamento. Aguarde para remover.");
+    return;
+  }
+
+  const file = elements.uploadFile?.files?.[0];
+  if (!file) {
+    window.alert("Selecione a planilha no campo acima para remover a carga correspondente.");
+    return;
+  }
+  if (!window.XLSX) {
+    window.alert("Biblioteca de planilha indisponivel no momento.");
+    return;
+  }
+
+  const confirmed = window.confirm("Deseja remover os lancamentos desta planilha? A exclusao sera feita por Operador + Data.");
+  if (!confirmed) return;
+
+  state.importInProgress = true;
+  if (elements.uploadFile) elements.uploadFile.disabled = true;
+  if (elements.importUpload) elements.importUpload.disabled = true;
+  if (elements.removeUpload) elements.removeUpload.disabled = true;
+  setUploadStatus("Removendo carga da planilha. Voce pode continuar navegando.", "loading");
+
+  try {
+    const {
+      importItems,
+      totalRows,
+      unmatchedOperatorCount,
+      invalidDateCount
+    } = await parseSpreadsheetImportFile(file, { forRemoval: true });
+
+    if (!importItems.length) {
+      throw new Error(
+        `Nenhuma linha valida foi encontrada para remocao.\n` +
+        `Sem operador correspondente: ${unmatchedOperatorCount}\n` +
+        `Com data invalida: ${invalidDateCount}`
+      );
+    }
+
+    const result = await fetchJson(`${REMOTE_API_BASE}/import/remove-by-sheet`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: importItems }),
+      timeoutMs: 120000
+    });
+
+    const removed = Number(result?.removed || 0);
+    const failed = Number(result?.failed || 0);
+    if (!removed) {
+      throw new Error(`Nenhum lancamento foi removido.\nFalhas: ${failed}`);
+    }
+
+    if (canManage()) await loadOperationRecords();
+    await loadAdminSelectedRecord();
+    if (state.session?.id) await loadMyResults();
+    renderAll();
+    setUploadStatus(`Remocao concluida: ${removed} lancamento(s) removido(s).`, "success");
+    window.alert(
+      `Remocao concluida.\n` +
+      `- Linhas lidas: ${totalRows}\n` +
+      `- Removidas: ${removed}\n` +
+      `- Sem operador correspondente: ${unmatchedOperatorCount}\n` +
+      `- Ignoradas por data invalida: ${invalidDateCount}\n` +
+      `- Falhas no servidor: ${failed}`
+    );
+  } catch (error) {
+    setUploadStatus(error?.message || "Falha ao remover carga da planilha.", "error");
+    window.alert(error?.message || "Nao foi possivel remover a carga por planilha.");
+  } finally {
+    state.importInProgress = false;
+    if (elements.uploadFile) elements.uploadFile.disabled = false;
+    if (elements.importUpload) elements.importUpload.disabled = false;
+    if (elements.removeUpload) elements.removeUpload.disabled = false;
+    window.setTimeout(() => {
+      if (!state.importInProgress) setUploadStatus("");
+    }, 8000);
+  }
+}
+
+async function parseSpreadsheetImportFile(file, options = {}) {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
+  if (!rows.length) throw new Error("Planilha vazia.");
+
+  const header = rows[0].map((item) => normalizeLooseText(item));
+  const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
+  const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
+  const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
+  const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
+  const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
+  const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
+
+  if (idxName < 0 && idxUsername < 0) {
+    throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
+  }
+  if (idxDate < 0) {
+    throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
+  }
+  if (!options.forRemoval && (idxEffectiveness < 0 || idxProduction < 0 || idxQuality < 0)) {
+    throw new Error("A planilha precisa ter as colunas de Producao, Efetividade e Qualidade.");
+  }
+
+  const operatorByName = new Map(state.operators.map((operator) => [normalizeLooseText(operator.name), operator]));
+  const operatorByUsername = new Map(state.operators.map((operator) => [normalizeLooseText(operator.username), operator]));
+  const importItems = [];
+  const uniqueKeys = new Set();
+  let unmatchedOperatorCount = 0;
+  let invalidMetricCount = 0;
+  let invalidDateCount = 0;
+  let totalRows = 0;
+
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] || [];
+    if (!row.length) continue;
+    totalRows += 1;
+
+    const operator =
+      operatorByUsername.get(normalizeLooseText(idxUsername >= 0 ? row[idxUsername] : "")) ||
+      operatorByName.get(normalizeLooseText(idxName >= 0 ? row[idxName] : ""));
+    if (!operator) {
+      unmatchedOperatorCount += 1;
+      continue;
+    }
+
+    const date = normalizeSpreadsheetDate(row[idxDate]);
+    if (!date) {
+      invalidDateCount += 1;
+      continue;
+    }
+
+    const baseItem = {
+      userId: operator.id,
+      userName: operator.name || "",
+      username: operator.username || "",
+      date
+    };
+    const uniqueKey = `${baseItem.userId}__${baseItem.date}`;
+    if (uniqueKeys.has(uniqueKey)) continue;
+    uniqueKeys.add(uniqueKey);
+
+    if (options.forRemoval) {
+      importItems.push(baseItem);
+      continue;
+    }
+
+    const effectiveness = parseMetricInput(row[idxEffectiveness], { percent: true });
+    const productionTotal = parseMetricInput(row[idxProduction]);
+    const qualityScore = parseMetricInput(row[idxQuality], { percent: true });
+    if (!Number.isFinite(effectiveness) || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
+      invalidMetricCount += 1;
+      continue;
+    }
+
+    importItems.push({
+      ...baseItem,
+      productionTotal,
+      effectiveness,
+      qualityScore,
+      updatedById: state.session?.id || "",
+      updatedByName: state.session?.name || "Gestor"
+    });
+  }
+
+  return {
+    buffer,
+    importItems,
+    totalRows,
+    unmatchedOperatorCount,
+    invalidMetricCount,
+    invalidDateCount
+  };
 }
 function handleDownloadTemplate() {
   if (!canManage()) return;
@@ -519,9 +642,15 @@ function handleDownloadTemplate() {
   }
 
   const rows = [["Nome do Operador", "Usuario", "Data", "Efetividade", "Producao", "Qualidade"]];
-  const baseDate = getDefaultResultDate();
   state.operators.forEach((operator) => {
-    rows.push([operator.name || "", operator.username || "", baseDate, "", "", ""]);
+    rows.push([
+      operator.name || "",
+      operator.username || "",
+      "",
+      "",
+      "",
+      ""
+    ]);
   });
 
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
@@ -776,19 +905,42 @@ function buildGaugeCard(title, value, min, max, suffix) {
   `;
 }
 
+function resolveAnalyticsOperatorLabel(entry) {
+  const directName = String(entry?.userName || "").trim();
+  if (directName) return directName;
+
+  const directUsername = String(entry?.username || "").trim();
+  if (directUsername) return directUsername;
+
+  const userId = String(entry?.userId || "").trim();
+  if (userId) {
+    const mapped = (state.operators || []).find((operator) => String(operator?.id || "") === userId);
+    if (mapped?.name) return String(mapped.name);
+    if (mapped?.username) return String(mapped.username);
+  }
+
+  if (String(state.session?.id || "") === userId) {
+    return String(state.session?.name || state.session?.username || "Operador");
+  }
+
+  return "Operador";
+}
+
 function buildAnalyticsDailyBars(entries) {
   const max = Math.max(...entries.map((entry) => Number(entry.productionTotal || 0)), 1);
   return `
     <div class="analytics-bars-grid">
       ${entries.map((entry) => {
         const height = (Number(entry.productionTotal || 0) / max) * 100;
+        const operatorLabel = resolveAnalyticsOperatorLabel(entry);
         return `
           <div class="analytics-bar-item">
             <div class="analytics-bar-track">
               <span class="analytics-bar-fill" style="height:${height.toFixed(2)}%"></span>
             </div>
             <strong>${escapeHtml(formatMetric(entry.productionTotal))}</strong>
-            <span>${escapeHtml(shortDate(entry.date))}</span>
+            <span class="analytics-bar-date">${escapeHtml(shortDate(entry.date))}</span>
+            <span class="analytics-bar-user" title="${escapeHtml(operatorLabel)}">${escapeHtml(operatorLabel)}</span>
           </div>
         `;
       }).join("")}
@@ -876,11 +1028,12 @@ function renderHero() {
 function renderDashboard() {
   const viewRecord = getPrimaryViewRecord();
   const latest = getLatestEntry(viewRecord);
+  const averages = getRecordAverages(viewRecord);
   const metrics = [
     { label: "Producao atual", value: latest?.productionTotal, suffix: "" },
-    { label: "Media de producao", value: viewRecord?.productionAverage, suffix: "" },
-    { label: "Efetividade", value: latest?.effectiveness, suffix: "%" },
-    { label: "Qualidade", value: latest?.qualityScore, suffix: "%" }
+    { label: "Media de producao", value: averages.production, suffix: "" },
+    { label: "Efetividade media", value: averages.effectiveness, suffix: "%" },
+    { label: "Qualidade media", value: averages.quality, suffix: "%" }
   ];
 
   elements.dashboardMetrics.innerHTML = metrics.map(renderMetricCard).join("");
@@ -920,7 +1073,9 @@ function renderDashboard() {
         </div>
         <span class="badge faq">${escapeHtml(message.badge)}</span>
       </div>
-      <p>Media acumulada de producao: ${escapeHtml(formatMetric(viewRecord?.productionAverage))}</p>
+      <p>Media acumulada de producao: ${escapeHtml(formatMetric(averages.production))}</p>
+      <p>Media acumulada de efetividade: ${escapeHtml(formatMetric(averages.effectiveness, "%"))}</p>
+      <p>Media acumulada de qualidade: ${escapeHtml(formatMetric(averages.quality, "%"))}</p>
       <p>Dias com lancamento: ${escapeHtml(String(viewRecord?.daysCount || 0))}</p>
     </article>
   `;
@@ -929,11 +1084,12 @@ function renderDashboard() {
 function renderMyResults() {
   const viewRecord = getPrimaryViewRecord();
   const latest = getLatestEntry(viewRecord);
+  const averages = getRecordAverages(viewRecord);
   const metrics = [
     { label: "Producao do dia", value: latest?.productionTotal, suffix: "" },
-    { label: "Producao media", value: viewRecord?.productionAverage, suffix: "" },
-    { label: "Efetividade do dia", value: latest?.effectiveness, suffix: "%" },
-    { label: "Qualidade do dia", value: latest?.qualityScore, suffix: "%" }
+    { label: "Producao media", value: averages.production, suffix: "" },
+    { label: "Efetividade media", value: averages.effectiveness, suffix: "%" },
+    { label: "Qualidade media", value: averages.quality, suffix: "%" }
   ];
   elements.resultMetrics.innerHTML = metrics.map(renderMetricCard).join("");
   renderMyResultsVisuals(viewRecord);
@@ -1046,12 +1202,18 @@ function renderAdminHistory() {
     elements.adminHistoryWrapper.innerHTML = emptyState("Acesso restrito", "Somente gestor pode consultar esta area.");
     return;
   }
-  elements.adminHistoryWrapper.innerHTML = renderRecordTable(state.adminSelectedRecord, "Selecione um operador com lancamentos para visualizar o historico.");
+  elements.adminHistoryWrapper.innerHTML = renderRecordTable(
+    state.adminSelectedRecord,
+    "Selecione um operador com lancamentos para visualizar o historico.",
+    { allowDelete: true, userId: state.adminSelectedUserId || "" }
+  );
 }
 
-function renderRecordTable(record, emptyMessage) {
+function renderRecordTable(record, emptyMessage, options = {}) {
   const entries = [...(record?.entries || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   if (!entries.length) return emptyState("Sem historico", emptyMessage);
+  const allowDelete = Boolean(options?.allowDelete && options?.userId);
+  const userId = String(options?.userId || "");
 
   return `
     <div class="table-scroll">
@@ -1064,6 +1226,7 @@ function renderRecordTable(record, emptyMessage) {
             <th>Qualidade</th>
             <th>Lancado por</th>
             <th>Atualizado em</th>
+            ${allowDelete ? "<th>Acoes</th>" : ""}
           </tr>
         </thead>
         <tbody>
@@ -1075,12 +1238,60 @@ function renderRecordTable(record, emptyMessage) {
               <td>${escapeHtml(formatMetric(entry.qualityScore, "%"))}</td>
               <td>${escapeHtml(entry.updatedByName || "Gestor")}</td>
               <td>${escapeHtml(formatDateTime(entry.updatedAt))}</td>
+              ${allowDelete ? `
+                <td>
+                  <button
+                    type="button"
+                    class="ghost-button danger delete-result-button"
+                    data-action="delete-result"
+                    data-user-id="${escapeHtml(userId)}"
+                    data-date="${escapeHtml(String(entry.date || ""))}"
+                  >
+                    Excluir
+                  </button>
+                </td>
+              ` : ""}
             </tr>
           `).join("")}
         </tbody>
       </table>
     </div>
   `;
+}
+
+async function handleAdminHistoryClick(event) {
+  if (!canManage()) return;
+  const button = event.target?.closest?.("button[data-action='delete-result']");
+  if (!button) return;
+
+  const userId = String(button.getAttribute("data-user-id") || "").trim();
+  const date = normalizeDateKey(button.getAttribute("data-date"));
+  if (!userId || !date) {
+    window.alert("Nao foi possivel identificar o lancamento para exclusao.");
+    return;
+  }
+
+  const confirmed = window.confirm(`Deseja excluir o lancamento do dia ${formatDate(date)}?`);
+  if (!confirmed) return;
+
+  setBusy(true);
+  try {
+    await fetchJson(`${REMOTE_API_BASE}/operator-results/delete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId, date })
+    });
+
+    if (canManage()) await loadOperationRecords();
+    await loadAdminSelectedRecord();
+    if (state.session?.id === userId) await loadMyResults();
+    renderAll();
+    window.alert("Lancamento excluido com sucesso.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel excluir o lancamento.");
+  } finally {
+    setBusy(false);
+  }
 }
 
 function renderOperatorSelect() {
@@ -1245,6 +1456,24 @@ function normalizeRecord(record) {
 
 function getLatestEntry(record) {
   return Array.isArray(record?.entries) && record.entries.length ? record.entries[record.entries.length - 1] : null;
+}
+
+function getRecordAverages(record) {
+  const entries = Array.isArray(record?.entries) ? record.entries : [];
+  const count = entries.length;
+  if (!count) {
+    return { production: null, effectiveness: null, quality: null };
+  }
+
+  const productionSum = entries.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0);
+  const effectivenessSum = entries.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0);
+  const qualitySum = entries.reduce((sum, entry) => sum + Number(entry.qualityScore || 0), 0);
+
+  return {
+    production: productionSum / count,
+    effectiveness: effectivenessSum / count,
+    quality: qualitySum / count
+  };
 }
 
 function getRecentEntries(record, maxItems = 10) {
@@ -1523,21 +1752,48 @@ function normalizeSpreadsheetDate(value) {
     return `${year}-${month}-${day}`;
   }
 
+  function toIsoDateSafe(yearInput, monthInput, dayInput) {
+    const year = Number(yearInput);
+    const month = Number(monthInput);
+    const day = Number(dayInput);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return "";
+    if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (Number.isNaN(parsed.getTime())) return "";
+    if (
+      parsed.getUTCFullYear() !== year ||
+      parsed.getUTCMonth() + 1 !== month ||
+      parsed.getUTCDate() !== day
+    ) {
+      return "";
+    }
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
   const normalized = normalizeDateKey(value);
   if (normalized) return normalized;
 
   const text = String(value || "").trim();
   if (!text) return "";
-  const noTime = text.split(" ")[0];
-  if (/^\d{2}-\d{2}-\d{4}$/.test(noTime)) {
-    const [day, month, year] = noTime.split("-");
-    return `${year}-${month}-${day}`;
+  const noTime = text.split(/[ T]/)[0];
+
+  const ddmmyyyy = noTime.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (ddmmyyyy) {
+    return toIsoDateSafe(ddmmyyyy[3], ddmmyyyy[2], ddmmyyyy[1]);
   }
-  if (/^\d{2}\/\d{2}\/\d{2}$/.test(noTime)) {
-    const [day, month, year] = noTime.split("/");
-    const fullYear = Number(year) >= 70 ? `19${year}` : `20${year}`;
-    return `${fullYear}-${month}-${day}`;
+
+  const ddmmyy = noTime.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
+  if (ddmmyy) {
+    const shortYear = Number(ddmmyy[3]);
+    const fullYear = shortYear >= 70 ? 1900 + shortYear : 2000 + shortYear;
+    return toIsoDateSafe(fullYear, ddmmyy[2], ddmmyy[1]);
   }
+
+  const yyyymmdd = noTime.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (yyyymmdd) {
+    return toIsoDateSafe(yyyymmdd[1], yyyymmdd[2], yyyymmdd[3]);
+  }
+
   return "";
 }
 

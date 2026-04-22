@@ -256,6 +256,27 @@ async function upsertOperatorResult(db, payload) {
   return { ok: true, userId };
 }
 
+async function deleteOperatorResult(db, payload) {
+  const userId = String(payload?.userId || "").trim();
+  const date = normalizeDateKey(payload?.date);
+  if (!userId || !date) {
+    return { ok: false, error: "Informe userId e date para excluir o lancamento." };
+  }
+
+  await ensureResultsTable(db);
+  const result = await db
+    .prepare("DELETE FROM operator_results_daily WHERE user_id = ? AND result_date = ?")
+    .bind(userId, date)
+    .run();
+
+  const deleted = Number(result?.meta?.changes || 0);
+  if (!deleted) {
+    return { ok: false, error: "Nenhum lancamento encontrado para exclusao nessa data." };
+  }
+
+  return { ok: true, userId, date, deleted };
+}
+
 async function readAllRecords(db) {
   await ensureResultsTable(db);
   const rows = await db
@@ -431,6 +452,16 @@ export default {
         return jsonResponse({ ok: true, record });
       }
 
+      if (url.pathname === "/api/operator-results/delete" && request.method === "POST") {
+        const body = await request.json();
+        const result = await deleteOperatorResult(env.DB, body || {});
+        if (!result.ok) {
+          return jsonResponse({ ok: false, error: result.error || "Nao foi possivel excluir o lancamento." }, 400);
+        }
+        const record = await readRecord(env.DB, result.userId);
+        return jsonResponse({ ok: true, deleted: result.deleted, record });
+      }
+
       if (url.pathname === "/api/operator-results/bulk" && request.method === "POST") {
         const body = await request.json();
         const items = Array.isArray(body?.items) ? body.items : [];
@@ -452,6 +483,32 @@ export default {
         return jsonResponse({
           ok: true,
           imported,
+          failed: errors.length,
+          errors
+        });
+      }
+
+      if (url.pathname === "/api/import/remove-by-sheet" && request.method === "POST") {
+        const body = await request.json();
+        const items = Array.isArray(body?.items) ? body.items : [];
+        if (!items.length) {
+          return jsonResponse({ ok: false, error: "Envie ao menos um item para remocao em lote." }, 400);
+        }
+
+        let removed = 0;
+        const errors = [];
+        for (let index = 0; index < items.length; index += 1) {
+          const result = await deleteOperatorResult(env.DB, items[index]);
+          if (result.ok) {
+            removed += Number(result.deleted || 1);
+          } else {
+            errors.push({ index, error: result.error || "Linha invalida ou nao encontrada" });
+          }
+        }
+
+        return jsonResponse({
+          ok: true,
+          removed,
           failed: errors.length,
           errors
         });
