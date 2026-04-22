@@ -513,7 +513,7 @@ body[data-theme="dark"] .filter-pill {
 .top-utility-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
 }
 
@@ -530,21 +530,18 @@ body[data-theme="dark"] .filter-pill {
 }
 
 .global-operator-filter {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
   min-width: 220px;
 }
 
 .global-operator-filter span {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  display: none;
 }
 
 .global-operator-filter select {
   height: 42px;
+  width: 100%;
   border: 1px solid var(--line);
   background: var(--surface-strong);
   color: var(--text);
@@ -1941,7 +1938,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   .spotlight-stats, .my-results-cards, .form-grid { grid-template-columns: 1fr; }
   .search-box { min-height: 60px; }
   .hero-copy h2 { max-width: none; }
-  .top-utility-bar { justify-content: space-between; }
+  .top-utility-bar { justify-content: flex-end; }
   .brand-block h1 { max-width: none; }
 }
 
