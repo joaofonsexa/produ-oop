@@ -2009,7 +2009,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .bars-grid {
   min-height: 180px;
   display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -2040,6 +2040,8 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .bar-label {
   font-size: 0.72rem;
   color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
 }
 
 .visual-cards {
@@ -2064,6 +2066,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 #dashboard .panel {
   padding: 20px;
+  align-self: start;
 }
 
 #dashboard-trend-chart .chart-card {
@@ -2078,6 +2081,10 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 #dashboard-illustrated-cards .visual-card {
   min-height: 132px;
   align-content: start;
+}
+
+#dashboard .info-grid:nth-of-type(2) .panel {
+  min-height: 0;
 }
 
 #latest-result-card .admin-item,
