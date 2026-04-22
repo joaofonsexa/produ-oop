@@ -2101,6 +2101,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
 
   chartIdSeed += 1;
   const gradientId = `trend-fill-${field}-${chartIdSeed}`;
+  const valueSuffix = field === "effectiveness" || field === "qualityScore" ? "%" : "";
 
   return `
     <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
@@ -2113,6 +2114,18 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
       <path d="M ${padX} ${height - padY} L ${width - padX} ${height - padY}" class="trend-axis"></path>
       <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
       <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      ${points.map((point, index) => {
+        if (points.length > 8 && index % 2 === 1 && index !== points.length - 1) return "";
+        const labelY = Math.max(padY + 9, point.y - 8);
+        return `
+          <text
+            x="${point.x.toFixed(2)}"
+            y="${labelY.toFixed(2)}"
+            class="trend-point-label"
+            text-anchor="middle"
+          >${escapeHtml(formatMetric(point.value, valueSuffix))}</text>
+        `;
+      }).join("")}
       ${points.map((point) => `
         <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
       `).join("")}
@@ -2131,6 +2144,7 @@ function buildMiniBars(items, color) {
             <div class="bar-track">
               <span class="bar-fill" style="height:${heightPercent.toFixed(2)}%; background:${color};"></span>
             </div>
+            <span class="bar-value">${escapeHtml(formatMetric(item.value))}</span>
             <span class="bar-label">${escapeHtml(item.label)}</span>
           </div>
         `;

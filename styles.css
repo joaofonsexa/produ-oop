@@ -2006,6 +2006,16 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   stroke-width: 1;
 }
 
+.trend-point-label {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #a9b7c8;
+  paint-order: stroke;
+  stroke: rgba(5, 8, 14, 0.85);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
 .bars-grid {
   min-height: 180px;
   display: grid;
@@ -2044,6 +2054,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   white-space: nowrap;
 }
 
+.bar-value {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+}
+
 .visual-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2065,7 +2082,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 #dashboard > .info-grid + .info-grid {
-  margin-top: 10px;
+  margin-top: 18px;
 }
 
 #dashboard > .info-grid:not(.single) {
