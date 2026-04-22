@@ -2058,28 +2058,32 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 #dashboard .info-grid {
-  align-items: stretch;
+  align-items: start;
+  gap: 18px;
 }
 
 #dashboard .panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+  padding: 20px;
 }
 
 #dashboard-trend-chart .chart-card {
-  min-height: 210px;
+  min-height: 200px;
 }
 
 #dashboard-illustrated-cards {
-  align-items: stretch;
+  align-items: start;
+  gap: 14px;
 }
 
 #dashboard-illustrated-cards .visual-card {
-  min-height: 140px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  min-height: 132px;
+  align-content: start;
+}
+
+#latest-result-card .admin-item,
+#dashboard-note .admin-item {
+  min-height: 170px;
+  align-content: start;
 }
 
 .visual-label {
@@ -2620,6 +2624,15 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
   .analytics-top-day-score {
     grid-column: 2 / 3;
+  }
+
+  #dashboard .panel {
+    padding: 18px;
+  }
+
+  #latest-result-card .admin-item,
+  #dashboard-note .admin-item {
+    min-height: 0;
   }
 }
 
