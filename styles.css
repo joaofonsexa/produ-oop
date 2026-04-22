@@ -2447,7 +2447,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-trend-two {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -2480,8 +2480,9 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .analytics-days-card-inline {
-  min-height: 100%;
+  min-height: 0;
   align-content: center;
+  padding-block: 22px;
 }
 
 .analytics-new-views-grid {
