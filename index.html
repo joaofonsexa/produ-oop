@@ -106,8 +106,7 @@
 
       <nav class="sidebar-nav">
         <button class="nav-link active" data-section="dashboard" type="button">Visão Geral</button>
-        <button class="nav-link" data-section="dashboard-analytics" type="button">Dashboard</button>
-        <button class="nav-link" data-section="my-results" type="button">Meu Resultado</button>
+        <button class="nav-link" data-section="dashboard-analytics" type="button">Análises</button>
         <button class="nav-link" data-section="history" type="button">Histórico</button>
         <button id="admin-nav-link" class="nav-link hidden" data-section="admin" type="button">Gestão</button>
       </nav>
@@ -302,6 +301,28 @@
               <div id="analytics-gauges" class="analytics-gauges"></div>
             </section>
 
+            <div class="analytics-lower-grid analytics-new-views-grid">
+              <section class="panel">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Consistencia</p>
+                    <h3>Variacao de efetividade, producao e qualidade</h3>
+                  </div>
+                </div>
+                <div id="analytics-consistency" class="analytics-consistency"></div>
+              </section>
+
+              <section class="panel">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Faixas</p>
+                    <h3>Distribuicao de desempenho</h3>
+                  </div>
+                </div>
+                <div id="analytics-performance-bands" class="analytics-performance-bands"></div>
+              </section>
+            </div>
+
             <section class="panel">
               <div class="section-head">
                 <div>
@@ -334,6 +355,16 @@
                 <div id="analytics-workdays" class="analytics-workdays"></div>
               </section>
             </div>
+
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Ranking</p>
+                  <h3>Top dias por score combinado</h3>
+                </div>
+              </div>
+              <div id="analytics-top-days" class="analytics-top-days"></div>
+            </section>
           </div>
         </div>
       </section>
@@ -407,13 +438,22 @@
               </div>
             </div>
 
-            <form id="admin-upload-form" class="admin-form">
+                        <form id="admin-upload-form" class="admin-form">
+              <label>
+                <span>Modelo de importa��o</span>
+                <select id="upload-mode">
+                  <option value="full">Completo (Produ��o + Efetividade + Qualidade)</option>
+                  <option value="production">Somente Produ��o</option>
+                  <option value="effectiveness">Somente Efetividade</option>
+                  <option value="quality">Somente Qualidade</option>
+                </select>
+              </label>
               <label>
                 <span>Planilha</span>
                 <input id="upload-file" type="file" accept=".xlsx,.xls,.csv">
               </label>
 
-              <p class="field-help">Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Produção e Qualidade. A data é lida da própria planilha, linha a linha.</p>
+              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Produção e Qualidade. A data é lida da própria planilha, linha a linha.</p>
               <p id="upload-status" class="upload-status hidden" role="status" aria-live="polite"></p>
 
               <div class="form-actions">
@@ -443,3 +483,4 @@
   <script src="script.js?v=20260417-portal-01"></script>
 </body>
 </html>
+

@@ -8,6 +8,29 @@ const ACCESS_LEVELS = {
   operador: { label: "Operador", canManage: false }
 };
 
+const IMPORT_MODES = {
+  full: {
+    label: "Completo",
+    metricColumn: null,
+    templateColumns: ["Efetividade", "Producao", "Qualidade"]
+  },
+  production: {
+    label: "Somente Producao",
+    metricColumn: "production",
+    templateColumns: ["Producao"]
+  },
+  effectiveness: {
+    label: "Somente Efetividade",
+    metricColumn: "effectiveness",
+    templateColumns: ["Efetividade"]
+  },
+  quality: {
+    label: "Somente Qualidade",
+    metricColumn: "quality",
+    templateColumns: ["Qualidade"]
+  }
+};
+
 const state = {
   section: "dashboard",
   theme: DEFAULT_THEME,
@@ -74,9 +97,12 @@ const elements = {
   analyticsClearFilters: document.querySelector("#analytics-clear-filters"),
   analyticsKpiRow: document.querySelector("#analytics-kpi-row"),
   analyticsGauges: document.querySelector("#analytics-gauges"),
+  analyticsConsistency: document.querySelector("#analytics-consistency"),
+  analyticsPerformanceBands: document.querySelector("#analytics-performance-bands"),
   analyticsDailyBars: document.querySelector("#analytics-daily-bars"),
   analyticsTagsBars: document.querySelector("#analytics-tags-bars"),
   analyticsDepartments: document.querySelector("#analytics-departments"),
+  analyticsTopDays: document.querySelector("#analytics-top-days"),
   analyticsWorkdays: document.querySelector("#analytics-workdays"),
   historyTableWrapper: document.querySelector("#history-table-wrapper"),
   historyDeleteAll: document.querySelector("#history-delete-all"),
@@ -87,7 +113,9 @@ const elements = {
   adminEffectiveness: document.querySelector("#admin-effectiveness"),
   adminQuality: document.querySelector("#admin-quality"),
   adminUploadForm: document.querySelector("#admin-upload-form"),
+  uploadMode: document.querySelector("#upload-mode"),
   uploadFile: document.querySelector("#upload-file"),
+  uploadHelpText: document.querySelector("#upload-help-text"),
   uploadStatus: document.querySelector("#upload-status"),
   importUpload: document.querySelector("#import-upload"),
   downloadTemplate: document.querySelector("#download-template"),
@@ -103,6 +131,7 @@ async function init() {
   applyTheme(state.theme);
   state.session = loadSession();
   bindEvents();
+  updateUploadModeHelp();
   syncAuthView();
 
   if (hasSsoTokenInUrl()) {
@@ -157,6 +186,7 @@ function bindEvents() {
   elements.adminHistoryWrapper?.addEventListener("click", (event) => void handleAdminHistoryClick(event));
   elements.historyTableWrapper?.addEventListener("click", (event) => void handleHistoryTableClick(event));
   elements.adminUploadForm?.addEventListener("submit", (event) => event.preventDefault());
+  elements.uploadMode?.addEventListener("change", updateUploadModeHelp);
   elements.importUpload?.addEventListener("click", () => void handleSpreadsheetUpload());
   elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
   elements.removeUpload?.addEventListener("click", () => void handleSpreadsheetRemoval());
@@ -411,6 +441,8 @@ async function handleSpreadsheetUpload() {
     window.alert("Biblioteca de planilha indisponivel no momento.");
     return;
   }
+  const importMode = getSelectedImportMode();
+  const importModeDef = getImportModeDefinition(importMode);
 
   state.importInProgress = true;
   if (elements.uploadFile) elements.uploadFile.disabled = true;
@@ -425,8 +457,9 @@ async function handleSpreadsheetUpload() {
       unmatchedOperatorCount,
       invalidMetricCount,
       invalidDateCount,
+      complementedRowsCount,
       buffer
-    } = await parseSpreadsheetImportFile(file);
+    } = await parseSpreadsheetImportFile(file, { importMode });
     let updatedCount = 0;
 
     if (!importItems.length) {
@@ -463,14 +496,15 @@ async function handleSpreadsheetUpload() {
     await loadAdminSelectedRecord();
     if (state.session?.id) await loadMyResults();
     renderAll();
-    setUploadStatus(`Importacao concluida: ${updatedCount} linha(s) gravada(s).`, "success");
+    setUploadStatus(`Importacao (${importModeDef.label}) concluida: ${updatedCount} linha(s) gravada(s).`, "success");
     window.alert(
-      `Carga concluida.\n` +
+      `Carga concluida (${importModeDef.label}).\n` +
       `- Linhas lidas: ${totalRows}\n` +
       `- Importadas: ${updatedCount}\n` +
       `- Sem operador correspondente: ${unmatchedOperatorCount}\n` +
       `- Ignoradas por data invalida: ${invalidDateCount}\n` +
       `- Ignoradas por metrica invalida: ${invalidMetricCount}\n` +
+      `- Linhas complementadas com valores existentes/zero: ${complementedRowsCount}\n` +
       `- Falhas no servidor: ${bulkFailed}`
     );
   } catch (error) {
@@ -583,6 +617,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
   const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
   const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
+  const importMode = getImportModeDefinition(options.importMode);
 
   if (idxName < 0 && idxUsername < 0) {
     throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
@@ -590,17 +625,30 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   if (idxDate < 0) {
     throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
   }
-  if (!options.forRemoval && (idxEffectiveness < 0 || idxProduction < 0 || idxQuality < 0)) {
-    throw new Error("A planilha precisa ter as colunas de Producao, Efetividade e Qualidade.");
+  if (!options.forRemoval) {
+    if (importMode.metricColumn === "production" && idxProduction < 0) {
+      throw new Error("No modo Somente Producao, a planilha precisa ter a coluna Producao.");
+    }
+    if (importMode.metricColumn === "effectiveness" && idxEffectiveness < 0) {
+      throw new Error("No modo Somente Efetividade, a planilha precisa ter a coluna Efetividade.");
+    }
+    if (importMode.metricColumn === "quality" && idxQuality < 0) {
+      throw new Error("No modo Somente Qualidade, a planilha precisa ter a coluna Qualidade.");
+    }
+    if (importMode.metricColumn === null && (idxEffectiveness < 0 || idxProduction < 0 || idxQuality < 0)) {
+      throw new Error("No modo Completo, a planilha precisa ter as colunas de Producao, Efetividade e Qualidade.");
+    }
   }
 
   const operatorByName = new Map(state.operators.map((operator) => [normalizeLooseText(operator.name), operator]));
   const operatorByUsername = new Map(state.operators.map((operator) => [normalizeLooseText(operator.username), operator]));
+  const existingEntries = buildExistingEntriesLookup();
   const importItems = [];
   const uniqueKeys = new Set();
   let unmatchedOperatorCount = 0;
   let invalidMetricCount = 0;
   let invalidDateCount = 0;
+  let complementedRowsCount = 0;
   let totalRows = 0;
 
   for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
@@ -637,12 +685,36 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       continue;
     }
 
-    const effectiveness = parseMetricInput(row[idxEffectiveness], { percent: true });
-    const productionTotal = parseMetricInput(row[idxProduction]);
-    const qualityScore = parseMetricInput(row[idxQuality], { percent: true });
+    const existing = existingEntries.get(uniqueKey) || null;
+    const productionFromSheet = idxProduction >= 0 ? parseMetricInput(row[idxProduction]) : NaN;
+    const effectivenessFromSheet = idxEffectiveness >= 0 ? parseMetricInput(row[idxEffectiveness], { percent: true }) : NaN;
+    const qualityFromSheet = idxQuality >= 0 ? parseMetricInput(row[idxQuality], { percent: true }) : NaN;
+
+    const productionTotal = resolveMetricByMode({
+      mode: importMode.metricColumn,
+      metric: "production",
+      parsedValue: productionFromSheet,
+      existingValue: Number(existing?.productionTotal)
+    });
+    const effectiveness = resolveMetricByMode({
+      mode: importMode.metricColumn,
+      metric: "effectiveness",
+      parsedValue: effectivenessFromSheet,
+      existingValue: Number(existing?.effectiveness)
+    });
+    const qualityScore = resolveMetricByMode({
+      mode: importMode.metricColumn,
+      metric: "quality",
+      parsedValue: qualityFromSheet,
+      existingValue: Number(existing?.qualityScore)
+    });
+
     if (!Number.isFinite(effectiveness) || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
       invalidMetricCount += 1;
       continue;
+    }
+    if (!existing && importMode.metricColumn !== null) {
+      complementedRowsCount += 1;
     }
 
     importItems.push({
@@ -661,7 +733,8 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     totalRows,
     unmatchedOperatorCount,
     invalidMetricCount,
-    invalidDateCount
+    invalidDateCount,
+    complementedRowsCount
   };
 }
 
@@ -695,23 +768,74 @@ function handleDownloadTemplate() {
     window.alert("Biblioteca de planilha indisponivel.");
     return;
   }
-
-  const rows = [["Nome do Operador", "Usuario", "Data", "Efetividade", "Producao", "Qualidade"]];
+  const importMode = getSelectedImportMode();
+  const modeDef = getImportModeDefinition(importMode);
+  const rows = [["Nome do Operador", "Usuario", "Data", ...modeDef.templateColumns]];
   state.operators.forEach((operator) => {
-    rows.push([
-      operator.name || "",
-      operator.username || "",
-      "",
-      "",
-      "",
-      ""
-    ]);
+    const base = [operator.name || "", operator.username || "", ""];
+    rows.push([...base, ...modeDef.templateColumns.map(() => "")]);
   });
 
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "ModeloResultados");
-  XLSX.writeFile(workbook, `modelo-resultados-operador-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const sheetName = modeDef.metricColumn ? `Modelo-${modeDef.metricColumn}` : "Modelo-Completo";
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  const suffix = modeDef.metricColumn || "completo";
+  XLSX.writeFile(workbook, `modelo-resultados-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function getSelectedImportMode() {
+  const selected = String(elements.uploadMode?.value || "full").trim();
+  return IMPORT_MODES[selected] ? selected : "full";
+}
+
+function getImportModeDefinition(mode) {
+  const normalized = String(mode || "full").trim();
+  return IMPORT_MODES[normalized] || IMPORT_MODES.full;
+}
+
+function updateUploadModeHelp() {
+  if (!elements.uploadHelpText) return;
+  const modeDef = getImportModeDefinition(getSelectedImportMode());
+  if (modeDef.metricColumn === null) {
+    elements.uploadHelpText.textContent = "Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Producao e Qualidade.";
+    return;
+  }
+
+  const metricLabel = modeDef.templateColumns[0] || "Metrica";
+  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador (ou Usuario), Data e ${metricLabel}. As demais metricas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
+}
+
+function buildExistingEntriesLookup() {
+  const lookup = new Map();
+  const records = [...(state.operationRecords || [])];
+  if (state.myRecord) records.push(state.myRecord);
+  if (state.adminSelectedRecord) records.push(state.adminSelectedRecord);
+
+  records.forEach((record) => {
+    const userId = String(record?.userId || "");
+    if (!userId) return;
+    (record?.entries || []).forEach((entry) => {
+      const date = normalizeDateKey(entry?.date);
+      if (!date) return;
+      lookup.set(`${userId}__${date}`, {
+        productionTotal: Number(entry?.productionTotal),
+        effectiveness: Number(entry?.effectiveness),
+        qualityScore: Number(entry?.qualityScore)
+      });
+    });
+  });
+  return lookup;
+}
+
+function resolveMetricByMode({ mode, metric, parsedValue, existingValue }) {
+  if (mode === null || mode === metric) {
+    return Number.isFinite(parsedValue) ? Number(parsedValue) : NaN;
+  }
+  if (Number.isFinite(existingValue)) {
+    return Number(existingValue);
+  }
+  return 0;
 }
 
 function syncAuthView() {
@@ -793,9 +917,12 @@ function renderDashboardAnalytics() {
   if (!filtered.length) {
     elements.analyticsKpiRow.innerHTML = emptyState("Sem dados", "Nao ha dados para os filtros selecionados.");
     elements.analyticsGauges.innerHTML = "";
+    elements.analyticsConsistency.innerHTML = "";
+    elements.analyticsPerformanceBands.innerHTML = "";
     elements.analyticsDailyBars.innerHTML = "";
     elements.analyticsTagsBars.innerHTML = "";
     elements.analyticsDepartments.innerHTML = "";
+    elements.analyticsTopDays.innerHTML = "";
     elements.analyticsWorkdays.innerHTML = "";
     return;
   }
@@ -818,9 +945,12 @@ function renderDashboardAnalytics() {
     ${buildGaugeCard("Qualidade", avgQuality, 0, 100, "%")}
   `;
 
+  elements.analyticsConsistency.innerHTML = buildAnalyticsConsistencyCards(filtered);
+  elements.analyticsPerformanceBands.innerHTML = buildAnalyticsPerformanceBands(filtered);
   elements.analyticsDailyBars.innerHTML = buildAnalyticsDailyBars(filtered);
   elements.analyticsTagsBars.innerHTML = buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest);
   elements.analyticsDepartments.innerHTML = buildAnalyticsTrendPanel(filtered);
+  elements.analyticsTopDays.innerHTML = buildAnalyticsTopDays(filtered);
   elements.analyticsWorkdays.innerHTML = `
     <article class="analytics-days-card">
       <strong>${escapeHtml(String(filtered.length))}</strong>
@@ -1042,6 +1172,181 @@ function buildAnalyticsTrendPanel(entries) {
       </div>
     </div>
   `;
+}
+
+function buildAnalyticsConsistencyCards(entries) {
+  const monthlyQualityValues = getMonthlyQualityValues(entries);
+  return `
+    ${buildMetricConsistencyCard(entries, "productionTotal", "Producao", "")}
+    ${buildMetricConsistencyCard(entries, "effectiveness", "Efetividade", "%")}
+    ${buildMetricConsistencyCardFromValues(monthlyQualityValues, "Qualidade mensal", "%")}
+  `;
+}
+
+function buildMetricConsistencyCard(entries, field, label, suffix) {
+  const values = entries.map((entry) => Number(entry?.[field] || 0)).filter(Number.isFinite);
+  return buildMetricConsistencyCardFromValues(values, label, suffix);
+}
+
+function buildMetricConsistencyCardFromValues(values, label, suffix) {
+  if (!values.length) return "";
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const stdDev = getStandardDeviation(values, average);
+  const variation = average > 0 ? (stdDev / average) * 100 : 0;
+  const trendTone = variation <= 12 ? "stable" : variation <= 25 ? "attention" : "critical";
+  const trendLabel = variation <= 12 ? "Estavel" : variation <= 25 ? "Oscilando" : "Instavel";
+
+  return `
+    <article class="analytics-consistency-card ${trendTone}">
+      <div class="analytics-consistency-head">
+        <p>${escapeHtml(label)}</p>
+        <span>${escapeHtml(trendLabel)}</span>
+      </div>
+      <strong>${escapeHtml(formatMetric(average, suffix))}</strong>
+      <div class="analytics-consistency-meta">
+        <span>Min ${escapeHtml(formatMetric(min, suffix))}</span>
+        <span>Max ${escapeHtml(formatMetric(max, suffix))}</span>
+      </div>
+      <div class="analytics-consistency-meta">
+        <span>Amplitude ${escapeHtml(formatMetric(max - min, suffix))}</span>
+        <span>Variacao ${escapeHtml(formatMetric(variation, "%"))}</span>
+      </div>
+    </article>
+  `;
+}
+
+function buildAnalyticsPerformanceBands(entries) {
+  const entriesWithQualityRef = applyMonthlyQualityReference(entries);
+  const maxProduction = Math.max(...entries.map((entry) => Number(entry.productionTotal || 0)), 1);
+  const buckets = {
+    high: { label: "Alta performance", count: 0, tone: "high" },
+    mid: { label: "Faixa estavel", count: 0, tone: "mid" },
+    low: { label: "Ponto de atencao", count: 0, tone: "low" }
+  };
+
+  entriesWithQualityRef.forEach((entry) => {
+    const productionScore = (Number(entry.productionTotal || 0) / Math.max(maxProduction, 1)) * 100;
+    const effectiveness = clampPercent(entry.effectiveness);
+    const quality = clampPercent(entry.qualityReferenceScore);
+    const composite = (productionScore * 0.4) + (effectiveness * 0.3) + (quality * 0.3);
+
+    if (composite >= 80) {
+      buckets.high.count += 1;
+    } else if (composite >= 60) {
+      buckets.mid.count += 1;
+    } else {
+      buckets.low.count += 1;
+    }
+  });
+
+  const total = Math.max(entries.length, 1);
+  const rows = [buckets.high, buckets.mid, buckets.low];
+  return `
+    <div class="analytics-band-list">
+      ${rows.map((bucket) => {
+        const percent = (bucket.count / total) * 100;
+        return `
+          <div class="analytics-band-row">
+            <span>${escapeHtml(bucket.label)}</span>
+            <div class="analytics-band-track">
+              <span class="analytics-band-fill ${bucket.tone}" style="width:${percent.toFixed(2)}%"></span>
+            </div>
+            <strong>${escapeHtml(`${bucket.count} dias`)}</strong>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function buildAnalyticsTopDays(entries) {
+  const entriesWithQualityRef = applyMonthlyQualityReference(entries);
+  const maxProduction = Math.max(...entriesWithQualityRef.map((entry) => Number(entry.productionTotal || 0)), 1);
+  const ranked = entriesWithQualityRef.map((entry) => {
+    const productionScore = (Number(entry.productionTotal || 0) / Math.max(maxProduction, 1)) * 100;
+    const effectiveness = clampPercent(entry.effectiveness);
+    const quality = clampPercent(entry.qualityReferenceScore);
+    const score = (productionScore * 0.4) + (effectiveness * 0.3) + (quality * 0.3);
+    return { ...entry, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const topDays = ranked.slice(0, 5);
+  return `
+    <div class="analytics-top-days-list">
+      ${topDays.map((entry, index) => `
+        <article class="analytics-top-day-item">
+          <div class="analytics-top-day-rank">${escapeHtml(String(index + 1))}</div>
+          <div class="analytics-top-day-info">
+            <strong>${escapeHtml(formatDate(entry.date))}</strong>
+            <p>Prod ${escapeHtml(formatMetric(entry.productionTotal))} | Eff ${escapeHtml(formatMetric(entry.effectiveness, "%"))} | Qual M ${escapeHtml(formatMetric(entry.qualityReferenceScore, "%"))}</p>
+          </div>
+          <div class="analytics-top-day-score">${escapeHtml(formatMetric(entry.score, "%"))}</div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function applyMonthlyQualityReference(entries) {
+  const monthQuality = getMonthlyQualityMap(entries);
+  const sortedMonths = [...monthQuality.keys()].sort((a, b) => a.localeCompare(b));
+  return entries.map((entry) => {
+    const monthKey = getMonthKey(entry?.date);
+    const qualityReferenceScore = resolveQualityReferenceForMonth(monthKey, monthQuality, sortedMonths);
+    return { ...entry, qualityReferenceScore };
+  });
+}
+
+function getMonthlyQualityValues(entries) {
+  return [...getMonthlyQualityMap(entries).values()];
+}
+
+function getMonthlyQualityMap(entries) {
+  const monthly = new Map();
+  const sorted = [...entries].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+  sorted.forEach((entry) => {
+    const monthKey = getMonthKey(entry?.date);
+    const quality = Number(entry?.qualityScore);
+    if (!monthKey || !Number.isFinite(quality)) return;
+    monthly.set(monthKey, quality);
+  });
+  return monthly;
+}
+
+function resolveQualityReferenceForMonth(monthKey, monthQualityMap, sortedMonths) {
+  if (!monthKey || !monthQualityMap.size) return 0;
+  if (monthQualityMap.has(monthKey)) return Number(monthQualityMap.get(monthKey) || 0);
+
+  let fallback = null;
+  for (const knownMonth of sortedMonths) {
+    if (knownMonth <= monthKey) {
+      fallback = knownMonth;
+      continue;
+    }
+    break;
+  }
+
+  if (fallback && monthQualityMap.has(fallback)) {
+    return Number(monthQualityMap.get(fallback) || 0);
+  }
+  return Number(monthQualityMap.get(sortedMonths[0]) || 0);
+}
+
+function getMonthKey(dateValue) {
+  const normalized = normalizeDateKey(dateValue);
+  if (!normalized) return "";
+  return String(normalized).slice(0, 7);
+}
+
+function getStandardDeviation(values, average) {
+  if (!values.length) return 0;
+  const variance = values.reduce((sum, value) => {
+    const delta = value - average;
+    return sum + (delta * delta);
+  }, 0) / values.length;
+  return Math.sqrt(Math.max(variance, 0));
 }
 
 function renderHero() {
@@ -1547,11 +1852,20 @@ function hydrateAdminFormFromRecord() {
 }
 
 function setSection(sectionId) {
-  state.section = sectionId;
-  elements.sections.forEach((section) => section.classList.toggle("active", section.id === sectionId));
-  elements.navLinks.forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
+  let nextSection = String(sectionId || "dashboard");
+  if (nextSection === "my-results") {
+    nextSection = "dashboard";
+  }
+  const hasSection = elements.sections.some((section) => section.id === nextSection);
+  if (!hasSection) {
+    nextSection = "dashboard";
+  }
+
+  state.section = nextSection;
+  elements.sections.forEach((section) => section.classList.toggle("active", section.id === nextSection));
+  elements.navLinks.forEach((button) => button.classList.toggle("active", button.dataset.section === nextSection));
   elements.heroHeader?.classList.remove("hidden");
-  elements.heroGrid?.classList.toggle("hidden", sectionId !== "dashboard");
+  elements.heroGrid?.classList.toggle("hidden", nextSection !== "dashboard");
   updateGlobalOperatorFilterVisibility();
 }
 
