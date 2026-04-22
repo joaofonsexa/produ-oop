@@ -78,6 +78,7 @@ const elements = {
   analyticsDepartments: document.querySelector("#analytics-departments"),
   analyticsWorkdays: document.querySelector("#analytics-workdays"),
   historyTableWrapper: document.querySelector("#history-table-wrapper"),
+  historyDeleteAll: document.querySelector("#history-delete-all"),
   adminForm: document.querySelector("#admin-form"),
   adminUser: document.querySelector("#admin-user"),
   adminDate: document.querySelector("#admin-date"),
@@ -162,6 +163,7 @@ function bindEvents() {
   elements.analyticsAttendantSearch?.addEventListener("input", handleAnalyticsAttendantSearchInput);
   elements.analyticsDateList?.addEventListener("change", handleAnalyticsDateChange);
   elements.analyticsAttendantList?.addEventListener("change", handleAnalyticsAttendantChange);
+  elements.historyDeleteAll?.addEventListener("click", () => void handleDeleteAllResults());
   document.addEventListener("click", handleDocumentClick);
 }
 
@@ -661,6 +663,31 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     invalidDateCount
   };
 }
+
+async function handleDeleteAllResults() {
+  if (!canManage()) return;
+  const confirmed = window.confirm("Tem certeza que deseja APAGAR TODOS os lancamentos da operacao? Esta acao nao pode ser desfeita.");
+  if (!confirmed) return;
+
+  setBusy(true);
+  try {
+    const result = await fetchJson(`${REMOTE_API_BASE}/operator-results/delete-all`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirm: true })
+    });
+
+    state.myRecord = null;
+    state.adminSelectedRecord = null;
+    state.operationRecords = [];
+    renderAll();
+    window.alert(`Todos os lancamentos foram apagados com sucesso. Registros removidos: ${Number(result?.deleted || 0)}.`);
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel apagar todos os lancamentos.");
+  } finally {
+    setBusy(false);
+  }
+}
 function handleDownloadTemplate() {
   if (!canManage()) return;
   if (!window.XLSX) {
@@ -692,6 +719,7 @@ function syncAuthView() {
   elements.appShell?.classList.toggle("hidden", !isLogged);
   elements.adminNavLink?.classList.toggle("hidden", !canManage());
   elements.globalOperatorFilter?.classList.toggle("hidden", !canManage());
+  elements.historyDeleteAll?.classList.toggle("hidden", !canManage());
 
   if (!isLogged) return;
 

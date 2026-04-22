@@ -277,6 +277,13 @@ async function deleteOperatorResult(db, payload) {
   return { ok: true, userId, date, deleted };
 }
 
+async function deleteAllOperatorResults(db) {
+  await ensureResultsTable(db);
+  const result = await db.prepare("DELETE FROM operator_results_daily").run();
+  const deleted = Number(result?.meta?.changes || 0);
+  return { ok: true, deleted };
+}
+
 async function readAllRecords(db) {
   await ensureResultsTable(db);
   const rows = await db
@@ -460,6 +467,15 @@ export default {
         }
         const record = await readRecord(env.DB, result.userId);
         return jsonResponse({ ok: true, deleted: result.deleted, record });
+      }
+
+      if (url.pathname === "/api/operator-results/delete-all" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        if (!body?.confirm) {
+          return jsonResponse({ ok: false, error: "Confirme a exclusao em lote para continuar." }, 400);
+        }
+        const result = await deleteAllOperatorResults(env.DB);
+        return jsonResponse({ ok: true, deleted: result.deleted });
       }
 
       if (url.pathname === "/api/operator-results/bulk" && request.method === "POST") {
