@@ -2023,6 +2023,24 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   stroke-width: 1;
 }
 
+.trend-grid-line {
+  stroke: rgba(255, 255, 255, 0.06);
+  stroke-width: 1;
+}
+
+.trend-plot-border {
+  fill: transparent;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.trend-y-label,
+.trend-x-label {
+  fill: #93a7bd;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .trend-point-label {
   font-size: 10px;
   font-weight: 700;

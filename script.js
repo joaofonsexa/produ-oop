@@ -2085,41 +2085,72 @@ function getRecentEntries(record, maxItems = 10) {
 
 function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const values = entries.map((entry) => Number(entry?.[field] || 0));
-  const maxValue = Number.isFinite(fixedMax) ? fixedMax : Math.max(...values, 1);
-  const minValue = 0;
-  const width = Math.max(480, (Math.max(values.length, 2) - 1) * 62 + 28);
-  const isScrollable = values.length > 8;
-  const height = 170;
-  const padX = 14;
-  const padY = 18;
-  const innerW = width - padX * 2;
-  const innerH = height - padY * 2;
+  const labels = entries.map((entry) => shortDate(entry?.date));
+  const width = Math.max(520, (Math.max(values.length, 2) - 1) * 68 + 78);
+  const isScrollable = values.length > 7;
+  const height = 220;
+  const padLeft = 46;
+  const padRight = 14;
+  const padTop = 18;
+  const padBottom = 34;
+  const innerW = width - padLeft - padRight;
+  const innerH = height - padTop - padBottom;
   const denom = Math.max(values.length - 1, 1);
+  const rawMin = Math.min(...values, 0);
+  const rawMax = Math.max(...values, 1);
+  const spread = Math.max(rawMax - rawMin, 1);
+  const dynamicPad = Math.max(spread * 0.24, field === "productionTotal" ? 6 : 4);
+  let minValue = Math.max(0, rawMin - dynamicPad);
+  let maxValue = rawMax + dynamicPad;
+  if (Number.isFinite(fixedMax)) {
+    maxValue = Math.min(Math.max(fixedMax, maxValue), fixedMax);
+  }
+  if (maxValue <= minValue) {
+    maxValue = minValue + 1;
+  }
 
   const points = values.map((value, index) => {
-    const x = padX + (innerW * index) / denom;
+    const x = padLeft + (innerW * index) / denom;
     const ratio = (value - minValue) / Math.max(maxValue - minValue, 1);
-    const y = padY + innerH - ratio * innerH;
+    const y = padTop + innerH - ratio * innerH;
     return { x, y, value };
   });
 
   const polyline = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-  const areaPoints = `${padX},${height - padY} ${polyline} ${width - padX},${height - padY}`;
+  const areaPoints = `${padLeft},${height - padBottom} ${polyline} ${width - padRight},${height - padBottom}`;
 
   chartIdSeed += 1;
   const gradientId = `trend-fill-${field}-${chartIdSeed}`;
   const valueSuffix = field === "effectiveness" || field === "qualityScore" ? "%" : "";
+  const yTicks = 4;
+  const yLabels = Array.from({ length: yTicks + 1 }, (_, idx) => {
+    const ratio = idx / yTicks;
+    const value = maxValue - ((maxValue - minValue) * ratio);
+    const y = padTop + (innerH * ratio);
+    return { value, y };
+  });
 
   return `
     <div class="trend-scroll${isScrollable ? " is-scrollable" : ""}">
-      <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
+      <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Grafico de tendencia">
         <defs>
           <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
             <stop offset="100%" stop-color="${color}" stop-opacity="0.02"></stop>
           </linearGradient>
         </defs>
-        <path d="M ${padX} ${height - padY} L ${width - padX} ${height - padY}" class="trend-axis"></path>
+        ${yLabels.map((tick) => `
+          <line
+            x1="${padLeft}"
+            y1="${tick.y.toFixed(2)}"
+            x2="${(width - padRight)}"
+            y2="${tick.y.toFixed(2)}"
+            class="trend-grid-line"
+          ></line>
+          <text x="${(padLeft - 8)}" y="${(tick.y + 3).toFixed(2)}" class="trend-y-label" text-anchor="end">${escapeHtml(formatMetric(tick.value, valueSuffix))}</text>
+        `).join("")}
+        <rect x="${padLeft}" y="${padTop}" width="${innerW}" height="${innerH}" class="trend-plot-border"></rect>
+        <path d="M ${padLeft} ${height - padBottom} L ${width - padRight} ${height - padBottom}" class="trend-axis"></path>
         <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
         <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
         ${points.map((point, index) => {
@@ -2128,10 +2159,10 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
           const labelText = formatMetric(point.value, valueSuffix);
           const labelWidth = Math.max(28, (labelText.length * 6.2) + 12);
           const labelX = Math.max(
-            padX,
-            Math.min(point.x - (labelWidth / 2), (width - padX) - labelWidth)
+            padLeft,
+            Math.min(point.x - (labelWidth / 2), (width - padRight) - labelWidth)
           );
-          const labelY = Math.max(padY + 2, point.y - 24);
+          const labelY = Math.max(padTop + 2, point.y - 24);
           return `
             <g class="trend-point-chip">
               <rect
@@ -2148,12 +2179,17 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
                 class="trend-point-label"
                 text-anchor="middle"
               >${escapeHtml(labelText)}</text>
-            </g>
-          `;
-        }).join("")}
-        ${points.map((point) => `
-          <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
-        `).join("")}
+          </g>
+        `;
+      }).join("")}
+      ${points.map((point) => `
+        <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
+      `).join("")}
+      ${points.map((point, index) => {
+        const showXLabel = points.length <= 8 || index === 0 || index === points.length - 1 || index % 2 === 0;
+        if (!showXLabel) return "";
+        return `<text x="${point.x.toFixed(2)}" y="${(height - 10).toFixed(2)}" class="trend-x-label" text-anchor="middle">${escapeHtml(labels[index] || "--")}</text>`;
+      }).join("")}
       </svg>
     </div>
   `;
