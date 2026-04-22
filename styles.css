@@ -2393,12 +2393,12 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .analytics-new-views-grid {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
 }
 
 .analytics-consistency {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
 }
 
@@ -2413,13 +2413,15 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-consistency-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .analytics-consistency-head p {
   font-weight: 700;
+  margin: 0;
 }
 
 .analytics-consistency-head span {
@@ -2428,6 +2430,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   font-size: 0.74rem;
   padding: 2px 8px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .analytics-consistency-card strong {
@@ -2436,11 +2439,15 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .analytics-consistency-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.analytics-consistency-meta span {
+  display: block;
 }
 
 .analytics-consistency-card.stable {
@@ -2466,9 +2473,14 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-band-row {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr) 84px;
+  grid-template-columns: 150px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
+}
+
+.analytics-band-row strong {
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .analytics-band-track {
@@ -2551,13 +2563,18 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   .analytics-kpi-row,
   .analytics-gauges,
   .analytics-lower-grid,
+  .analytics-new-views-grid,
   .analytics-consistency {
     grid-template-columns: 1fr;
   }
 
   .analytics-band-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+  }
+
+  .analytics-consistency-meta {
+    grid-template-columns: 1fr;
   }
 
   .analytics-top-day-item {
