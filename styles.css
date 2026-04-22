@@ -2393,12 +2393,12 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .analytics-new-views-grid {
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  grid-template-columns: 1fr;
 }
 
 .analytics-consistency {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -2439,15 +2439,17 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .analytics-consistency-meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
   font-size: 0.84rem;
 }
 
 .analytics-consistency-meta span {
-  display: block;
+  display: inline-block;
+  white-space: nowrap;
 }
 
 .analytics-consistency-card.stable {
@@ -2473,7 +2475,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-band-row {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) max-content;
+  grid-template-columns: 160px minmax(0, 1fr) 70px;
   align-items: center;
   gap: 10px;
 }
@@ -2481,6 +2483,8 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .analytics-band-row strong {
   justify-self: end;
   white-space: nowrap;
+  min-width: 70px;
+  text-align: right;
 }
 
 .analytics-band-track {

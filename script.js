@@ -1211,7 +1211,7 @@ function buildMetricConsistencyCardFromValues(values, label, suffix) {
       </div>
       <div class="analytics-consistency-meta">
         <span>Amplitude ${escapeHtml(formatMetric(max - min, suffix))}</span>
-        <span>Variacao ${escapeHtml(formatMetric(variation, "%"))}</span>
+        <span>Var. ${escapeHtml(formatMetric(variation, "%"))}</span>
       </div>
     </article>
   `;
@@ -1253,7 +1253,7 @@ function buildAnalyticsPerformanceBands(entries) {
             <div class="analytics-band-track">
               <span class="analytics-band-fill ${bucket.tone}" style="width:${percent.toFixed(2)}%"></span>
             </div>
-            <strong>${escapeHtml(`${bucket.count} dias`)}</strong>
+            <strong>${escapeHtml(String(bucket.count))}</strong>
           </div>
         `;
       }).join("")}
