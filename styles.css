@@ -2003,8 +2003,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .trend-scroll {
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
+  padding-bottom: 0;
+}
+
+.trend-scroll.is-scrollable {
+  overflow-x: auto;
   padding-bottom: 4px;
 }
 
@@ -2038,8 +2043,13 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .bars-scroll {
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
+  padding-bottom: 0;
+}
+
+.bars-scroll.is-scrollable {
+  overflow-x: auto;
   padding-bottom: 4px;
 }
 

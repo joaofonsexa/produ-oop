@@ -2088,6 +2088,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const maxValue = Number.isFinite(fixedMax) ? fixedMax : Math.max(...values, 1);
   const minValue = 0;
   const width = Math.max(480, (Math.max(values.length, 2) - 1) * 62 + 28);
+  const isScrollable = values.length > 8;
   const height = 170;
   const padX = 14;
   const padY = 18;
@@ -2110,7 +2111,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const valueSuffix = field === "effectiveness" || field === "qualityScore" ? "%" : "";
 
   return `
-    <div class="trend-scroll">
+    <div class="trend-scroll${isScrollable ? " is-scrollable" : ""}">
       <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
         <defs>
           <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
@@ -2164,7 +2165,7 @@ function buildMiniBars(items, color) {
   const gridClass = hasManyItems ? "bars-grid bars-grid-wide" : "bars-grid";
   const gridStyle = hasManyItems ? ` style="grid-template-columns: repeat(${items.length}, minmax(62px, 62px));"` : "";
   return `
-    <div class="bars-scroll">
+    <div class="bars-scroll${hasManyItems ? " is-scrollable" : ""}">
       <div class="${gridClass}"${gridStyle}>
       ${items.map((item) => {
         const heightPercent = (Number(item.value || 0) / maxValue) * 100;
