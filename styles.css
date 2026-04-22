@@ -2402,7 +2402,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .analytics-lower-grid {
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
@@ -2449,6 +2449,14 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.analytics-trend-two .chart-card {
+  min-height: 0;
+}
+
+.analytics-trend-two .trend-svg {
+  height: 140px;
 }
 
 .analytics-workdays {
