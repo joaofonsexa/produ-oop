@@ -2002,6 +2002,11 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   display: block;
 }
 
+.trend-scroll:not(.is-scrollable) .trend-svg {
+  width: min(620px, 100%);
+  margin-inline: auto;
+}
+
 .trend-scroll {
   overflow-x: hidden;
   overflow-y: hidden;
