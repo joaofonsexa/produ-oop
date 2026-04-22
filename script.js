@@ -1,0 +1,1591 @@
+const SESSION_KEY = "operator-results-session-v1";
+const THEME_KEY = "operator-results-theme-v1";
+const DEFAULT_THEME = "dark";
+const REMOTE_API_BASE = "/api";
+
+const ACCESS_LEVELS = {
+  gestor: { label: "Gestor", canManage: true },
+  operador: { label: "Operador", canManage: false }
+};
+
+const state = {
+  section: "dashboard",
+  theme: DEFAULT_THEME,
+  session: null,
+  myRecord: null,
+  operators: [],
+  adminSelectedUserId: "",
+  adminSelectedRecord: null,
+  operationRecords: [],
+  analytics: {
+    attendantQuery: "",
+    selectedAttendantId: "all",
+    selectedDates: [],
+    recordKey: ""
+  }
+};
+
+let chartIdSeed = 0;
+
+const elements = {
+  body: document.body,
+  loginScreen: document.querySelector("#login-screen"),
+  loginForm: document.querySelector("#login-form"),
+  loginUsername: document.querySelector("#login-username"),
+  loginPassword: document.querySelector("#login-password"),
+  loginError: document.querySelector("#login-error"),
+  appShell: document.querySelector("#app-shell"),
+  bootLoader: document.querySelector("#boot-loader"),
+  navLinks: Array.from(document.querySelectorAll(".nav-link")),
+  adminNavLink: document.querySelector("#admin-nav-link"),
+  refreshButton: document.querySelector("#refresh-button"),
+  themeToggle: document.querySelector("#theme-toggle"),
+  profileTrigger: document.querySelector("#profile-trigger"),
+  profileDropdown: document.querySelector("#profile-dropdown"),
+  logoutButton: document.querySelector("#logout-button"),
+  sessionName: document.querySelector("#session-name"),
+  sessionRole: document.querySelector("#session-role"),
+  sessionNameMenu: document.querySelector("#session-name-menu"),
+  sessionRoleMenu: document.querySelector("#session-role-menu"),
+  profileAvatar: document.querySelector("#profile-avatar"),
+  heroTitle: document.querySelector("#hero-title"),
+  heroDescription: document.querySelector("#hero-description"),
+  latestUpdateTitle: document.querySelector("#latest-update-title"),
+  latestUpdateCopy: document.querySelector("#latest-update-copy"),
+  heroStats: document.querySelector("#hero-stats"),
+  dashboardMetrics: document.querySelector("#dashboard-metrics"),
+  latestResultCard: document.querySelector("#latest-result-card"),
+  dashboardNote: document.querySelector("#dashboard-note"),
+  resultMetrics: document.querySelector("#result-metrics"),
+  resultSummary: document.querySelector("#result-summary"),
+  dashboardTrendChart: document.querySelector("#dashboard-trend-chart"),
+  dashboardIllustratedCards: document.querySelector("#dashboard-illustrated-cards"),
+  myResultsChart: document.querySelector("#my-results-chart"),
+  myResultsIllustrated: document.querySelector("#my-results-illustrated"),
+  analyticsAttendantSearch: document.querySelector("#analytics-attendant-search"),
+  analyticsAttendantList: document.querySelector("#analytics-attendant-list"),
+  analyticsDateList: document.querySelector("#analytics-date-list"),
+  analyticsClearFilters: document.querySelector("#analytics-clear-filters"),
+  analyticsKpiRow: document.querySelector("#analytics-kpi-row"),
+  analyticsGauges: document.querySelector("#analytics-gauges"),
+  analyticsDailyBars: document.querySelector("#analytics-daily-bars"),
+  analyticsTagsBars: document.querySelector("#analytics-tags-bars"),
+  analyticsDepartments: document.querySelector("#analytics-departments"),
+  analyticsWorkdays: document.querySelector("#analytics-workdays"),
+  historyTableWrapper: document.querySelector("#history-table-wrapper"),
+  adminForm: document.querySelector("#admin-form"),
+  adminUser: document.querySelector("#admin-user"),
+  adminDate: document.querySelector("#admin-date"),
+  adminProduction: document.querySelector("#admin-production"),
+  adminEffectiveness: document.querySelector("#admin-effectiveness"),
+  adminQuality: document.querySelector("#admin-quality"),
+  adminUploadForm: document.querySelector("#admin-upload-form"),
+  uploadFile: document.querySelector("#upload-file"),
+  downloadTemplate: document.querySelector("#download-template"),
+  adminHistoryWrapper: document.querySelector("#admin-history-wrapper"),
+  sections: Array.from(document.querySelectorAll(".content-section"))
+};
+
+document.addEventListener("DOMContentLoaded", init);
+
+async function init() {
+  state.theme = loadTheme();
+  applyTheme(state.theme);
+  state.session = loadSession();
+  bindEvents();
+  syncAuthView();
+
+  if (hasSsoTokenInUrl()) {
+    try {
+      await trySsoAutoLogin();
+    } catch (error) {
+      handleLogout({ silent: true });
+      showLoginError(error?.message || "SSO invalido. Faca login normalmente.");
+    }
+  } else if (state.session) {
+    try {
+      await hydratePortal();
+    } catch (error) {
+      handleLogout({ silent: true });
+      showLoginError(error?.message || "Nao foi possivel carregar o portal.");
+    }
+  }
+
+  elements.body.classList.remove("booting");
+}
+
+function bindEvents() {
+  elements.loginForm?.addEventListener("submit", handleLogin);
+  elements.refreshButton?.addEventListener("click", () => void hydratePortal({ preserveSection: true }));
+  elements.themeToggle?.addEventListener("click", handleThemeToggle);
+  elements.profileTrigger?.addEventListener("click", toggleProfileMenu);
+  elements.logoutButton?.addEventListener("click", () => handleLogout());
+  elements.navLinks.forEach((button) => {
+    button.addEventListener("click", () => setSection(button.dataset.section || "dashboard"));
+  });
+  elements.adminForm?.addEventListener("submit", handleAdminSave);
+  elements.adminUser?.addEventListener("change", () => {
+    state.adminSelectedUserId = String(elements.adminUser.value || "");
+    hydrateAdminFormFromRecord();
+    void loadAdminSelectedRecord();
+  });
+  elements.adminUploadForm?.addEventListener("submit", (event) => event.preventDefault());
+  elements.uploadFile?.addEventListener("change", handleSpreadsheetUpload);
+  elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
+  elements.analyticsClearFilters?.addEventListener("click", handleAnalyticsClearFilters);
+  elements.analyticsAttendantSearch?.addEventListener("input", handleAnalyticsAttendantSearchInput);
+  elements.analyticsDateList?.addEventListener("change", handleAnalyticsDateChange);
+  elements.analyticsAttendantList?.addEventListener("change", handleAnalyticsAttendantChange);
+  document.addEventListener("click", handleDocumentClick);
+}
+
+function hasSsoTokenInUrl() {
+  try {
+    const url = new URL(window.location.href);
+    return Boolean(url.searchParams.get("sso") || url.searchParams.get("token"));
+  } catch {
+    return false;
+  }
+}
+
+async function trySsoAutoLogin() {
+  const url = new URL(window.location.href);
+  const token = String(url.searchParams.get("sso") || url.searchParams.get("token") || "").trim();
+  if (!token) return false;
+
+  setBusy(true);
+  clearLoginError();
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/sso/consume`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token })
+    });
+
+    state.session = {
+      id: payload.user.id,
+      name: payload.user.name,
+      username: payload.user.username,
+      role: payload.user.role || "operador",
+      accessLevel: payload.user.accessLevel || "",
+      theme: state.theme,
+      loginAt: new Date().toISOString()
+    };
+    saveSession(state.session);
+    removeSsoParamsFromUrl();
+    await hydratePortal();
+    setSection("dashboard");
+    return true;
+  } catch (error) {
+    removeSsoParamsFromUrl();
+    throw new Error(error?.message || "Token SSO invalido ou expirado.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function removeSsoParamsFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("sso");
+    url.searchParams.delete("token");
+    const clean = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, "", clean || "/");
+  } catch {}
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const username = String(elements.loginUsername.value || "").trim();
+  const password = String(elements.loginPassword.value || "");
+  if (!username || !password) {
+    showLoginError("Preencha usuario e senha.");
+    return;
+  }
+
+  setBusy(true);
+  clearLoginError();
+
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+
+    state.session = {
+      id: payload.user.id,
+      name: payload.user.name,
+      username: payload.user.username,
+      role: payload.user.role || "operador",
+      accessLevel: payload.user.accessLevel || "",
+      theme: state.theme,
+      loginAt: new Date().toISOString()
+    };
+    saveSession(state.session);
+    elements.loginForm.reset();
+    await hydratePortal();
+    setSection("dashboard");
+  } catch (error) {
+    showLoginError(error?.message || "Nao foi possivel autenticar.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function handleLogout(options = {}) {
+  state.session = null;
+  state.myRecord = null;
+  state.operators = [];
+  state.adminSelectedUserId = "";
+  state.adminSelectedRecord = null;
+  saveSession(null);
+  elements.loginForm?.reset();
+  clearLoginError();
+  closeProfileMenu();
+  syncAuthView();
+  renderAll();
+  if (!options.silent) setSection("dashboard");
+}
+
+async function hydratePortal(options = {}) {
+  if (!state.session?.id) return;
+  setBusy(true);
+  syncAuthView();
+
+  try {
+    await loadMyResults();
+    if (canManage()) {
+      await loadOperators();
+      await loadOperationRecords();
+      await loadAdminSelectedRecord();
+    } else {
+      state.operators = [];
+      state.operationRecords = [];
+      state.adminSelectedUserId = "";
+      state.adminSelectedRecord = null;
+    }
+    syncAuthView();
+    renderAll();
+    if (!options.preserveSection) setSection(state.section || "dashboard");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function loadOperationRecords() {
+  if (!canManage()) {
+    state.operationRecords = [];
+    return;
+  }
+  const payload = await fetchJson(`${REMOTE_API_BASE}/results/all`);
+  const records = Array.isArray(payload?.records) ? payload.records : [];
+  state.operationRecords = records.map((record) => normalizeRecord(record)).filter(Boolean);
+}
+
+async function loadMyResults() {
+  const payload = await fetchJson(`${REMOTE_API_BASE}/results?userId=${encodeURIComponent(state.session.id)}`);
+  state.myRecord = normalizeRecord(payload.record);
+}
+
+async function loadOperators() {
+  const payload = await fetchJson(`${REMOTE_API_BASE}/operators`);
+  state.operators = (Array.isArray(payload.operators) ? payload.operators : [])
+    .filter((user) => user && user.id)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+
+  if (!state.adminSelectedUserId || !state.operators.some((user) => user.id === state.adminSelectedUserId)) {
+    state.adminSelectedUserId = state.operators[0]?.id || "";
+  }
+
+  renderOperatorSelect();
+  hydrateAdminFormFromRecord();
+}
+
+async function loadAdminSelectedRecord() {
+  if (!canManage() || !state.adminSelectedUserId) {
+    state.adminSelectedRecord = null;
+    renderAll();
+    return;
+  }
+
+  const payload = await fetchJson(`${REMOTE_API_BASE}/results?userId=${encodeURIComponent(state.adminSelectedUserId)}`);
+  state.adminSelectedRecord = normalizeRecord(payload.record);
+  hydrateAdminFormFromRecord();
+  renderAll();
+}
+
+async function handleAdminSave(event) {
+  event.preventDefault();
+  if (!canManage()) return;
+
+  const userId = String(elements.adminUser.value || "").trim();
+  const selectedUser = state.operators.find((user) => user.id === userId);
+  const date = normalizeDateKey(elements.adminDate.value);
+  const productionTotal = parseMetricInput(elements.adminProduction.value);
+  const effectiveness = parseMetricInput(elements.adminEffectiveness.value);
+  const qualityScore = parseMetricInput(elements.adminQuality.value);
+
+  if (!selectedUser || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
+    window.alert("Preencha operador, data, producao, efetividade e qualidade com valores validos.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    await fetchJson(`${REMOTE_API_BASE}/operator-results`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        userName: selectedUser.name || "",
+        username: selectedUser.username || "",
+        date,
+        productionTotal,
+        effectiveness,
+        qualityScore,
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor"
+      })
+    });
+    if (canManage()) await loadOperationRecords();
+    await loadAdminSelectedRecord();
+    if (state.session?.id === userId) await loadMyResults();
+    renderAll();
+    window.alert("Resultado salvo com sucesso.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel salvar o resultado.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleSpreadsheetUpload(event) {
+  if (!canManage()) return;
+  const file = event.target?.files?.[0];
+  if (!file) return;
+  if (!window.XLSX) {
+    window.alert("Biblioteca de planilha indisponivel no momento.");
+    if (event.target) event.target.value = "";
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
+    if (!rows.length) throw new Error("Planilha vazia.");
+
+    const header = rows[0].map((item) => normalizeLooseText(item));
+    const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
+    const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
+    const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
+    const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
+    const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
+    const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
+
+    if (idxEffectiveness < 0 || idxProduction < 0 || idxQuality < 0) {
+      throw new Error("A planilha precisa ter as colunas de Producao, Efetividade e Qualidade.");
+    }
+    if (idxName < 0 && idxUsername < 0) {
+      throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
+    }
+    if (idxDate < 0) {
+      throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
+    }
+
+    const operatorByName = new Map(state.operators.map((operator) => [normalizeLooseText(operator.name), operator]));
+    const operatorByUsername = new Map(state.operators.map((operator) => [normalizeLooseText(operator.username), operator]));
+    let updatedCount = 0;
+    let unmatchedOperatorCount = 0;
+    let invalidMetricCount = 0;
+    let invalidDateCount = 0;
+    let totalRows = 0;
+    const importItems = [];
+
+    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex] || [];
+      if (!row.length) continue;
+      totalRows += 1;
+
+      const operator =
+        operatorByUsername.get(normalizeLooseText(idxUsername >= 0 ? row[idxUsername] : "")) ||
+        operatorByName.get(normalizeLooseText(idxName >= 0 ? row[idxName] : ""));
+      if (!operator) {
+        unmatchedOperatorCount += 1;
+        continue;
+      }
+
+      const date = normalizeSpreadsheetDate(row[idxDate]);
+      const effectiveness = parseMetricInput(row[idxEffectiveness], { percent: true });
+      const productionTotal = parseMetricInput(row[idxProduction]);
+      const qualityScore = parseMetricInput(row[idxQuality], { percent: true });
+      if (!date) {
+        invalidDateCount += 1;
+        continue;
+      }
+
+      if (!Number.isFinite(effectiveness) || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
+        invalidMetricCount += 1;
+        continue;
+      }
+
+      importItems.push({
+        userId: operator.id,
+        userName: operator.name || "",
+        username: operator.username || "",
+        date,
+        productionTotal,
+        effectiveness,
+        qualityScore,
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor"
+      });
+    }
+
+    if (!importItems.length) {
+      throw new Error(
+        `Nenhuma linha valida foi encontrada.\n` +
+        `Sem operador correspondente: ${unmatchedOperatorCount}\n` +
+        `Com data invalida: ${invalidDateCount}\n` +
+        `Com metrica invalida: ${invalidMetricCount}`
+      );
+    }
+
+    const fileBase64 = arrayBufferToBase64(buffer);
+    const bulkResult = await fetchJson(`${REMOTE_API_BASE}/import/upload-and-process`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fileName: file.name || "import.xlsx",
+        mimeType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        fileBase64,
+        items: importItems
+      }),
+      timeoutMs: 120000
+    });
+    updatedCount = Number(bulkResult?.imported || 0);
+    const bulkFailed = Number(bulkResult?.failed || 0);
+    if (!updatedCount) {
+      throw new Error(
+        `Nenhuma linha foi gravada no servidor.\n` +
+        `Falhas no lote: ${bulkFailed}`
+      );
+    }
+
+    if (canManage()) await loadOperationRecords();
+    await loadAdminSelectedRecord();
+    if (state.session?.id) await loadMyResults();
+    renderAll();
+    window.alert(
+      `Carga concluida.\n` +
+      `- Linhas lidas: ${totalRows}\n` +
+      `- Importadas: ${updatedCount}\n` +
+      `- Sem operador correspondente: ${unmatchedOperatorCount}\n` +
+      `- Ignoradas por data invalida: ${invalidDateCount}\n` +
+      `- Ignoradas por metrica invalida: ${invalidMetricCount}\n` +
+      `- Falhas no servidor: ${bulkFailed}`
+    );
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel processar a planilha.");
+  } finally {
+    if (event.target) event.target.value = "";
+    setBusy(false);
+  }
+}
+function handleDownloadTemplate() {
+  if (!canManage()) return;
+  if (!window.XLSX) {
+    window.alert("Biblioteca de planilha indisponivel.");
+    return;
+  }
+
+  const rows = [["Nome do Operador", "Usuario", "Data", "Efetividade", "Producao", "Qualidade"]];
+  const baseDate = getDefaultResultDate();
+  state.operators.forEach((operator) => {
+    rows.push([operator.name || "", operator.username || "", baseDate, "", "", ""]);
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "ModeloResultados");
+  XLSX.writeFile(workbook, `modelo-resultados-operador-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function syncAuthView() {
+  const isLogged = Boolean(state.session?.id);
+  elements.loginScreen?.classList.toggle("hidden", isLogged);
+  elements.appShell?.classList.toggle("hidden", !isLogged);
+  elements.adminNavLink?.classList.toggle("hidden", !canManage());
+
+  if (!isLogged) return;
+
+  const role = ACCESS_LEVELS[state.session.role] || ACCESS_LEVELS.operador;
+  elements.sessionName.textContent = state.session.name || "Operador";
+  elements.sessionRole.textContent = role.label;
+  elements.sessionNameMenu.textContent = state.session.name || "Operador";
+  elements.sessionRoleMenu.textContent = role.label;
+  elements.profileAvatar.textContent = getInitials(state.session.name || "Operador");
+}
+
+function renderAll() {
+  renderHero();
+  renderDashboard();
+  renderDashboardAnalytics();
+  renderMyResults();
+  renderHistory();
+  renderAdminHistory();
+}
+
+function handleAnalyticsClearFilters() {
+  const entries = getAnalyticsSourceEntries();
+  const allDates = [...new Set(entries.map((entry) => entry.date))];
+  state.analytics.attendantQuery = "";
+  state.analytics.selectedAttendantId = canManage() ? "all" : (state.session?.id || "");
+  state.analytics.selectedDates = [...allDates];
+  if (elements.analyticsAttendantSearch) {
+    elements.analyticsAttendantSearch.value = "";
+  }
+  renderDashboardAnalytics();
+}
+
+function handleAnalyticsAttendantSearchInput(event) {
+  state.analytics.attendantQuery = String(event?.target?.value || "");
+  renderDashboardAnalyticsFilters();
+}
+
+function handleAnalyticsDateChange(event) {
+  const target = event?.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.name !== "analytics-date") return;
+
+  const date = String(target.value || "");
+  const current = new Set(state.analytics.selectedDates || []);
+  if (target.checked) {
+    current.add(date);
+  } else {
+    current.delete(date);
+  }
+  state.analytics.selectedDates = [...current];
+  renderDashboardAnalytics();
+}
+
+async function handleAnalyticsAttendantChange(event) {
+  const target = event?.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.name !== "analytics-attendant") return;
+  const nextId = String(target.value || "").trim();
+  if (!nextId) return;
+
+  state.analytics.selectedAttendantId = nextId;
+  renderDashboardAnalytics();
+}
+
+function renderDashboardAnalytics() {
+  renderDashboardAnalyticsFilters();
+
+  const filtered = getAnalyticsFilteredEntries();
+  if (!filtered.length) {
+    elements.analyticsKpiRow.innerHTML = emptyState("Sem dados", "Nao ha dados para os filtros selecionados.");
+    elements.analyticsGauges.innerHTML = "";
+    elements.analyticsDailyBars.innerHTML = "";
+    elements.analyticsTagsBars.innerHTML = "";
+    elements.analyticsDepartments.innerHTML = "";
+    elements.analyticsWorkdays.innerHTML = "";
+    return;
+  }
+
+  const totalProposals = filtered.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0);
+  const avgEffectiveness = filtered.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0) / filtered.length;
+  const avgQuality = filtered.reduce((sum, entry) => sum + Number(entry.qualityScore || 0), 0) / filtered.length;
+  const avgProduction = totalProposals / filtered.length;
+  const latest = filtered[filtered.length - 1];
+
+  elements.analyticsKpiRow.innerHTML = `
+    ${buildAnalyticsKpi("Qtd Propostas", formatMetric(totalProposals))}
+    ${buildAnalyticsKpi("Efetividade %", formatMetric(avgEffectiveness, "%"))}
+    ${buildAnalyticsKpi("Qualidade %", formatMetric(avgQuality, "%"))}
+  `;
+
+  elements.analyticsGauges.innerHTML = `
+    ${buildGaugeCard("Produção média dia", avgProduction, 0, Math.max(100, avgProduction * 1.4), "")}
+    ${buildGaugeCard("Efetividade", avgEffectiveness, 0, 100, "%")}
+    ${buildGaugeCard("Qualidade", avgQuality, 0, 100, "%")}
+  `;
+
+  elements.analyticsDailyBars.innerHTML = buildAnalyticsDailyBars(filtered);
+  elements.analyticsTagsBars.innerHTML = buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest);
+  elements.analyticsDepartments.innerHTML = buildAnalyticsTrendPanel(filtered);
+  elements.analyticsWorkdays.innerHTML = `
+    <article class="analytics-days-card">
+      <strong>${escapeHtml(String(filtered.length))}</strong>
+      <span>Dias Trabalhados</span>
+    </article>
+  `;
+}
+
+function renderDashboardAnalyticsFilters() {
+  const entries = getAnalyticsSourceEntries();
+  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const allDates = [...new Set(entries.map((entry) => entry.date))];
+  const attendantsKey = [...new Set(entries.map((entry) => String(entry.userId || "")))].sort().join(",");
+  const recordKey = `${allDates.join(",")}::${attendantsKey}`;
+
+  if (state.analytics.recordKey !== recordKey) {
+    state.analytics.recordKey = recordKey;
+    state.analytics.selectedDates = [...allDates];
+    state.analytics.selectedAttendantId = canManage() ? "all" : (state.session?.id || "");
+  } else {
+    const allowed = new Set(allDates);
+    const selected = (state.analytics.selectedDates || []).filter((date) => allowed.has(date));
+    state.analytics.selectedDates = selected.length ? selected : [...allDates];
+  }
+
+  const query = normalizeLooseText(state.analytics.attendantQuery || "");
+  const availableAttendantIds = new Set(entries.map((entry) => String(entry.userId || "")).filter(Boolean));
+  const attendants = canManage()
+    ? state.operators
+        .filter((operator) => availableAttendantIds.has(String(operator.id || "")))
+        .filter((operator) => {
+          const haystack = normalizeLooseText(`${operator.name || ""} ${operator.username || ""}`);
+          return !query || haystack.includes(query);
+        })
+    : [{
+      id: state.session?.id || "",
+      name: state.session?.name || "Operador",
+      username: state.session?.username || ""
+    }];
+
+  if (canManage()) {
+    const valid = state.analytics.selectedAttendantId === "all" || attendants.some((operator) => operator.id === state.analytics.selectedAttendantId);
+    if (!valid) state.analytics.selectedAttendantId = "all";
+  } else {
+    state.analytics.selectedAttendantId = state.session?.id || "";
+  }
+
+  elements.analyticsAttendantList.innerHTML = attendants.length
+    ? `${canManage() ? `
+      <label class="analytics-option">
+        <input type="radio" name="analytics-attendant" value="all" ${state.analytics.selectedAttendantId === "all" ? "checked" : ""}>
+        <span>Todos os atendentes</span>
+      </label>
+    ` : ""}
+    ${attendants.map((operator) => {
+      const checked = state.analytics.selectedAttendantId === operator.id || (!canManage() && operator.id === state.session?.id);
+      return `
+        <label class="analytics-option">
+          <input type="radio" name="analytics-attendant" value="${escapeHtml(operator.id)}" ${checked ? "checked" : ""}>
+          <span>${escapeHtml(operator.name || operator.username || "Operador")}</span>
+        </label>
+      `;
+    }).join("")}`
+    : `<p class="analytics-empty">Nenhum atendente encontrado.</p>`;
+
+  const selectedSet = new Set(state.analytics.selectedDates || []);
+  elements.analyticsDateList.innerHTML = allDates.length
+    ? allDates.map((date) => `
+      <label class="analytics-option">
+        <input type="checkbox" name="analytics-date" value="${date}" ${selectedSet.has(date) ? "checked" : ""}>
+        <span>${escapeHtml(formatDate(date))}</span>
+      </label>
+    `).join("")
+    : `<p class="analytics-empty">Sem datas cadastradas.</p>`;
+}
+
+function getAnalyticsFilteredEntries() {
+  const entries = getAnalyticsSourceEntries();
+  const selectedAttendant = String(state.analytics.selectedAttendantId || "");
+  const selected = new Set(state.analytics.selectedDates || []);
+  const filtered = entries.filter((entry) => {
+    const passDate = !selected.size || selected.has(entry.date);
+    const passAttendant = !canManage()
+      ? String(entry.userId || "") === String(state.session?.id || "")
+      : selectedAttendant === "all" || !selectedAttendant || String(entry.userId || "") === selectedAttendant;
+    return passDate && passAttendant;
+  });
+  filtered.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return filtered;
+}
+
+function getAnalyticsSourceEntries() {
+  if (!canManage()) {
+    return (state.myRecord?.entries || []).map((entry) => ({
+      ...entry,
+      userId: state.session?.id || "",
+      userName: state.session?.name || "",
+      username: state.session?.username || ""
+    }));
+  }
+
+  const all = [];
+  for (const record of state.operationRecords || []) {
+    for (const entry of record?.entries || []) {
+      all.push({
+        ...entry,
+        userId: record.userId || "",
+        userName: record.userName || "",
+        username: record.username || ""
+      });
+    }
+  }
+  return all;
+}
+
+function buildAnalyticsKpi(label, value) {
+  return `
+    <article class="analytics-kpi">
+      <strong>${escapeHtml(String(value))}</strong>
+      <span>${escapeHtml(label)}</span>
+    </article>
+  `;
+}
+
+function buildGaugeCard(title, value, min, max, suffix) {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const ratio = Math.max(0, Math.min(1, (safeValue - min) / Math.max(max - min, 1)));
+  const angle = ratio * 180;
+  return `
+    <article class="analytics-gauge-card">
+      <p>${escapeHtml(title)}</p>
+      <div class="analytics-gauge" style="--gauge-angle:${angle.toFixed(2)}deg;">
+        <div class="analytics-gauge-center">${escapeHtml(formatMetric(safeValue, suffix))}</div>
+      </div>
+      <div class="analytics-gauge-legend">
+        <span>${escapeHtml(formatMetric(min, suffix))}</span>
+        <span>${escapeHtml(formatMetric(max, suffix))}</span>
+      </div>
+    </article>
+  `;
+}
+
+function buildAnalyticsDailyBars(entries) {
+  const max = Math.max(...entries.map((entry) => Number(entry.productionTotal || 0)), 1);
+  return `
+    <div class="analytics-bars-grid">
+      ${entries.map((entry) => {
+        const height = (Number(entry.productionTotal || 0) / max) * 100;
+        return `
+          <div class="analytics-bar-item">
+            <div class="analytics-bar-track">
+              <span class="analytics-bar-fill" style="height:${height.toFixed(2)}%"></span>
+            </div>
+            <strong>${escapeHtml(formatMetric(entry.productionTotal))}</strong>
+            <span>${escapeHtml(shortDate(entry.date))}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest) {
+  const items = [
+    { label: "Produção total", value: totalProposals, tone: "green", suffix: "" },
+    { label: "Efetividade média", value: avgEffectiveness, tone: "gray", suffix: "%" },
+    { label: "Qualidade média", value: avgQuality, tone: "lime", suffix: "%" },
+    { label: "Produção último dia", value: Number(latest?.productionTotal || 0), tone: "red", suffix: "" }
+  ];
+  const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
+  return items.map((item) => {
+    const width = (Number(item.value || 0) / max) * 100;
+    return `
+      <div class="analytics-tag-row">
+        <span>${escapeHtml(item.label)}</span>
+        <div class="analytics-tag-track">
+          <span class="analytics-tag-fill ${item.tone}" style="width:${width.toFixed(2)}%"></span>
+        </div>
+        <strong>${escapeHtml(formatMetric(item.value, item.suffix))}</strong>
+      </div>
+    `;
+  }).join("");
+}
+
+function buildAnalyticsTrendPanel(entries) {
+  const effectivenessChart = buildLineChartSvg(entries, "effectiveness", "#2f80ed", 100);
+  const qualityChart = buildLineChartSvg(entries, "qualityScore", "#22f300", 100);
+  return `
+    <div class="analytics-trend-two">
+      <div class="chart-card">
+        <p class="chart-title">Efetividade (%)</p>
+        ${effectivenessChart}
+      </div>
+      <div class="chart-card">
+        <p class="chart-title">Qualidade (%)</p>
+        ${qualityChart}
+      </div>
+    </div>
+  `;
+}
+
+function renderHero() {
+  const viewRecord = getPrimaryViewRecord();
+  const latest = getLatestEntry(viewRecord);
+  const selectedOperatorName = getSelectedOperatorName();
+  const role = ACCESS_LEVELS[state.session?.role] || ACCESS_LEVELS.operador;
+  if (canManage() && selectedOperatorName) {
+    elements.heroTitle.textContent = `Visao do operador ${selectedOperatorName}`;
+  } else {
+    elements.heroTitle.textContent = state.session?.name
+      ? `${state.session.name}, aqui esta sua leitura mais recente`
+      : "Acompanhe sua evolucao diaria";
+  }
+  elements.heroDescription.textContent = canManage()
+    ? "Voce pode lancar os numeros na aba Gestao e acompanhar o operador selecionado."
+    : "Use este portal para consultar seu desempenho diario com a mesma credencial da Central do Operador.";
+
+  const stats = [
+    { label: "Perfil", value: role.label },
+    { label: "Ultima data", value: latest ? formatDate(latest.date) : "--" },
+    { label: "Dias lancados", value: viewRecord?.daysCount ?? 0 }
+  ];
+  elements.heroStats.innerHTML = stats.map((item) => `
+    <article class="metric-card">
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(String(item.value))}</strong>
+    </article>
+  `).join("");
+
+  if (!latest) {
+    elements.latestUpdateTitle.textContent = "Aguardando lancamentos";
+    elements.latestUpdateCopy.textContent = "Assim que houver um resultado cadastrado, ele ficara visivel aqui.";
+    return;
+  }
+
+  elements.latestUpdateTitle.textContent = `${formatMetric(latest.productionTotal)} producoes em ${formatDate(latest.date)}`;
+  elements.latestUpdateCopy.textContent = `Efetividade de ${formatMetric(latest.effectiveness, "%")} e qualidade de ${formatMetric(latest.qualityScore, "%")}.`;
+}
+
+function renderDashboard() {
+  const viewRecord = getPrimaryViewRecord();
+  const latest = getLatestEntry(viewRecord);
+  const metrics = [
+    { label: "Producao atual", value: latest?.productionTotal, suffix: "" },
+    { label: "Media de producao", value: viewRecord?.productionAverage, suffix: "" },
+    { label: "Efetividade", value: latest?.effectiveness, suffix: "%" },
+    { label: "Qualidade", value: latest?.qualityScore, suffix: "%" }
+  ];
+
+  elements.dashboardMetrics.innerHTML = metrics.map(renderMetricCard).join("");
+  renderDashboardVisuals(viewRecord);
+
+  if (!latest) {
+    const noDataMessage = canManage()
+      ? "Nenhum lancamento encontrado para o operador selecionado."
+      : "Seu gestor ainda nao cadastrou nenhum lancamento.";
+    elements.latestResultCard.innerHTML = emptyState("Sem resultados", noDataMessage);
+    elements.dashboardNote.innerHTML = emptyState("Aguardando atualizacao", "Assim que houver um lancamento, este painel passa a resumir seu cenario.");
+    return;
+  }
+
+  elements.latestResultCard.innerHTML = `
+    <article class="admin-item">
+      <div class="admin-item-top">
+        <div>
+          <strong>Resultado de ${escapeHtml(formatDate(latest.date))}</strong>
+          <p>Atualizado em ${escapeHtml(formatDateTime(latest.updatedAt))}</p>
+        </div>
+        <span class="badge script">Disponivel</span>
+      </div>
+      <p>Producao: ${escapeHtml(formatMetric(latest.productionTotal))}</p>
+      <p>Efetividade: ${escapeHtml(formatMetric(latest.effectiveness, "%"))}</p>
+      <p>Qualidade: ${escapeHtml(formatMetric(latest.qualityScore, "%"))}</p>
+    </article>
+  `;
+
+  const message = buildPerformanceMessage(latest);
+  elements.dashboardNote.innerHTML = `
+    <article class="admin-item">
+      <div class="admin-item-top">
+        <div>
+          <strong>${escapeHtml(message.title)}</strong>
+          <p>${escapeHtml(message.copy)}</p>
+        </div>
+        <span class="badge faq">${escapeHtml(message.badge)}</span>
+      </div>
+      <p>Media acumulada de producao: ${escapeHtml(formatMetric(viewRecord?.productionAverage))}</p>
+      <p>Dias com lancamento: ${escapeHtml(String(viewRecord?.daysCount || 0))}</p>
+    </article>
+  `;
+}
+
+function renderMyResults() {
+  const viewRecord = getPrimaryViewRecord();
+  const latest = getLatestEntry(viewRecord);
+  const metrics = [
+    { label: "Producao do dia", value: latest?.productionTotal, suffix: "" },
+    { label: "Producao media", value: viewRecord?.productionAverage, suffix: "" },
+    { label: "Efetividade do dia", value: latest?.effectiveness, suffix: "%" },
+    { label: "Qualidade do dia", value: latest?.qualityScore, suffix: "%" }
+  ];
+  elements.resultMetrics.innerHTML = metrics.map(renderMetricCard).join("");
+  renderMyResultsVisuals(viewRecord);
+
+  if (!latest) {
+    const noDataMessage = canManage()
+      ? "Selecione um operador na Gestao e lance os resultados para visualizar aqui."
+      : "Quando seu gestor lancar os numeros, eles aparecem aqui em detalhe.";
+    elements.resultSummary.innerHTML = emptyState("Sem lancamentos", noDataMessage);
+    return;
+  }
+
+  const entries = [...(viewRecord?.entries || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  elements.resultSummary.innerHTML = entries.slice(0, 3).map((entry) => `
+    <article class="admin-item">
+      <div class="admin-item-top">
+        <div>
+          <strong>${escapeHtml(formatDate(entry.date))}</strong>
+          <p>Lancado por ${escapeHtml(entry.updatedByName || "Gestor")}</p>
+        </div>
+        <span class="badge manual">${escapeHtml(formatMetric(entry.qualityScore, "%"))}</span>
+      </div>
+      <p>Producao: ${escapeHtml(formatMetric(entry.productionTotal))}</p>
+      <p>Efetividade: ${escapeHtml(formatMetric(entry.effectiveness, "%"))}</p>
+      <p>Atualizado em ${escapeHtml(formatDateTime(entry.updatedAt))}</p>
+    </article>
+  `).join("");
+}
+
+function renderHistory() {
+  const viewRecord = getPrimaryViewRecord();
+  const message = canManage()
+    ? "Sem historico para o operador selecionado."
+    : "Voce ainda nao possui historico cadastrado.";
+  elements.historyTableWrapper.innerHTML = renderRecordTable(viewRecord, message);
+}
+
+function renderDashboardVisuals(viewRecord) {
+  const entries = getRecentEntries(viewRecord, 10);
+  if (!entries.length) {
+    elements.dashboardTrendChart.innerHTML = emptyState("Sem dados", "Cadastre lancamentos para liberar os graficos.");
+    elements.dashboardIllustratedCards.innerHTML = "";
+    return;
+  }
+
+  const latest = entries[entries.length - 1];
+  const previous = entries.length > 1 ? entries[entries.length - 2] : null;
+  const productionDelta = previous ? latest.productionTotal - previous.productionTotal : 0;
+  const effectivenessDelta = previous ? latest.effectiveness - previous.effectiveness : 0;
+  const qualityDelta = previous ? latest.qualityScore - previous.qualityScore : 0;
+
+  const lineChart = buildLineChartSvg(entries, "productionTotal", "#4ea1ff");
+  const bars = entries.map((entry) => ({ label: shortDate(entry.date), value: entry.productionTotal }));
+  const barsChart = buildMiniBars(bars, "#63dca2");
+
+  elements.dashboardTrendChart.innerHTML = `
+    <article class="chart-card">
+      <p class="chart-title">Producao por dia</p>
+      ${lineChart}
+    </article>
+    <article class="chart-card">
+      <p class="chart-title">Barras de producao</p>
+      ${barsChart}
+    </article>
+  `;
+
+  elements.dashboardIllustratedCards.innerHTML = `
+    ${buildDeltaCard("Producao", latest.productionTotal, productionDelta, "")}
+    ${buildDeltaCard("Efetividade", latest.effectiveness, effectivenessDelta, "%")}
+    ${buildDeltaCard("Qualidade", latest.qualityScore, qualityDelta, "%")}
+  `;
+}
+
+function renderMyResultsVisuals(viewRecord) {
+  const entries = getRecentEntries(viewRecord, 14);
+  if (!entries.length) {
+    elements.myResultsChart.innerHTML = emptyState("Sem dados", "Os graficos aparecem quando houver lancamentos.");
+    elements.myResultsIllustrated.innerHTML = "";
+    return;
+  }
+
+  const latest = entries[entries.length - 1];
+  const prodLine = buildLineChartSvg(entries, "productionTotal", "#4ea1ff");
+  const effLine = buildLineChartSvg(entries, "effectiveness", "#ffb16c", 100);
+
+  elements.myResultsChart.innerHTML = `
+    <article class="chart-card">
+      <p class="chart-title">Linha de producao</p>
+      ${prodLine}
+    </article>
+    <article class="chart-card">
+      <p class="chart-title">Linha de efetividade</p>
+      ${effLine}
+    </article>
+  `;
+
+  const qualityProgress = clampPercent(latest.qualityScore);
+  const effectivenessProgress = clampPercent(latest.effectiveness);
+  const consistency = clampPercent((latest.qualityScore + latest.effectiveness) / 2);
+
+  elements.myResultsIllustrated.innerHTML = `
+    ${buildProgressVisual("Qualidade", qualityProgress)}
+    ${buildProgressVisual("Efetividade", effectivenessProgress)}
+    ${buildProgressVisual("Indice composto", consistency)}
+  `;
+}
+
+function renderAdminHistory() {
+  if (!canManage()) {
+    elements.adminHistoryWrapper.innerHTML = emptyState("Acesso restrito", "Somente gestor pode consultar esta area.");
+    return;
+  }
+  elements.adminHistoryWrapper.innerHTML = renderRecordTable(state.adminSelectedRecord, "Selecione um operador com lancamentos para visualizar o historico.");
+}
+
+function renderRecordTable(record, emptyMessage) {
+  const entries = [...(record?.entries || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (!entries.length) return emptyState("Sem historico", emptyMessage);
+
+  return `
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Producao</th>
+            <th>Efetividade</th>
+            <th>Qualidade</th>
+            <th>Lancado por</th>
+            <th>Atualizado em</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map((entry) => `
+            <tr>
+              <td>${escapeHtml(formatDate(entry.date))}</td>
+              <td>${escapeHtml(formatMetric(entry.productionTotal))}</td>
+              <td>${escapeHtml(formatMetric(entry.effectiveness, "%"))}</td>
+              <td>${escapeHtml(formatMetric(entry.qualityScore, "%"))}</td>
+              <td>${escapeHtml(entry.updatedByName || "Gestor")}</td>
+              <td>${escapeHtml(formatDateTime(entry.updatedAt))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderOperatorSelect() {
+  if (!elements.adminUser) return;
+  elements.adminUser.innerHTML = state.operators.length
+    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`).join("")
+    : `<option value="">Nenhum operador encontrado</option>`;
+  elements.adminUser.value = state.adminSelectedUserId || "";
+}
+
+function hydrateAdminFormFromRecord() {
+  if (!canManage()) return;
+  const latest = getLatestEntry(state.adminSelectedRecord);
+  const fallbackDate = getDefaultResultDate();
+  elements.adminDate.value = latest?.date || fallbackDate;
+  elements.adminProduction.value = Number.isFinite(latest?.productionTotal) ? String(latest.productionTotal) : "";
+  elements.adminEffectiveness.value = Number.isFinite(latest?.effectiveness) ? String(latest.effectiveness) : "";
+  elements.adminQuality.value = Number.isFinite(latest?.qualityScore) ? String(latest.qualityScore) : "";
+}
+
+function setSection(sectionId) {
+  state.section = sectionId;
+  elements.sections.forEach((section) => section.classList.toggle("active", section.id === sectionId));
+  elements.navLinks.forEach((button) => button.classList.toggle("active", button.dataset.section === sectionId));
+}
+
+function canManage() {
+  return Boolean(state.session?.role && ACCESS_LEVELS[state.session.role]?.canManage);
+}
+
+function toggleProfileMenu() {
+  const expanded = elements.profileTrigger.getAttribute("aria-expanded") === "true";
+  elements.profileTrigger.setAttribute("aria-expanded", expanded ? "false" : "true");
+  elements.profileDropdown.classList.toggle("hidden", expanded);
+}
+
+function closeProfileMenu() {
+  elements.profileTrigger?.setAttribute("aria-expanded", "false");
+  elements.profileDropdown?.classList.add("hidden");
+}
+
+function handleDocumentClick(event) {
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (elements.profileDropdown.contains(target) || elements.profileTrigger.contains(target)) return;
+  closeProfileMenu();
+}
+
+function handleThemeToggle() {
+  const nextTheme = state.theme === "dark" ? "light" : "dark";
+  state.theme = nextTheme;
+  applyTheme(nextTheme);
+  saveTheme(nextTheme);
+  if (state.session) {
+    state.session = { ...state.session, theme: nextTheme };
+    saveSession(state.session);
+  }
+}
+
+function applyTheme(theme) {
+  elements.body?.setAttribute("data-theme", theme);
+  document.documentElement.style.colorScheme = theme;
+}
+
+function loadSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
+    return saved && typeof saved === "object" ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(session) {
+  try {
+    if (session) {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } else {
+      sessionStorage.removeItem(SESSION_KEY);
+    }
+  } catch {}
+}
+
+function loadTheme() {
+  try {
+    const sessionTheme = loadSession()?.theme;
+    if (sessionTheme === "light" || sessionTheme === "dark") return sessionTheme;
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === "light" || saved === "dark" ? saved : DEFAULT_THEME;
+  } catch {
+    return DEFAULT_THEME;
+  }
+}
+
+function saveTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {}
+}
+
+async function fetchJson(url, options = {}) {
+  const timeoutMs = Number.isFinite(options?.timeoutMs) ? Number(options.timeoutMs) : 30000;
+  const { timeoutMs: _timeoutMs, ...fetchOptions } = options || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(payload?.error || "Falha na comunicacao com a API.");
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Tempo limite excedido na comunicacao com o servidor.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeRecord(record) {
+  if (!record || typeof record !== "object") return null;
+  const entries = (Array.isArray(record.entries) ? record.entries : []).map((entry) => {
+    const date = normalizeDateKey(entry?.date);
+    const productionTotal = Number(entry?.productionTotal);
+    const effectiveness = Number(entry?.effectiveness);
+    const qualityScore = Number(entry?.qualityScore);
+    if (!date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
+      return null;
+    }
+    return {
+      date,
+      productionTotal,
+      effectiveness,
+      qualityScore,
+      updatedAt: String(entry?.updatedAt || ""),
+      updatedById: String(entry?.updatedById || ""),
+      updatedByName: String(entry?.updatedByName || "Gestor")
+    };
+  }).filter(Boolean);
+  if (!entries.length) return null;
+  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const latest = entries[entries.length - 1];
+
+  return {
+    userId: String(record.userId || ""),
+    userName: String(record.userName || ""),
+    username: String(record.username || ""),
+    entries,
+    daysCount: entries.length,
+    productionAverage: entries.reduce((sum, entry) => sum + entry.productionTotal, 0) / entries.length,
+    productionTotal: latest.productionTotal,
+    effectiveness: latest.effectiveness,
+    qualityScore: latest.qualityScore,
+    updatedAt: latest.updatedAt,
+    updatedById: latest.updatedById,
+    updatedByName: latest.updatedByName
+  };
+}
+
+function getLatestEntry(record) {
+  return Array.isArray(record?.entries) && record.entries.length ? record.entries[record.entries.length - 1] : null;
+}
+
+function getRecentEntries(record, maxItems = 10) {
+  const entries = Array.isArray(record?.entries) ? [...record.entries] : [];
+  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (entries.length <= maxItems) return entries;
+  return entries.slice(entries.length - maxItems);
+}
+
+function buildLineChartSvg(entries, field, color, fixedMax = null) {
+  const values = entries.map((entry) => Number(entry?.[field] || 0));
+  const maxValue = Number.isFinite(fixedMax) ? fixedMax : Math.max(...values, 1);
+  const minValue = 0;
+  const width = 480;
+  const height = 170;
+  const padX = 14;
+  const padY = 18;
+  const innerW = width - padX * 2;
+  const innerH = height - padY * 2;
+  const denom = Math.max(values.length - 1, 1);
+
+  const points = values.map((value, index) => {
+    const x = padX + (innerW * index) / denom;
+    const ratio = (value - minValue) / Math.max(maxValue - minValue, 1);
+    const y = padY + innerH - ratio * innerH;
+    return { x, y, value };
+  });
+
+  const polyline = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+  const areaPoints = `${padX},${height - padY} ${polyline} ${width - padX},${height - padY}`;
+
+  chartIdSeed += 1;
+  const gradientId = `trend-fill-${field}-${chartIdSeed}`;
+
+  return `
+    <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
+      <defs>
+        <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0.02"></stop>
+        </linearGradient>
+      </defs>
+      <path d="M ${padX} ${height - padY} L ${width - padX} ${height - padY}" class="trend-axis"></path>
+      <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
+      <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      ${points.map((point) => `
+        <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
+      `).join("")}
+    </svg>
+  `;
+}
+
+function buildMiniBars(items, color) {
+  const maxValue = Math.max(...items.map((item) => Number(item.value || 0)), 1);
+  return `
+    <div class="bars-grid">
+      ${items.map((item) => {
+        const heightPercent = (Number(item.value || 0) / maxValue) * 100;
+        return `
+          <div class="bar-item" title="${escapeHtml(item.label)}: ${escapeHtml(formatMetric(item.value))}">
+            <div class="bar-track">
+              <span class="bar-fill" style="height:${heightPercent.toFixed(2)}%; background:${color};"></span>
+            </div>
+            <span class="bar-label">${escapeHtml(item.label)}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function buildDeltaCard(label, value, delta, suffix) {
+  const deltaValue = Number(delta || 0);
+  const tone = deltaValue >= 0 ? "up" : "down";
+  const deltaPrefix = deltaValue >= 0 ? "+" : "";
+  return `
+    <article class="visual-card">
+      <p class="visual-label">${escapeHtml(label)}</p>
+      <strong>${escapeHtml(formatMetric(value, suffix))}</strong>
+      <span class="delta-pill ${tone}">${escapeHtml(`${deltaPrefix}${formatMetric(deltaValue, suffix)}`)}</span>
+    </article>
+  `;
+}
+
+function buildProgressVisual(label, percent) {
+  const safe = clampPercent(percent);
+  return `
+    <article class="visual-card visual-progress">
+      <p class="visual-label">${escapeHtml(label)}</p>
+      <div class="progress-ring" style="--progress:${safe.toFixed(2)}%;">
+        <span>${escapeHtml(formatMetric(safe, "%"))}</span>
+      </div>
+    </article>
+  `;
+}
+
+function clampPercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function shortDate(dateValue) {
+  const normalized = normalizeDateKey(dateValue);
+  if (!normalized) return "--";
+  const [, month, day] = normalized.split("-");
+  return `${day}/${month}`;
+}
+
+function getPrimaryViewRecord() {
+  if (!canManage()) return state.myRecord;
+  return state.adminSelectedRecord || state.myRecord;
+}
+
+function getSelectedOperatorName() {
+  if (!canManage()) return "";
+  const selected = state.operators.find((user) => user.id === state.adminSelectedUserId);
+  return String(selected?.name || selected?.username || "").trim();
+}
+
+function renderMetricCard(metric) {
+  return `
+    <article class="metric-card">
+      <span>${escapeHtml(metric.label)}</span>
+      <strong>${escapeHtml(formatMetric(metric.value, metric.suffix || ""))}</strong>
+    </article>
+  `;
+}
+
+function buildPerformanceMessage(entry) {
+  if (!entry) {
+    return {
+      title: "Aguardando primeiro lancamento",
+      copy: "Este espaco passa a trazer um resumo automatico assim que os resultados forem cadastrados.",
+      badge: "Pendente"
+    };
+  }
+  if (entry.qualityScore >= 90 && entry.effectiveness >= 35) {
+    return {
+      title: "Leitura positiva",
+      copy: "Seu ultimo resultado mostra boa consistencia entre qualidade e conversao.",
+      badge: "Em destaque"
+    };
+  }
+  if (entry.qualityScore < 85) {
+    return {
+      title: "Atencao na qualidade",
+      copy: "Vale revisar o atendimento recente para recuperar aderencia e seguranca na operacao.",
+      badge: "Qualidade"
+    };
+  }
+  return {
+    title: "Espaco para ganhar tracao",
+    copy: "Voce ja tem base registrada. Agora o foco e crescer producao e efetividade sem perder qualidade.",
+    badge: "Evolucao"
+  };
+}
+
+function emptyState(title, message) {
+  return `
+    <div class="empty-state">
+      <div>
+        <p class="eyebrow">${escapeHtml(title)}</p>
+        <h3>${escapeHtml(message)}</h3>
+      </div>
+    </div>
+  `;
+}
+
+function showLoginError(message) {
+  elements.loginError.textContent = message;
+  elements.loginError.classList.remove("hidden");
+}
+
+function clearLoginError() {
+  elements.loginError.textContent = "";
+  elements.loginError.classList.add("hidden");
+}
+
+function setBusy(isBusy) {
+  elements.body?.classList.toggle("booting", Boolean(isBusy));
+  if (elements.bootLoader) elements.bootLoader.setAttribute("aria-busy", isBusy ? "true" : "false");
+}
+
+function getInitials(value) {
+  const parts = String(value || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "OP";
+  return `${parts[0][0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
+}
+
+function parseMetricInput(value, options = {}) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    if (options.percent && value > 0 && value <= 1) return value * 100;
+    return value;
+  }
+
+  let normalized = String(value || "").trim();
+  if (!normalized) return null;
+
+  normalized = normalized.replace(/\s+/g, "");
+  const hasPercent = normalized.includes("%");
+  normalized = normalized.replace(/%/g, "");
+
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = normalized.replace(",", ".");
+  }
+
+  normalized = normalized.replace(/[^0-9.-]/g, "");
+  if (!normalized || normalized === "-" || normalized === ".") return null;
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) return null;
+
+  if (options.percent && (hasPercent || (numeric > 0 && numeric <= 1))) {
+    return numeric * 100;
+  }
+
+  return numeric;
+}
+function normalizeDateKey(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split("/");
+    return `${year}-${month}-${day}`;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeSpreadsheetDate(value) {
+  if (value === null || value === undefined) return "";
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Excel serial date (base 1899-12-30)
+    const excelBase = new Date(Date.UTC(1899, 11, 30));
+    const asDate = new Date(excelBase.getTime() + Math.floor(value) * 86400000);
+    if (Number.isNaN(asDate.getTime())) return "";
+    const year = asDate.getUTCFullYear();
+    const month = String(asDate.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(asDate.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  const normalized = normalizeDateKey(value);
+  if (normalized) return normalized;
+
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const noTime = text.split(" ")[0];
+  if (/^\d{2}-\d{2}-\d{4}$/.test(noTime)) {
+    const [day, month, year] = noTime.split("-");
+    return `${year}-${month}-${day}`;
+  }
+  if (/^\d{2}\/\d{2}\/\d{2}$/.test(noTime)) {
+    const [day, month, year] = noTime.split("/");
+    const fullYear = Number(year) >= 70 ? `19${year}` : `20${year}`;
+    return `${fullYear}-${month}-${day}`;
+  }
+  return "";
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+  const chunkSize = 32768;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function getDefaultResultDate() {
+  const base = new Date();
+  base.setDate(base.getDate() - 1);
+  const year = base.getFullYear();
+  const month = String(base.getMonth() + 1).padStart(2, "0");
+  const day = String(base.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatMetric(value, suffix = "") {
+  if (!Number.isFinite(value)) return `--${suffix}`;
+  return `${new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(value)}${suffix}`;
+}
+
+function formatDuration(totalSeconds) {
+  const safe = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hh = String(Math.floor(safe / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((safe % 3600) / 60)).padStart(2, "0");
+  const ss = String(safe % 60).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+function formatDate(value) {
+  const normalized = normalizeDateKey(value);
+  if (!normalized) return "--";
+  const [year, month, day] = normalized.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function formatDateTime(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "--";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(parsed);
+}
+
+function normalizeLooseText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function findColumnIndex(header, aliases) {
+  if (!Array.isArray(header) || !Array.isArray(aliases)) return -1;
+  const normalizedAliases = aliases.map((alias) => normalizeLooseText(alias));
+  for (let index = 0; index < header.length; index += 1) {
+    const column = normalizeLooseText(header[index]);
+    if (!column) continue;
+    if (normalizedAliases.some((alias) => column === alias || column.includes(alias) || alias.includes(column))) {
+      return index;
+    }
+  }
+  return -1;
+}
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
