@@ -960,7 +960,7 @@ function renderDashboardAnalytics() {
   const latest = filtered[filtered.length - 1];
 
   elements.analyticsKpiRow.innerHTML = `
-    ${buildAnalyticsKpi("Media Producao", formatMetric(avgProductionRounded))}
+    ${buildAnalyticsKpi("Total atendido", formatMetric(totalProposals))}
     ${buildAnalyticsKpi("Media Efetividade", formatMetric(avgEffectiveness, "%"))}
     ${buildAnalyticsKpi("Media Qualidade", formatMetric(avgQuality, "%"))}
   `;
@@ -1628,8 +1628,9 @@ function renderDashboard() {
   const viewRecord = getOverviewViewRecord();
   const latest = getLatestEntry(viewRecord);
   const averages = getRecordAverages(viewRecord);
+  const totalProduced = (viewRecord?.entries || []).reduce((sum, entry) => sum + Number(entry?.productionTotal || 0), 0);
   const metrics = [
-    { label: "Producao atual", value: latest?.productionTotal, suffix: "" },
+    { label: "Total atendido", value: totalProduced, suffix: "" },
     { label: "Media de producao", value: averages.production, suffix: "" },
     { label: "Efetividade media", value: averages.effectiveness, suffix: "%" },
     { label: "Qualidade media", value: averages.quality, suffix: "%" }
