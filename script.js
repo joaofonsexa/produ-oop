@@ -1247,7 +1247,7 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
   const maxValue = isPercent ? 100 : Math.max(...rows.map((row) => row.value), 1);
   const chartWidth = Math.max(760, rows.length * 110);
   const chartHeight = 250;
-  const padLeft = 46;
+  const padLeft = 22;
   const padRight = 24;
   const padTop = 26;
   const padBottom = 44;
@@ -1271,7 +1271,6 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
   const isScrollable = rows.length > 8;
   const chipStep = rows.length > 20 ? 3 : rows.length > 12 ? 2 : 1;
   const xLabelStep = rows.length > 18 ? 3 : rows.length > 10 ? 2 : 1;
-  const yTicks = isPercent ? [100, 75, 50, 25, 0] : [maxValue, (maxValue + minValue) / 2, minValue];
 
   return `
     <article class="analytics-trend-kpi-card is-effectiveness analytics-daily-chart-card">
@@ -1291,15 +1290,6 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
               <stop offset="100%" stop-color="#4ea1ff" stop-opacity="0.04"></stop>
             </linearGradient>
           </defs>
-          ${yTicks.map((tick) => {
-            const ratio = (Number(tick) - minValue) / range;
-            const y = padTop + innerH - (ratio * innerH);
-            return `
-              <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${(chartWidth - padRight)}" y2="${y.toFixed(2)}" class="analytics-daily-grid-line"></line>
-              <text x="${(padLeft - 8)}" y="${(y + 4).toFixed(2)}" class="analytics-daily-y-label" text-anchor="end">${escapeHtml(formatMetric(tick, suffix))}</text>
-            `;
-          }).join("")}
-          <rect x="${padLeft}" y="${padTop}" width="${innerW}" height="${innerH}" class="analytics-daily-plot-border"></rect>
           <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
           <polyline points="${polyline}" class="analytics-daily-line"></polyline>
           ${points.map((point) => {
@@ -2285,7 +2275,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const width = Math.max(560, (Math.max(values.length, 2) - 1) * 86 + 92);
   const isScrollable = values.length > 7;
   const height = 220;
-  const padLeft = 46;
+  const padLeft = 22;
   const padRight = 14;
   const padTop = 18;
   const padBottom = 34;
@@ -2320,14 +2310,6 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const valueSuffix = field === "effectiveness" || field === "qualityScore" ? "%" : "";
   const chipStep = values.length > 20 ? 3 : values.length > 12 ? 2 : 1;
   const xLabelStep = values.length > 18 ? 3 : values.length > 10 ? 2 : 1;
-  const yTicks = 4;
-  const yLabels = Array.from({ length: yTicks + 1 }, (_, idx) => {
-    const ratio = idx / yTicks;
-    const value = maxValue - ((maxValue - minValue) * ratio);
-    const y = padTop + (innerH * ratio);
-    return { value, y };
-  });
-
   return `
     <div class="trend-scroll${isScrollable ? " is-scrollable" : ""}">
       <svg
@@ -2344,17 +2326,6 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
             <stop offset="100%" stop-color="${color}" stop-opacity="0.02"></stop>
           </linearGradient>
         </defs>
-        ${yLabels.map((tick) => `
-          <line
-            x1="${padLeft}"
-            y1="${tick.y.toFixed(2)}"
-            x2="${(width - padRight)}"
-            y2="${tick.y.toFixed(2)}"
-            class="trend-grid-line"
-          ></line>
-          <text x="${(padLeft - 8)}" y="${(tick.y + 3).toFixed(2)}" class="trend-y-label" text-anchor="end">${escapeHtml(formatMetric(tick.value, valueSuffix))}</text>
-        `).join("")}
-        <rect x="${padLeft}" y="${padTop}" width="${innerW}" height="${innerH}" class="trend-plot-border"></rect>
         <path d="M ${padLeft} ${height - padBottom} L ${width - padRight} ${height - padBottom}" class="trend-axis"></path>
         <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
         <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
