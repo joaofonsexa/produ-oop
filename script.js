@@ -1138,19 +1138,12 @@ function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, l
     { label: "Qualidade media", value: avgQuality, tone: "lime", suffix: "%" },
     { label: "Producao ultimo dia", value: Number(latest?.productionTotal || 0), tone: "red", suffix: "" }
   ];
-  const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
-  return items.map((item) => {
-    const width = (Number(item.value || 0) / max) * 100;
-    return `
-      <div class="analytics-tag-row">
-        <span>${escapeHtml(item.label)}</span>
-        <div class="analytics-tag-track">
-          <span class="analytics-tag-fill ${item.tone}" style="width:${width.toFixed(2)}%"></span>
-        </div>
-        <strong>${escapeHtml(formatMetric(item.value, item.suffix))}</strong>
-      </div>
-    `;
-  }).join("");
+  return items.map((item) => `
+    <article class="analytics-tag-card tone-${escapeHtml(item.tone)}">
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(formatMetric(item.value, item.suffix))}</strong>
+    </article>
+  `).join("");
 }
 
 function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
@@ -1175,25 +1168,96 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
       value: Number(entry?.[field] || 0)
     }))
     .filter((row) => row.date && Number.isFinite(row.value))
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  const maxValue = Math.max(...rows.map((row) => row.value), 1);
+  if (!rows.length) {
+    return `
+      <article class="analytics-trend-kpi-card is-effectiveness analytics-daily-chart-card">
+        <p class="chart-title">${escapeHtml(label)}</p>
+        <strong>--${escapeHtml(suffix)}</strong>
+      </article>
+    `;
+  }
+
+  const isPercent = field === "effectiveness" || field === "qualityScore" || suffix === "%";
+  const minValue = isPercent ? 0 : Math.min(...rows.map((row) => row.value), 0);
+  const maxValue = isPercent ? 100 : Math.max(...rows.map((row) => row.value), 1);
+  const chartWidth = Math.max(760, rows.length * 104);
+  const chartHeight = 250;
+  const padLeft = 46;
+  const padRight = 24;
+  const padTop = 26;
+  const padBottom = 44;
+  const innerW = chartWidth - padLeft - padRight;
+  const innerH = chartHeight - padTop - padBottom;
+  const denom = Math.max(rows.length - 1, 1);
+  const range = Math.max(maxValue - minValue, 1);
+  const minPointValue = Math.min(...rows.map((row) => row.value));
+
+  const points = rows.map((row, index) => {
+    const x = padLeft + (innerW * index) / denom;
+    const ratio = (row.value - minValue) / range;
+    const y = padTop + innerH - (ratio * innerH);
+    return { x, y, value: row.value, date: row.date };
+  });
+
+  const polyline = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+  const areaPoints = `${padLeft},${chartHeight - padBottom} ${polyline} ${chartWidth - padRight},${chartHeight - padBottom}`;
+  chartIdSeed += 1;
+  const gradientId = `analytics-daily-fill-${field}-${chartIdSeed}`;
+  const isScrollable = rows.length > 8;
+  const yTicks = isPercent ? [100, 75, 50, 25, 0] : [maxValue, (maxValue + minValue) / 2, minValue];
+
   return `
-    <article class="analytics-trend-kpi-card is-effectiveness">
+    <article class="analytics-trend-kpi-card is-effectiveness analytics-daily-chart-card">
       <p class="chart-title">${escapeHtml(label)}</p>
-      <div class="analytics-daily-list">
-        ${rows.map((row) => {
-          const percent = (row.value / maxValue) * 100;
-          return `
-            <div class="analytics-daily-row">
-              <span class="analytics-daily-date">${escapeHtml(formatDate(row.date))}</span>
-              <div class="analytics-daily-track">
-                <span class="analytics-daily-fill" style="width:${percent.toFixed(2)}%"></span>
-              </div>
-              <strong>${escapeHtml(formatMetric(row.value, suffix))}</strong>
-            </div>
-          `;
-        }).join("")}
+      <div class="analytics-daily-chart-scroll${isScrollable ? " is-scrollable" : ""}">
+        <svg
+          class="analytics-daily-chart-svg"
+          viewBox="0 0 ${chartWidth} ${chartHeight}"
+          width="${chartWidth}"
+          height="${chartHeight}"
+          preserveAspectRatio="xMinYMin meet"
+          role="img"
+          aria-label="${escapeHtml(label)}"
+        >
+          <defs>
+            <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#4ea1ff" stop-opacity="0.38"></stop>
+              <stop offset="100%" stop-color="#4ea1ff" stop-opacity="0.04"></stop>
+            </linearGradient>
+          </defs>
+          ${yTicks.map((tick) => {
+            const ratio = (Number(tick) - minValue) / range;
+            const y = padTop + innerH - (ratio * innerH);
+            return `
+              <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${(chartWidth - padRight)}" y2="${y.toFixed(2)}" class="analytics-daily-grid-line"></line>
+              <text x="${(padLeft - 8)}" y="${(y + 4).toFixed(2)}" class="analytics-daily-y-label" text-anchor="end">${escapeHtml(formatMetric(tick, suffix))}</text>
+            `;
+          }).join("")}
+          <rect x="${padLeft}" y="${padTop}" width="${innerW}" height="${innerH}" class="analytics-daily-plot-border"></rect>
+          <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
+          <polyline points="${polyline}" class="analytics-daily-line"></polyline>
+          ${points.map((point) => {
+            const pointColor = point.value === minPointValue && rows.length > 2 ? "#ff4d4f" : "#2ee51d";
+            return `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="5.2" fill="${pointColor}" class="analytics-daily-point"></circle>`;
+          }).join("")}
+          ${points.map((point) => {
+            const text = formatMetric(point.value, suffix);
+            const chipWidth = Math.max(38, (text.length * 7) + 14);
+            const chipX = Math.max(padLeft, Math.min(point.x - (chipWidth / 2), (chartWidth - padRight) - chipWidth));
+            const chipY = Math.max(6, point.y - 22);
+            return `
+              <g class="analytics-daily-chip">
+                <rect x="${chipX.toFixed(2)}" y="${chipY.toFixed(2)}" width="${chipWidth.toFixed(2)}" height="17" rx="8" ry="8"></rect>
+                <text x="${(chipX + (chipWidth / 2)).toFixed(2)}" y="${(chipY + 12).toFixed(2)}" class="analytics-daily-chip-label" text-anchor="middle">${escapeHtml(text)}</text>
+              </g>
+            `;
+          }).join("")}
+          ${points.map((point) => `
+            <text x="${point.x.toFixed(2)}" y="${(chartHeight - 10).toFixed(2)}" text-anchor="middle" class="analytics-daily-x-label">${escapeHtml(formatDate(point.date))}</text>
+          `).join("")}
+        </svg>
       </div>
     </article>
   `;
