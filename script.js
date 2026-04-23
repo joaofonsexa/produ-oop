@@ -1154,17 +1154,48 @@ function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, l
 }
 
 function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
-  const effectivenessKpi = buildTrendKpiCard(entries, "effectiveness", "Efetividade", "%");
+  const effectivenessDaily = buildDailyMetricCard(entries, "effectiveness", "Efetividade (%) dia a dia", "%");
   const qualityKpi = buildTrendKpiCard(entries, "qualityScore", "Qualidade", "%");
   return `
     <div class="analytics-trend-two">
-      ${effectivenessKpi}
+      ${effectivenessDaily}
       ${qualityKpi}
       <article class="analytics-days-card analytics-days-card-inline">
         <strong>${escapeHtml(String(workdaysCount))}</strong>
         <span>Dias Trabalhados</span>
       </article>
     </div>
+  `;
+}
+
+function buildDailyMetricCard(entries, field, label, suffix = "") {
+  const rows = [...entries]
+    .map((entry) => ({
+      date: String(entry?.date || ""),
+      value: Number(entry?.[field] || 0)
+    }))
+    .filter((row) => row.date && Number.isFinite(row.value))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const maxValue = Math.max(...rows.map((row) => row.value), 1);
+  return `
+    <article class="analytics-trend-kpi-card is-effectiveness">
+      <p class="chart-title">${escapeHtml(label)}</p>
+      <div class="analytics-daily-list">
+        ${rows.map((row) => {
+          const percent = (row.value / maxValue) * 100;
+          return `
+            <div class="analytics-daily-row">
+              <span class="analytics-daily-date">${escapeHtml(formatDate(row.date))}</span>
+              <div class="analytics-daily-track">
+                <span class="analytics-daily-fill" style="width:${percent.toFixed(2)}%"></span>
+              </div>
+              <strong>${escapeHtml(formatMetric(row.value, suffix))}</strong>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </article>
   `;
 }
 

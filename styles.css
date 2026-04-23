@@ -2592,6 +2592,46 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   color: #f09b9b;
 }
 
+.analytics-daily-list {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.analytics-daily-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 56px;
+  gap: 10px;
+  align-items: center;
+}
+
+.analytics-daily-date {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.analytics-daily-track {
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+.analytics-daily-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #5aa4ff, #7cc3ff);
+}
+
+.analytics-daily-row strong {
+  font-size: 0.84rem;
+  justify-self: end;
+}
+
 .analytics-new-views-grid {
   grid-template-columns: 1fr;
 }
