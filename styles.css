@@ -139,6 +139,14 @@ body.booting .boot-loader {
   margin: auto;
 }
 
+.maintenance-card {
+  width: min(100%, 560px);
+}
+
+.maintenance-card .form-actions {
+  justify-content: center;
+}
+
 .login-brand {
   display: flex;
   flex-direction: column;
@@ -1727,6 +1735,12 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
+}
+
+.maintenance-control {
+  display: grid;
+  gap: 12px;
+  align-items: start;
 }
 
 .admin-action-card {

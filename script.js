@@ -2,6 +2,7 @@
 const THEME_KEY = "operator-results-theme-v1";
 const DEFAULT_THEME = "dark";
 const REMOTE_API_BASE = "/api";
+const DEFAULT_MAINTENANCE_MESSAGE = "O portal esta temporariamente em manutencao. Tente novamente em alguns minutos.";
 
 const ACCESS_LEVELS = {
   gestor: { label: "Gestor", canManage: true },
@@ -27,6 +28,12 @@ const state = {
   adminSelectedRecord: null,
   operationRecords: [],
   importInProgress: false,
+  systemMaintenance: {
+    enabled: false,
+    message: DEFAULT_MAINTENANCE_MESSAGE,
+    updatedAt: "",
+    updatedByName: ""
+  },
   analytics: {
     attendantQuery: "",
     selectedAttendantId: "all",
@@ -40,6 +47,9 @@ let chartIdSeed = 0;
 const elements = {
   body: document.body,
   loginScreen: document.querySelector("#login-screen"),
+  maintenanceScreen: document.querySelector("#maintenance-screen"),
+  maintenanceCopy: document.querySelector("#maintenance-copy"),
+  maintenanceLogoutButton: document.querySelector("#maintenance-logout-button"),
   loginForm: document.querySelector("#login-form"),
   loginUsername: document.querySelector("#login-username"),
   loginPassword: document.querySelector("#login-password"),
@@ -106,6 +116,9 @@ const elements = {
   importUpload: document.querySelector("#import-upload"),
   downloadTemplate: document.querySelector("#download-template"),
   removeUpload: document.querySelector("#remove-upload"),
+  systemMaintenancePanel: document.querySelector("#system-maintenance-panel"),
+  maintenanceStatusText: document.querySelector("#maintenance-status-text"),
+  maintenanceToggleButton: document.querySelector("#maintenance-toggle-button"),
   adminHistoryWrapper: document.querySelector("#admin-history-wrapper"),
   sections: Array.from(document.querySelectorAll(".content-section"))
 };
@@ -145,6 +158,7 @@ function bindEvents() {
   elements.themeToggle?.addEventListener("click", handleThemeToggle);
   elements.profileTrigger?.addEventListener("click", toggleProfileMenu);
   elements.logoutButton?.addEventListener("click", () => handleLogout());
+  elements.maintenanceLogoutButton?.addEventListener("click", () => handleLogout());
   elements.navLinks.forEach((button) => {
     button.addEventListener("click", () => setSection(button.dataset.section || "dashboard"));
   });
@@ -181,6 +195,7 @@ function bindEvents() {
   elements.analyticsDateList?.addEventListener("change", handleAnalyticsDateChange);
   elements.analyticsAttendantList?.addEventListener("change", handleAnalyticsAttendantChange);
   elements.historyDeleteAll?.addEventListener("click", () => void handleDeleteAllResults());
+  elements.maintenanceToggleButton?.addEventListener("click", () => void handleMaintenanceToggle());
   document.addEventListener("click", handleDocumentClick);
 }
 
@@ -284,6 +299,12 @@ function handleLogout(options = {}) {
   state.operators = [];
   state.adminSelectedUserId = "";
   state.adminSelectedRecord = null;
+  state.systemMaintenance = {
+    enabled: false,
+    message: DEFAULT_MAINTENANCE_MESSAGE,
+    updatedAt: "",
+    updatedByName: ""
+  };
   saveSession(null);
   elements.loginForm?.reset();
   clearLoginError();
@@ -299,6 +320,13 @@ async function hydratePortal(options = {}) {
   syncAuthView();
 
   try {
+    await loadSystemMaintenanceStatus();
+    if (state.systemMaintenance.enabled && !canManage()) {
+      syncAuthView();
+      if (!options.preserveSection) setSection("dashboard");
+      return;
+    }
+
     await loadMyResults();
     if (canManage()) {
       await loadOperators();
@@ -316,6 +344,19 @@ async function hydratePortal(options = {}) {
   } finally {
     setBusy(false);
   }
+}
+
+async function loadSystemMaintenanceStatus() {
+  const payload = await fetchJson(`${REMOTE_API_BASE}/system-status`);
+  state.systemMaintenance = normalizeSystemMaintenanceStatus(payload?.status || payload || {});
+}
+
+function normalizeSystemMaintenanceStatus(status) {
+  const enabled = Boolean(status?.enabled);
+  const message = String(status?.message || DEFAULT_MAINTENANCE_MESSAGE).trim() || DEFAULT_MAINTENANCE_MESSAGE;
+  const updatedAt = String(status?.updatedAt || "").trim();
+  const updatedByName = String(status?.updatedByName || "").trim();
+  return { enabled, message, updatedAt, updatedByName };
 }
 
 async function loadOperationRecords() {
@@ -862,11 +903,18 @@ function resolveMetricBySelection({ selectedMetrics, metric, parsedValue, existi
 
 function syncAuthView() {
   const isLogged = Boolean(state.session?.id);
+  const blockedByMaintenance = isLogged && state.systemMaintenance.enabled && !canManage();
   elements.loginScreen?.classList.toggle("hidden", isLogged);
-  elements.appShell?.classList.toggle("hidden", !isLogged);
+  elements.maintenanceScreen?.classList.toggle("hidden", !blockedByMaintenance);
+  elements.appShell?.classList.toggle("hidden", !isLogged || blockedByMaintenance);
   elements.adminNavLink?.classList.toggle("hidden", !canManage());
+  elements.systemMaintenancePanel?.classList.toggle("hidden", !canManage());
   updateGlobalOperatorFilterVisibility();
   elements.historyDeleteAll?.classList.toggle("hidden", !canManage());
+
+  if (elements.maintenanceCopy) {
+    elements.maintenanceCopy.textContent = state.systemMaintenance.message || DEFAULT_MAINTENANCE_MESSAGE;
+  }
 
   if (!isLogged) return;
 
@@ -877,6 +925,54 @@ function syncAuthView() {
   elements.sessionRoleMenu.textContent = role.label;
   elements.profileAvatar.textContent = getInitials(state.session.name || "Operador");
   syncGlobalOperatorSelect();
+  renderMaintenanceControls();
+}
+
+function renderMaintenanceControls() {
+  if (!canManage()) return;
+  if (elements.maintenanceStatusText) {
+    if (state.systemMaintenance.enabled) {
+      const by = state.systemMaintenance.updatedByName ? ` por ${state.systemMaintenance.updatedByName}` : "";
+      const at = state.systemMaintenance.updatedAt ? ` em ${formatDateTime(state.systemMaintenance.updatedAt)}` : "";
+      elements.maintenanceStatusText.textContent = `Manutencao ativa${by}${at}.`;
+    } else {
+      elements.maintenanceStatusText.textContent = "Manutencao desativada.";
+    }
+  }
+  if (elements.maintenanceToggleButton) {
+    elements.maintenanceToggleButton.textContent = state.systemMaintenance.enabled ? "Desativar manutencao" : "Ativar manutencao";
+    elements.maintenanceToggleButton.classList.toggle("danger", !state.systemMaintenance.enabled);
+  }
+}
+
+async function handleMaintenanceToggle() {
+  if (!canManage()) return;
+  const willEnable = !state.systemMaintenance.enabled;
+  const actionLabel = willEnable ? "ativar" : "desativar";
+  const confirmed = window.confirm(`Deseja ${actionLabel} o modo manutencao do sistema?`);
+  if (!confirmed) return;
+
+  setBusy(true);
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/system-maintenance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        enabled: willEnable,
+        message: DEFAULT_MAINTENANCE_MESSAGE,
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor",
+        actorRole: state.session?.role || "operador"
+      })
+    });
+    state.systemMaintenance = normalizeSystemMaintenanceStatus(payload?.status || {});
+    syncAuthView();
+    window.alert(state.systemMaintenance.enabled ? "Modo manutencao ativado." : "Modo manutencao desativado.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel alterar o modo manutencao.");
+  } finally {
+    setBusy(false);
+  }
 }
 
 function renderAll() {

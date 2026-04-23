@@ -122,6 +122,78 @@ async function ensureSsoReplayTable(db) {
   ).run();
 }
 
+async function ensureSystemSettingsTable(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS system_settings (
+      setting_key TEXT PRIMARY KEY,
+      value_text TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_by_id TEXT NOT NULL DEFAULT '',
+      updated_by_name TEXT NOT NULL DEFAULT ''
+    )`
+  ).run();
+}
+
+function normalizeMaintenanceStatus(raw = {}) {
+  return {
+    enabled: Boolean(raw?.enabled),
+    message: String(raw?.message || "O portal esta temporariamente em manutencao. Tente novamente em alguns minutos."),
+    updatedAt: String(raw?.updatedAt || ""),
+    updatedById: String(raw?.updatedById || ""),
+    updatedByName: String(raw?.updatedByName || "")
+  };
+}
+
+async function readSystemMaintenanceStatus(db) {
+  await ensureSystemSettingsTable(db);
+  const row = await db
+    .prepare("SELECT value_text FROM system_settings WHERE setting_key = ? LIMIT 1")
+    .bind("maintenance_mode")
+    .first();
+  if (!row?.value_text) {
+    return normalizeMaintenanceStatus({ enabled: false });
+  }
+
+  try {
+    const parsed = JSON.parse(String(row.value_text || "{}"));
+    return normalizeMaintenanceStatus(parsed);
+  } catch {
+    return normalizeMaintenanceStatus({ enabled: false });
+  }
+}
+
+async function updateSystemMaintenanceStatus(db, payload = {}) {
+  await ensureSystemSettingsTable(db);
+  const nextStatus = normalizeMaintenanceStatus({
+    enabled: Boolean(payload?.enabled),
+    message: String(payload?.message || "").trim(),
+    updatedAt: new Date().toISOString(),
+    updatedById: String(payload?.updatedById || "").trim(),
+    updatedByName: String(payload?.updatedByName || "").trim()
+  });
+
+  await db
+    .prepare(
+      `INSERT INTO system_settings (setting_key, value_text, updated_at, updated_by_id, updated_by_name)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(setting_key) DO UPDATE SET
+         value_text = excluded.value_text,
+         updated_at = excluded.updated_at,
+         updated_by_id = excluded.updated_by_id,
+         updated_by_name = excluded.updated_by_name`
+    )
+    .bind(
+      "maintenance_mode",
+      JSON.stringify(nextStatus),
+      nextStatus.updatedAt,
+      nextStatus.updatedById,
+      nextStatus.updatedByName
+    )
+    .run();
+
+  return nextStatus;
+}
+
 async function markSsoTokenAsConsumed(db, jti, expSeconds) {
   await ensureSsoReplayTable(db);
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -432,6 +504,21 @@ export default {
       if (url.pathname === "/api/operators" && request.method === "GET") {
         const operators = await resolveOperators(env);
         return jsonResponse({ ok: true, operators });
+      }
+
+      if (url.pathname === "/api/system-status" && request.method === "GET") {
+        const status = await readSystemMaintenanceStatus(env.DB);
+        return jsonResponse({ ok: true, status });
+      }
+
+      if (url.pathname === "/api/system-maintenance" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const actorRole = String(body?.actorRole || "").trim().toLowerCase();
+        if (actorRole !== "gestor") {
+          return jsonResponse({ ok: false, error: "Somente gestor pode alterar o modo manutencao." }, 403);
+        }
+        const status = await updateSystemMaintenanceStatus(env.DB, body || {});
+        return jsonResponse({ ok: true, status });
       }
 
       if (url.pathname === "/api/results" && request.method === "GET") {

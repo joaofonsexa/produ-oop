@@ -95,6 +95,23 @@
     </div>
   </section>
 
+  <section id="maintenance-screen" class="login-screen hidden">
+    <div class="login-card maintenance-card">
+      <div class="login-brand">
+        <div class="brand-mark brand-logo-shell">
+          <img src="logos_KR-02.png" alt="KR Consulting &amp; Services">
+        </div>
+        <div>
+          <h1>SISTEMA EM MANUTENCAO</h1>
+          <p id="maintenance-copy" class="login-helper">O portal esta temporariamente indisponivel. Tente novamente em alguns minutos.</p>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button id="maintenance-logout-button" class="ghost-button" type="button">Sair</button>
+      </div>
+    </div>
+  </section>
+
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand-block">
@@ -464,6 +481,19 @@
               </div>
             </form>
           </section>
+
+          <section id="system-maintenance-panel" class="panel hidden">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Configuracoes</p>
+                <h3>Manutencao do sistema</h3>
+              </div>
+            </div>
+            <div class="maintenance-control">
+              <p id="maintenance-status-text" class="field-help">Manutencao desativada.</p>
+              <button id="maintenance-toggle-button" class="ghost-button danger" type="button">Ativar manutencao</button>
+            </div>
+          </section>
         </div>
 
         <div class="info-grid single">
@@ -481,7 +511,7 @@
     </main>
   </div>
 
-  <script src="script.js?v=20260423-portal-02"></script>
+  <script src="script.js?v=20260423-portal-03"></script>
 </body>
 </html>
 
