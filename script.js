@@ -1243,8 +1243,19 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
   }
 
   const isPercent = field === "effectiveness" || field === "qualityScore" || suffix === "%";
-  const minValue = isPercent ? 0 : Math.min(...rows.map((row) => row.value), 0);
-  const maxValue = isPercent ? 100 : Math.max(...rows.map((row) => row.value), 1);
+  const rawMin = Math.min(...rows.map((row) => row.value), 0);
+  const rawMax = Math.max(...rows.map((row) => row.value), 1);
+  const spread = Math.max(rawMax - rawMin, 1);
+  const dynamicPad = Math.max(spread * 0.25, isPercent ? 4 : 6);
+  let minValue = Math.max(0, rawMin - dynamicPad);
+  let maxValue = rawMax + dynamicPad;
+  if (isPercent) {
+    minValue = Math.max(0, minValue);
+    maxValue = Math.min(100, Math.max(maxValue, rawMax + 2));
+  }
+  if (maxValue <= minValue) {
+    maxValue = minValue + 1;
+  }
   const chartWidth = Math.max(760, rows.length * 110);
   const chartHeight = 250;
   const padLeft = 22;
@@ -1268,7 +1279,7 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
   const areaPoints = `${padLeft},${chartHeight - padBottom} ${polyline} ${chartWidth - padRight},${chartHeight - padBottom}`;
   chartIdSeed += 1;
   const gradientId = `analytics-daily-fill-${field}-${chartIdSeed}`;
-  const isScrollable = rows.length > 8;
+  const isScrollable = rows.length > 14;
   const chipStep = rows.length > 20 ? 3 : rows.length > 12 ? 2 : 1;
   const xLabelStep = rows.length > 18 ? 3 : rows.length > 10 ? 2 : 1;
 
