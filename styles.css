@@ -1652,10 +1652,12 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .upload-mode-fieldset {
   margin: 0;
-  padding: 0;
-  border: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .upload-mode-fieldset legend {
@@ -1667,19 +1669,50 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .upload-mode-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
 }
 
 .upload-mode-option {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
+  gap: 10px;
+  min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-strong);
-  padding: 0 12px;
+  padding: 0 14px;
   cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.admin-form .upload-mode-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  display: inline-block;
+  vertical-align: middle;
+  cursor: pointer;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  -moz-appearance: auto;
+  accent-color: var(--primary);
+}
+
+.upload-mode-option:hover {
+  border-color: rgba(120, 170, 235, 0.5);
+  background: rgba(78, 138, 215, 0.08);
+}
+
+.upload-mode-option:has(input:checked) {
+  border-color: rgba(114, 176, 255, 0.75);
+  background: rgba(78, 138, 215, 0.15);
 }
 
 .upload-mode-option input[type="checkbox"] {
@@ -1689,8 +1722,10 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 }
 
 .upload-mode-option span {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .admin-action-card {
