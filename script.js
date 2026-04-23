@@ -8,28 +8,13 @@ const ACCESS_LEVELS = {
   operador: { label: "Operador", canManage: false }
 };
 
-const IMPORT_MODES = {
-  full: {
-    label: "Completo",
-    metricColumn: null,
-    templateColumns: ["Efetividade", "Producao", "Qualidade"]
-  },
-  production: {
-    label: "Somente Producao",
-    metricColumn: "production",
-    templateColumns: ["Producao"]
-  },
-  effectiveness: {
-    label: "Somente Efetividade",
-    metricColumn: "effectiveness",
-    templateColumns: ["Efetividade"]
-  },
-  quality: {
-    label: "Somente Qualidade",
-    metricColumn: "quality",
-    templateColumns: ["Qualidade"]
-  }
+const IMPORT_METRICS = {
+  production: { label: "Producao", templateColumn: "Producao" },
+  effectiveness: { label: "Efetividade", templateColumn: "Efetividade" },
+  quality: { label: "Qualidade", templateColumn: "Qualidade" }
 };
+
+const IMPORT_METRIC_ORDER = ["production", "effectiveness", "quality"];
 
 const state = {
   section: "dashboard",
@@ -113,7 +98,8 @@ const elements = {
   adminEffectiveness: document.querySelector("#admin-effectiveness"),
   adminQuality: document.querySelector("#admin-quality"),
   adminUploadForm: document.querySelector("#admin-upload-form"),
-  uploadMode: document.querySelector("#upload-mode"),
+  uploadModeOptions: document.querySelector("#upload-mode-options"),
+  uploadModeInputs: Array.from(document.querySelectorAll('input[name="upload-mode"]')),
   uploadFile: document.querySelector("#upload-file"),
   uploadHelpText: document.querySelector("#upload-help-text"),
   uploadStatus: document.querySelector("#upload-status"),
@@ -186,7 +172,7 @@ function bindEvents() {
   elements.adminHistoryWrapper?.addEventListener("click", (event) => void handleAdminHistoryClick(event));
   elements.historyTableWrapper?.addEventListener("click", (event) => void handleHistoryTableClick(event));
   elements.adminUploadForm?.addEventListener("submit", (event) => event.preventDefault());
-  elements.uploadMode?.addEventListener("change", updateUploadModeHelp);
+  elements.uploadModeOptions?.addEventListener("change", updateUploadModeHelp);
   elements.importUpload?.addEventListener("click", () => void handleSpreadsheetUpload());
   elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
   elements.removeUpload?.addEventListener("click", () => void handleSpreadsheetRemoval());
@@ -441,8 +427,8 @@ async function handleSpreadsheetUpload() {
     window.alert("Biblioteca de planilha indisponivel no momento.");
     return;
   }
-  const importMode = getSelectedImportMode();
-  const importModeDef = getImportModeDefinition(importMode);
+  const importMetrics = getSelectedImportMetrics();
+  const importModeLabel = getImportMetricsLabel(importMetrics);
 
   state.importInProgress = true;
   if (elements.uploadFile) elements.uploadFile.disabled = true;
@@ -459,7 +445,7 @@ async function handleSpreadsheetUpload() {
       invalidDateCount,
       complementedRowsCount,
       buffer
-    } = await parseSpreadsheetImportFile(file, { importMode });
+    } = await parseSpreadsheetImportFile(file, { importMetrics });
     let updatedCount = 0;
 
     if (!importItems.length) {
@@ -496,9 +482,9 @@ async function handleSpreadsheetUpload() {
     await loadAdminSelectedRecord();
     if (state.session?.id) await loadMyResults();
     renderAll();
-    setUploadStatus(`Importacao (${importModeDef.label}) concluida: ${updatedCount} linha(s) gravada(s).`, "success");
+    setUploadStatus(`Importacao (${importModeLabel}) concluida: ${updatedCount} linha(s) gravada(s).`, "success");
     window.alert(
-      `Carga concluida (${importModeDef.label}).\n` +
+      `Carga concluida (${importModeLabel}).\n` +
       `- Linhas lidas: ${totalRows}\n` +
       `- Importadas: ${updatedCount}\n` +
       `- Sem operador correspondente: ${unmatchedOperatorCount}\n` +
@@ -617,7 +603,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
   const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
   const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
-  const importMode = getImportModeDefinition(options.importMode);
+  const selectedMetrics = getSelectedImportMetrics(options.importMetrics);
 
   if (idxName < 0 && idxUsername < 0) {
     throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
@@ -626,17 +612,17 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
   }
   if (!options.forRemoval) {
-    if (importMode.metricColumn === "production" && idxProduction < 0) {
-      throw new Error("No modo Somente Producao, a planilha precisa ter a coluna Producao.");
+    if (!selectedMetrics.size) {
+      throw new Error("Selecione pelo menos uma metrica para importar.");
     }
-    if (importMode.metricColumn === "effectiveness" && idxEffectiveness < 0) {
-      throw new Error("No modo Somente Efetividade, a planilha precisa ter a coluna Efetividade.");
+    if (selectedMetrics.has("production") && idxProduction < 0) {
+      throw new Error("Voce marcou Producao, entao a planilha precisa ter a coluna Producao.");
     }
-    if (importMode.metricColumn === "quality" && idxQuality < 0) {
-      throw new Error("No modo Somente Qualidade, a planilha precisa ter a coluna Qualidade.");
+    if (selectedMetrics.has("effectiveness") && idxEffectiveness < 0) {
+      throw new Error("Voce marcou Efetividade, entao a planilha precisa ter a coluna Efetividade.");
     }
-    if (importMode.metricColumn === null && (idxEffectiveness < 0 || idxProduction < 0 || idxQuality < 0)) {
-      throw new Error("No modo Completo, a planilha precisa ter as colunas de Producao, Efetividade e Qualidade.");
+    if (selectedMetrics.has("quality") && idxQuality < 0) {
+      throw new Error("Voce marcou Qualidade, entao a planilha precisa ter a coluna Qualidade.");
     }
   }
 
@@ -690,20 +676,20 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     const effectivenessFromSheet = idxEffectiveness >= 0 ? parseMetricInput(row[idxEffectiveness], { percent: true }) : NaN;
     const qualityFromSheet = idxQuality >= 0 ? parseMetricInput(row[idxQuality], { percent: true }) : NaN;
 
-    const productionTotal = resolveMetricByMode({
-      mode: importMode.metricColumn,
+    const productionTotal = resolveMetricBySelection({
+      selectedMetrics,
       metric: "production",
       parsedValue: productionFromSheet,
       existingValue: Number(existing?.productionTotal)
     });
-    const effectiveness = resolveMetricByMode({
-      mode: importMode.metricColumn,
+    const effectiveness = resolveMetricBySelection({
+      selectedMetrics,
       metric: "effectiveness",
       parsedValue: effectivenessFromSheet,
       existingValue: Number(existing?.effectiveness)
     });
-    const qualityScore = resolveMetricByMode({
-      mode: importMode.metricColumn,
+    const qualityScore = resolveMetricBySelection({
+      selectedMetrics,
       metric: "quality",
       parsedValue: qualityFromSheet,
       existingValue: Number(existing?.qualityScore)
@@ -713,7 +699,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       invalidMetricCount += 1;
       continue;
     }
-    if (!existing && importMode.metricColumn !== null) {
+    if (!existing && selectedMetrics.size < IMPORT_METRIC_ORDER.length) {
       complementedRowsCount += 1;
     }
 
@@ -768,42 +754,78 @@ function handleDownloadTemplate() {
     window.alert("Biblioteca de planilha indisponivel.");
     return;
   }
-  const importMode = getSelectedImportMode();
-  const modeDef = getImportModeDefinition(importMode);
-  const rows = [["Nome do Operador", "Usuario", "Data", ...modeDef.templateColumns]];
+  const selectedMetrics = getSelectedImportMetrics();
+  if (!selectedMetrics.size) {
+    window.alert("Marque pelo menos uma metrica para baixar o modelo.");
+    return;
+  }
+  const templateColumns = getTemplateColumnsFromSelection(selectedMetrics);
+  const rows = [["Nome do Operador", "Usuario", "Data", ...templateColumns]];
   state.operators.forEach((operator) => {
     const base = [operator.name || "", operator.username || "", ""];
-    rows.push([...base, ...modeDef.templateColumns.map(() => "")]);
+    rows.push([...base, ...templateColumns.map(() => "")]);
   });
 
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  const sheetName = modeDef.metricColumn ? `Modelo-${modeDef.metricColumn}` : "Modelo-Completo";
+  const selectedList = [...selectedMetrics];
+  const shortNameMap = { production: "Prod", effectiveness: "Efet", quality: "Qual" };
+  const sheetName = `Modelo-${selectedList.map((metric) => shortNameMap[metric] || metric).join("-")}`.slice(0, 31);
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-  const suffix = modeDef.metricColumn || "completo";
+  const suffix = selectedList.join("-");
   XLSX.writeFile(workbook, `modelo-resultados-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-function getSelectedImportMode() {
-  const selected = String(elements.uploadMode?.value || "full").trim();
-  return IMPORT_MODES[selected] ? selected : "full";
+function getSelectedImportMetrics(initialMetrics = null) {
+  if (initialMetrics instanceof Set) {
+    return new Set([...initialMetrics].filter((metric) => Boolean(IMPORT_METRICS[metric])));
+  }
+  if (Array.isArray(initialMetrics)) {
+    return new Set(initialMetrics.map((item) => String(item || "").trim()).filter((metric) => Boolean(IMPORT_METRICS[metric])));
+  }
+
+  const selected = new Set();
+  elements.uploadModeInputs.forEach((input) => {
+    if (!input?.checked) return;
+    const metric = String(input.value || "").trim();
+    if (IMPORT_METRICS[metric]) selected.add(metric);
+  });
+  return selected;
 }
 
-function getImportModeDefinition(mode) {
-  const normalized = String(mode || "full").trim();
-  return IMPORT_MODES[normalized] || IMPORT_MODES.full;
+function getTemplateColumnsFromSelection(selectedMetrics) {
+  const list = [];
+  IMPORT_METRIC_ORDER.forEach((metric) => {
+    if (!selectedMetrics.has(metric)) return;
+    list.push(IMPORT_METRICS[metric].templateColumn);
+  });
+  return list;
+}
+
+function getImportMetricsLabel(selectedMetrics) {
+  const labels = [];
+  IMPORT_METRIC_ORDER.forEach((metric) => {
+    if (!selectedMetrics.has(metric)) return;
+    labels.push(IMPORT_METRICS[metric].label);
+  });
+  return labels.length ? labels.join(" + ") : "Nenhuma metrica";
 }
 
 function updateUploadModeHelp() {
   if (!elements.uploadHelpText) return;
-  const modeDef = getImportModeDefinition(getSelectedImportMode());
-  if (modeDef.metricColumn === null) {
-    elements.uploadHelpText.textContent = "Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Producao e Qualidade.";
+  const selectedMetrics = getSelectedImportMetrics();
+  if (!selectedMetrics.size) {
+    elements.uploadHelpText.textContent = "Marque pelo menos uma metrica (Producao, Efetividade ou Qualidade) para importar.";
     return;
   }
 
-  const metricLabel = modeDef.templateColumns[0] || "Metrica";
-  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador (ou Usuario), Data e ${metricLabel}. As demais metricas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
+  const templateColumns = getTemplateColumnsFromSelection(selectedMetrics);
+  if (templateColumns.length === IMPORT_METRIC_ORDER.length) {
+    elements.uploadHelpText.textContent = "Colunas aceitas: Nome do Operador (ou Usuario), Data, Producao, Efetividade e Qualidade.";
+    return;
+  }
+
+  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador (ou Usuario), Data e ${templateColumns.join(", ")}. As metricas nao marcadas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
 }
 
 function buildExistingEntriesLookup() {
@@ -828,8 +850,8 @@ function buildExistingEntriesLookup() {
   return lookup;
 }
 
-function resolveMetricByMode({ mode, metric, parsedValue, existingValue }) {
-  if (mode === null || mode === metric) {
+function resolveMetricBySelection({ selectedMetrics, metric, parsedValue, existingValue }) {
+  if (selectedMetrics?.has(metric)) {
     return Number.isFinite(parsedValue) ? Number(parsedValue) : NaN;
   }
   if (Number.isFinite(existingValue)) {
@@ -929,7 +951,10 @@ function renderDashboardAnalytics() {
 
   const totalProposals = filtered.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0);
   const avgEffectiveness = filtered.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0) / filtered.length;
-  const avgQuality = filtered.reduce((sum, entry) => sum + Number(entry.qualityScore || 0), 0) / filtered.length;
+  const monthlyQualityValues = getMonthlyQualityValues(filtered);
+  const avgQuality = monthlyQualityValues.length
+    ? monthlyQualityValues.reduce((sum, value) => sum + Number(value || 0), 0) / monthlyQualityValues.length
+    : 0;
   const avgProduction = totalProposals / filtered.length;
   const avgProductionRounded = Math.round(avgProduction);
   const latest = filtered[filtered.length - 1];
@@ -1148,7 +1173,7 @@ function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, l
 
 function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
   const effectivenessDaily = buildDailyMetricCard(entries, "effectiveness", "Efetividade (%) dia a dia", "%");
-  const qualityKpi = buildTrendKpiCard(entries, "qualityScore", "Qualidade", "%");
+  const qualityKpi = buildMonthlyQualityKpiCard(entries);
   return `
     <div class="analytics-trend-two">
       ${effectivenessDaily}
@@ -1158,6 +1183,44 @@ function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
         <span>Dias Trabalhados</span>
       </article>
     </div>
+  `;
+}
+
+function buildMonthlyQualityKpiCard(entries) {
+  const monthlyMap = getMonthlyQualityMap(entries);
+  const monthKeys = [...monthlyMap.keys()].sort((a, b) => String(a).localeCompare(String(b)));
+  if (!monthKeys.length) {
+    return `
+      <article class="analytics-trend-kpi-card is-quality">
+        <p class="chart-title">Qualidade mensal (monitoria)</p>
+        <strong>--%</strong>
+      </article>
+    `;
+  }
+
+  const values = monthKeys.map((key) => Number(monthlyMap.get(key) || 0)).filter(Number.isFinite);
+  const latestMonthKey = monthKeys[monthKeys.length - 1];
+  const latest = Number(monthlyMap.get(latestMonthKey) || 0);
+  const previous = values.length > 1 ? values[values.length - 2] : latest;
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const delta = latest - previous;
+  const deltaPrefix = delta > 0 ? "+" : "";
+  const tone = delta >= 0 ? "up" : "down";
+
+  return `
+    <article class="analytics-trend-kpi-card is-quality">
+      <p class="chart-title">Qualidade mensal (monitoria)</p>
+      <strong>${escapeHtml(formatMetric(latest, "%"))}</strong>
+      <div class="analytics-trend-kpi-meta">
+        <span>Mes ref ${escapeHtml(formatMonthKey(latestMonthKey))}</span>
+        <span>Media mensal ${escapeHtml(formatMetric(average, "%"))}</span>
+        <span>Min ${escapeHtml(formatMetric(min, "%"))}</span>
+        <span>Max ${escapeHtml(formatMetric(max, "%"))}</span>
+      </div>
+      <span class="analytics-trend-kpi-delta ${tone}">${escapeHtml(`${deltaPrefix}${formatMetric(delta, "%")}`)}</span>
+    </article>
   `;
 }
 
@@ -1182,7 +1245,7 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
   const isPercent = field === "effectiveness" || field === "qualityScore" || suffix === "%";
   const minValue = isPercent ? 0 : Math.min(...rows.map((row) => row.value), 0);
   const maxValue = isPercent ? 100 : Math.max(...rows.map((row) => row.value), 1);
-  const chartWidth = Math.max(760, rows.length * 104);
+  const chartWidth = Math.max(760, rows.length * 110);
   const chartHeight = 250;
   const padLeft = 46;
   const padRight = 24;
@@ -1206,6 +1269,8 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
   chartIdSeed += 1;
   const gradientId = `analytics-daily-fill-${field}-${chartIdSeed}`;
   const isScrollable = rows.length > 8;
+  const chipStep = rows.length > 20 ? 3 : rows.length > 12 ? 2 : 1;
+  const xLabelStep = rows.length > 18 ? 3 : rows.length > 10 ? 2 : 1;
   const yTicks = isPercent ? [100, 75, 50, 25, 0] : [maxValue, (maxValue + minValue) / 2, minValue];
 
   return `
@@ -1215,8 +1280,7 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
         <svg
           class="analytics-daily-chart-svg"
           viewBox="0 0 ${chartWidth} ${chartHeight}"
-          width="${chartWidth}"
-          height="${chartHeight}"
+          style="${isScrollable ? `width:${chartWidth}px;height:${chartHeight}px;` : `width:100%;height:${chartHeight}px;`}"
           preserveAspectRatio="xMinYMin meet"
           role="img"
           aria-label="${escapeHtml(label)}"
@@ -1242,7 +1306,9 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
             const pointColor = point.value === minPointValue && rows.length > 2 ? "#ff4d4f" : "#2ee51d";
             return `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="5.2" fill="${pointColor}" class="analytics-daily-point"></circle>`;
           }).join("")}
-          ${points.map((point) => {
+          ${points.map((point, index) => {
+            const showChip = index === 0 || index === points.length - 1 || index % chipStep === 0;
+            if (!showChip) return "";
             const text = formatMetric(point.value, suffix);
             const chipWidth = Math.max(38, (text.length * 7) + 14);
             const chipX = Math.max(padLeft, Math.min(point.x - (chipWidth / 2), (chartWidth - padRight) - chipWidth));
@@ -1254,9 +1320,11 @@ function buildDailyMetricCard(entries, field, label, suffix = "") {
               </g>
             `;
           }).join("")}
-          ${points.map((point) => `
-            <text x="${point.x.toFixed(2)}" y="${(chartHeight - 10).toFixed(2)}" text-anchor="middle" class="analytics-daily-x-label">${escapeHtml(formatDate(point.date))}</text>
-          `).join("")}
+          ${points.map((point, index) => {
+            const showXLabel = index === 0 || index === points.length - 1 || index % xLabelStep === 0;
+            if (!showXLabel) return "";
+            return `<text x="${point.x.toFixed(2)}" y="${(chartHeight - 10).toFixed(2)}" text-anchor="middle" class="analytics-daily-x-label">${escapeHtml(formatDate(point.date))}</text>`;
+          }).join("")}
         </svg>
       </div>
     </article>
@@ -2214,7 +2282,7 @@ function getRecentEntries(record, maxItems = 10) {
 function buildLineChartSvg(entries, field, color, fixedMax = null) {
   const values = entries.map((entry) => Number(entry?.[field] || 0));
   const labels = entries.map((entry) => shortDate(entry?.date));
-  const width = Math.max(520, (Math.max(values.length, 2) - 1) * 68 + 78);
+  const width = Math.max(560, (Math.max(values.length, 2) - 1) * 86 + 92);
   const isScrollable = values.length > 7;
   const height = 220;
   const padLeft = 46;
@@ -2250,6 +2318,8 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
   chartIdSeed += 1;
   const gradientId = `trend-fill-${field}-${chartIdSeed}`;
   const valueSuffix = field === "effectiveness" || field === "qualityScore" ? "%" : "";
+  const chipStep = values.length > 20 ? 3 : values.length > 12 ? 2 : 1;
+  const xLabelStep = values.length > 18 ? 3 : values.length > 10 ? 2 : 1;
   const yTicks = 4;
   const yLabels = Array.from({ length: yTicks + 1 }, (_, idx) => {
     const ratio = idx / yTicks;
@@ -2260,7 +2330,14 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
 
   return `
     <div class="trend-scroll${isScrollable ? " is-scrollable" : ""}">
-      <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de tendencia">
+      <svg
+        class="trend-svg"
+        viewBox="0 0 ${width} ${height}"
+        style="${isScrollable ? `width:${width}px;height:${height}px;` : `width:100%;height:${height}px;`}"
+        preserveAspectRatio="xMinYMin meet"
+        role="img"
+        aria-label="Grafico de tendencia"
+      >
         <defs>
           <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
@@ -2282,7 +2359,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
         <polygon points="${areaPoints}" fill="url(#${gradientId})"></polygon>
         <polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
         ${points.map((point, index) => {
-          const shouldShowLabel = points.length <= 5 || index === 0 || index === points.length - 1;
+          const shouldShowLabel = index === 0 || index === points.length - 1 || index % chipStep === 0;
           if (!shouldShowLabel) return "";
           const labelText = formatMetric(point.value, valueSuffix);
           const labelWidth = Math.max(28, (labelText.length * 6.2) + 12);
@@ -2314,7 +2391,7 @@ function buildLineChartSvg(entries, field, color, fixedMax = null) {
         <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4" fill="${color}"></circle>
       `).join("")}
       ${points.map((point, index) => {
-        const showXLabel = points.length <= 8 || index === 0 || index === points.length - 1 || index % 2 === 0;
+        const showXLabel = index === 0 || index === points.length - 1 || index % xLabelStep === 0;
         if (!showXLabel) return "";
         return `<text x="${point.x.toFixed(2)}" y="${(height - 10).toFixed(2)}" class="trend-x-label" text-anchor="middle">${escapeHtml(labels[index] || "--")}</text>`;
       }).join("")}
@@ -2719,6 +2796,17 @@ function formatDate(value) {
   if (!normalized) return "--";
   const [year, month, day] = normalized.split("-");
   return `${day}/${month}/${year}`;
+}
+
+function formatMonthKey(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "--";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const date = new Date(Date.UTC(year, month - 1, 1));
+  if (Number.isNaN(date.getTime())) return "--";
+  return new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(date);
 }
 
 function formatDateTime(value) {
