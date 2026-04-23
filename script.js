@@ -1154,23 +1154,56 @@ function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, l
 }
 
 function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
-  const effectivenessChart = buildLineChartSvg(entries, "effectiveness", "#2f80ed", 100);
-  const qualityChart = buildLineChartSvg(entries, "qualityScore", "#22f300", 100);
+  const effectivenessKpi = buildTrendKpiCard(entries, "effectiveness", "Efetividade", "%");
+  const qualityKpi = buildTrendKpiCard(entries, "qualityScore", "Qualidade", "%");
   return `
     <div class="analytics-trend-two">
-      <div class="chart-card">
-        <p class="chart-title">Efetividade (%)</p>
-        ${effectivenessChart}
-      </div>
-      <div class="chart-card">
-        <p class="chart-title">Qualidade (%)</p>
-        ${qualityChart}
-      </div>
+      ${effectivenessKpi}
+      ${qualityKpi}
       <article class="analytics-days-card analytics-days-card-inline">
         <strong>${escapeHtml(String(workdaysCount))}</strong>
         <span>Dias Trabalhados</span>
       </article>
     </div>
+  `;
+}
+
+function buildTrendKpiCard(entries, field, label, suffix = "") {
+  const toneClass = field === "effectiveness"
+    ? "is-effectiveness"
+    : field === "qualityScore"
+      ? "is-quality"
+      : "";
+  const values = entries.map((entry) => Number(entry?.[field] || 0)).filter(Number.isFinite);
+  if (!values.length) {
+    return `
+      <article class="analytics-trend-kpi-card ${toneClass}">
+        <p class="chart-title">${escapeHtml(label)}</p>
+        <strong>--${escapeHtml(suffix)}</strong>
+      </article>
+    `;
+  }
+
+  const latest = values[values.length - 1];
+  const previous = values.length > 1 ? values[values.length - 2] : latest;
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const delta = latest - previous;
+  const deltaPrefix = delta > 0 ? "+" : "";
+  const tone = delta >= 0 ? "up" : "down";
+
+  return `
+    <article class="analytics-trend-kpi-card ${toneClass}">
+      <p class="chart-title">${escapeHtml(label)}</p>
+      <strong>${escapeHtml(formatMetric(latest, suffix))}</strong>
+      <div class="analytics-trend-kpi-meta">
+        <span>Media ${escapeHtml(formatMetric(average, suffix))}</span>
+        <span>Min ${escapeHtml(formatMetric(min, suffix))}</span>
+        <span>Max ${escapeHtml(formatMetric(max, suffix))}</span>
+      </div>
+      <span class="analytics-trend-kpi-delta ${tone}">${escapeHtml(`${deltaPrefix}${formatMetric(delta, suffix)}`)}</span>
+    </article>
   `;
 }
 

@@ -2522,7 +2522,74 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 .analytics-days-card-inline {
   min-height: 0;
   align-content: center;
-  padding-block: 22px;
+  padding: 18px 16px;
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.04), rgba(120, 160, 220, 0.07)),
+    var(--surface-strong);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+}
+
+.analytics-trend-kpi-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.03), rgba(90, 130, 195, 0.08)),
+    var(--surface-strong);
+  padding: 18px 16px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+}
+
+.analytics-trend-kpi-card strong {
+  font-size: 2.1rem;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.analytics-trend-kpi-card.is-effectiveness strong {
+  color: #78b6ff;
+}
+
+.analytics-trend-kpi-card.is-quality strong {
+  color: #89e8b8;
+}
+
+.analytics-trend-kpi-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.analytics-trend-kpi-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.analytics-trend-kpi-delta {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.analytics-trend-kpi-delta.up {
+  background: rgba(26, 168, 102, 0.14);
+  color: #78e2b2;
+}
+
+.analytics-trend-kpi-delta.down {
+  background: rgba(211, 90, 90, 0.16);
+  color: #f09b9b;
 }
 
 .analytics-new-views-grid {
