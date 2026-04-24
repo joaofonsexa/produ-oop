@@ -516,7 +516,7 @@ async function resolveOperators(env) {
     users = Array.isArray(payload?.users) ? payload.users : [];
   } catch {}
   const savedAccessLinks = await readOperatorAccessLinks(env.DB);
-  const centralUsers = users
+  return users
     .map(sanitizeUser)
     .map((user) => {
       const saved = savedAccessLinks.get(String(user.id || ""));
@@ -527,13 +527,8 @@ async function resolveOperators(env) {
         usernameNuvidio: saved.usernameNuvidio || user.usernameNuvidio || ""
       };
     })
-    .filter((user) => user.id && user.role !== "gestor");
-  const localUsers = (await readLocalUsers(env.DB)).filter((user) => user.id && user.role !== "gestor");
-  const merged = new Map();
-  [...centralUsers, ...localUsers].forEach((user) => {
-    merged.set(String(user.id || ""), user);
-  });
-  return [...merged.values()].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+    .filter((user) => user.id && user.role !== "gestor")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
 }
 
 async function readRecord(db, userId) {

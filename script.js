@@ -22,7 +22,6 @@ const state = {
   theme: DEFAULT_THEME,
   session: null,
   myRecord: null,
-  localUsers: [],
   operators: [],
   adminSelectedUserId: "",
   overviewSelectedUserId: "all",
@@ -102,19 +101,6 @@ const elements = {
   analyticsWorkdays: document.querySelector("#analytics-workdays"),
   historyTableWrapper: document.querySelector("#history-table-wrapper"),
   historyDeleteAll: document.querySelector("#history-delete-all"),
-  localUserForm: document.querySelector("#local-user-form"),
-  localUserSelect: document.querySelector("#local-user-select"),
-  localUserName: document.querySelector("#local-user-name"),
-  localUserUsername: document.querySelector("#local-user-username"),
-  localUserPassword: document.querySelector("#local-user-password"),
-  localUserRole: document.querySelector("#local-user-role"),
-  localUserUsername0800: document.querySelector("#local-user-username-0800"),
-  localUserUsernameNuvidio: document.querySelector("#local-user-username-nuvidio"),
-  localUserReset: document.querySelector("#local-user-reset"),
-  adminAccessForm: document.querySelector("#admin-access-form"),
-  adminAccessUser: document.querySelector("#admin-access-user"),
-  adminAccess0800: document.querySelector("#admin-access-0800"),
-  adminAccessNuvidio: document.querySelector("#admin-access-nuvidio"),
   adminForm: document.querySelector("#admin-form"),
   adminUser: document.querySelector("#admin-user"),
   adminDate: document.querySelector("#admin-date"),
@@ -185,18 +171,6 @@ function bindEvents() {
   elements.navLinks.forEach((button) => {
     button.addEventListener("click", () => setSection(button.dataset.section || "dashboard"));
   });
-  elements.localUserForm?.addEventListener("submit", handleLocalUserSave);
-  elements.localUserSelect?.addEventListener("change", hydrateLocalUserForm);
-  elements.localUserReset?.addEventListener("click", resetLocalUserForm);
-  elements.adminAccessForm?.addEventListener("submit", handleAdminAccessSave);
-  elements.adminAccessUser?.addEventListener("change", () => {
-    state.adminSelectedUserId = String(elements.adminAccessUser.value || "");
-    syncAdminOperatorSelect();
-    hydrateAdminAccessForm();
-    hydrateAdminFormFromRecord();
-    void loadAdminSelectedRecord();
-    syncGlobalOperatorSelect();
-  });
   elements.adminForm?.addEventListener("submit", handleAdminSave);
   [
     elements.admin0800Approved,
@@ -214,8 +188,6 @@ function bindEvents() {
     if (state.overviewSelectedUserId !== "all") {
       state.overviewSelectedUserId = state.adminSelectedUserId;
     }
-    syncAdminAccessOperatorSelect();
-    hydrateAdminAccessForm();
     hydrateAdminFormFromRecord();
     void loadAdminSelectedRecord();
     syncGlobalOperatorSelect();
@@ -225,8 +197,6 @@ function bindEvents() {
     if (state.overviewSelectedUserId !== "all") {
       state.adminSelectedUserId = state.overviewSelectedUserId;
       syncAdminOperatorSelect();
-      syncAdminAccessOperatorSelect();
-      hydrateAdminAccessForm();
       hydrateAdminFormFromRecord();
       void loadAdminSelectedRecord();
     } else {
@@ -370,21 +340,21 @@ async function hydratePortal(options = {}) {
   syncAuthView();
 
   try {
-    await loadSystemMaintenanceStatus();
+    const maintenancePromise = loadSystemMaintenanceStatus();
+    const myResultsPromise = loadMyResults();
+    await maintenancePromise;
     if (state.systemMaintenance.enabled && !canManage()) {
       syncAuthView();
       if (!options.preserveSection) setSection("dashboard");
       return;
     }
 
-    await loadMyResults();
+    await myResultsPromise;
     if (canManage()) {
-      await loadLocalUsers();
-      await loadOperators();
-      await loadOperationRecords();
-      await loadAdminSelectedRecord();
+      await Promise.all([
+        loadOperators()
+      ]);
     } else {
-      state.localUsers = [];
       state.operators = [];
       state.operationRecords = [];
       state.adminSelectedUserId = "";
@@ -396,6 +366,20 @@ async function hydratePortal(options = {}) {
   } finally {
     setBusy(false);
   }
+
+  if (canManage()) {
+    void hydrateManagerBackgroundData();
+  }
+}
+
+async function hydrateManagerBackgroundData() {
+  try {
+    await Promise.all([
+      loadOperationRecords(),
+      loadAdminSelectedRecord()
+    ]);
+    renderAll();
+  } catch {}
 }
 
 async function loadSystemMaintenanceStatus() {
@@ -444,110 +428,7 @@ async function loadOperators() {
   if (!state.overviewSelectedUserId) state.overviewSelectedUserId = "all";
 
   renderOperatorSelect();
-  hydrateAdminAccessForm();
   hydrateAdminFormFromRecord();
-}
-
-async function loadLocalUsers() {
-  if (!canManage()) {
-    state.localUsers = [];
-    return;
-  }
-  const payload = await fetchJson(`${REMOTE_API_BASE}/users/local`);
-  state.localUsers = (Array.isArray(payload?.users) ? payload.users : [])
-    .filter((user) => user && user.id)
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
-  renderLocalUserSelect();
-  hydrateLocalUserForm();
-}
-
-async function handleLocalUserSave(event) {
-  event.preventDefault();
-  if (!canManage()) return;
-
-  const selectedId = String(elements.localUserSelect?.value || "").trim();
-  const name = String(elements.localUserName?.value || "").trim();
-  const username = String(elements.localUserUsername?.value || "").trim();
-  const password = String(elements.localUserPassword?.value || "");
-  const role = String(elements.localUserRole?.value || "operador").trim();
-  const username0800 = String(elements.localUserUsername0800?.value || "").trim();
-  const usernameNuvidio = String(elements.localUserUsernameNuvidio?.value || "").trim();
-
-  if (!name || !username) {
-    window.alert("Preencha nome completo e login do portal.");
-    return;
-  }
-  if (!selectedId && !password) {
-    window.alert("Informe uma senha para criar o novo usuario.");
-    return;
-  }
-
-  setBusy(true);
-  try {
-    await fetchJson(`${REMOTE_API_BASE}/users/local`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        id: selectedId || "",
-        name,
-        username,
-        password,
-        role,
-        username0800,
-        usernameNuvidio,
-        updatedById: state.session?.id || "",
-        updatedByName: state.session?.name || "Gestor"
-      })
-    });
-    await loadLocalUsers();
-    await loadOperators();
-    resetLocalUserForm();
-    window.alert("Usuario salvo com sucesso.");
-  } catch (error) {
-    window.alert(error?.message || "Nao foi possivel salvar o usuario.");
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function handleAdminAccessSave(event) {
-  event.preventDefault();
-  if (!canManage()) return;
-
-  const userId = String(elements.adminAccessUser?.value || "").trim();
-  const selectedUser = state.operators.find((user) => String(user.id || "") === userId);
-  const username0800 = String(elements.adminAccess0800?.value || "").trim();
-  const usernameNuvidio = String(elements.adminAccessNuvidio?.value || "").trim();
-
-  if (!selectedUser) {
-    window.alert("Selecione um operador para salvar os acessos.");
-    return;
-  }
-
-  setBusy(true);
-  try {
-    await fetchJson(`${REMOTE_API_BASE}/operators/access`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        userId,
-        userName: selectedUser.name || "",
-        username: selectedUser.username || "",
-        username0800,
-        usernameNuvidio,
-        updatedById: state.session?.id || "",
-        updatedByName: state.session?.name || "Gestor"
-      })
-    });
-    await loadOperators();
-    syncAdminOperatorSelect();
-    hydrateAdminAccessForm();
-    window.alert("Acessos do operador salvos com sucesso.");
-  } catch (error) {
-    window.alert(error?.message || "Nao foi possivel salvar os acessos do operador.");
-  } finally {
-    setBusy(false);
-  }
 }
 
 async function loadAdminSelectedRecord() {
@@ -629,7 +510,7 @@ async function handleAdminSave(event) {
 
   setBusy(true);
   try {
-    await fetchJson(`${REMOTE_API_BASE}/operator-results`, {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/operator-results`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -657,9 +538,13 @@ async function handleAdminSave(event) {
         updatedByName: state.session?.name || "Gestor"
       })
     });
-    if (canManage()) await loadOperationRecords();
-    await loadAdminSelectedRecord();
-    if (state.session?.id === userId) await loadMyResults();
+    const normalizedRecord = normalizeRecord(payload?.record);
+    if (normalizedRecord) upsertRecordInState(normalizedRecord);
+    if (state.adminSelectedUserId === userId) {
+      state.adminSelectedRecord = normalizedRecord;
+      hydrateAdminFormFromRecord();
+    }
+    if (state.session?.id === userId) state.myRecord = normalizedRecord;
     renderAll();
     window.alert("Resultado salvo com sucesso.");
   } catch (error) {
@@ -735,9 +620,7 @@ async function handleSpreadsheetUpload() {
       );
     }
 
-    if (canManage()) await loadOperationRecords();
-    await loadAdminSelectedRecord();
-    if (state.session?.id) await loadMyResults();
+    void refreshManagerDataSoon();
     renderAll();
     setUploadStatus(`Importacao (${importModeLabel}) concluida: ${updatedCount} linha(s) gravada(s).`, "success");
     window.alert(
@@ -819,9 +702,7 @@ async function handleSpreadsheetRemoval() {
       throw new Error(`Nenhum lancamento foi removido.\nFalhas: ${failed}`);
     }
 
-    if (canManage()) await loadOperationRecords();
-    await loadAdminSelectedRecord();
-    if (state.session?.id) await loadMyResults();
+    void refreshManagerDataSoon();
     renderAll();
     setUploadStatus(`Remocao concluida: ${removed} lancamento(s) removido(s).`, "success");
     window.alert(
@@ -2589,7 +2470,7 @@ async function handleDeleteResultButton(button) {
 
   setBusy(true);
   try {
-    await fetchJson(`${REMOTE_API_BASE}/operator-results/delete`, {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/operator-results/delete`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ userId, date })
@@ -2598,9 +2479,13 @@ async function handleDeleteResultButton(button) {
     state.adminSelectedUserId = userId;
     syncAdminOperatorSelect();
     syncGlobalOperatorSelect();
-    if (canManage()) await loadOperationRecords();
-    await loadAdminSelectedRecord();
-    if (state.session?.id === userId) await loadMyResults();
+    const normalizedRecord = normalizeRecord(payload?.record);
+    removeRecordEntryFromState(userId, date, normalizedRecord);
+    if (state.adminSelectedUserId === userId) {
+      state.adminSelectedRecord = normalizedRecord;
+      hydrateAdminFormFromRecord();
+    }
+    if (state.session?.id === userId) state.myRecord = normalizedRecord;
     renderAll();
     window.alert("Lancamento excluido com sucesso.");
   } catch (error) {
@@ -2612,17 +2497,7 @@ async function handleDeleteResultButton(button) {
 
 function renderOperatorSelect() {
   syncAdminOperatorSelect();
-  syncAdminAccessOperatorSelect();
   syncGlobalOperatorSelect();
-}
-
-function renderLocalUserSelect() {
-  if (!elements.localUserSelect) return;
-  const options = [
-    `<option value="">Novo usuario</option>`,
-    ...state.localUsers.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(formatOperatorOptionLabel(user))}</option>`)
-  ];
-  elements.localUserSelect.innerHTML = options.join("");
 }
 
 function syncAdminOperatorSelect() {
@@ -2631,14 +2506,6 @@ function syncAdminOperatorSelect() {
     ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(formatOperatorOptionLabel(operator))}</option>`).join("")
     : `<option value="">Nenhum operador encontrado</option>`;
   elements.adminUser.value = state.adminSelectedUserId || "";
-}
-
-function syncAdminAccessOperatorSelect() {
-  if (!elements.adminAccessUser) return;
-  elements.adminAccessUser.innerHTML = state.operators.length
-    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(formatOperatorOptionLabel(operator))}</option>`).join("")
-    : `<option value="">Nenhum operador encontrado</option>`;
-  elements.adminAccessUser.value = state.adminSelectedUserId || "";
 }
 
 function syncGlobalOperatorSelect() {
@@ -2673,28 +2540,45 @@ function hydrateAdminFormFromRecord() {
   elements.adminQuality.value = Number.isFinite(latest?.qualityScore) ? String(latest.qualityScore) : "";
 }
 
-function hydrateAdminAccessForm() {
-  if (!canManage()) return;
-  const selectedUser = state.operators.find((user) => String(user.id || "") === String(state.adminSelectedUserId || ""));
-  if (elements.adminAccess0800) elements.adminAccess0800.value = String(selectedUser?.username0800 || "");
-  if (elements.adminAccessNuvidio) elements.adminAccessNuvidio.value = String(selectedUser?.usernameNuvidio || "");
+function upsertRecordInState(record) {
+  if (!record?.userId) return;
+  const index = state.operationRecords.findIndex((item) => String(item?.userId || "") === String(record.userId || ""));
+  if (index >= 0) {
+    state.operationRecords[index] = record;
+  } else {
+    state.operationRecords.push(record);
+  }
 }
 
-function hydrateLocalUserForm() {
-  if (!canManage()) return;
-  const selectedId = String(elements.localUserSelect?.value || "").trim();
-  const user = state.localUsers.find((item) => String(item.id || "") === selectedId);
-  if (elements.localUserName) elements.localUserName.value = String(user?.name || "");
-  if (elements.localUserUsername) elements.localUserUsername.value = String(user?.username || "");
-  if (elements.localUserPassword) elements.localUserPassword.value = "";
-  if (elements.localUserRole) elements.localUserRole.value = String(user?.role || "operador");
-  if (elements.localUserUsername0800) elements.localUserUsername0800.value = String(user?.username0800 || "");
-  if (elements.localUserUsernameNuvidio) elements.localUserUsernameNuvidio.value = String(user?.usernameNuvidio || "");
+function removeRecordEntryFromState(userId, date, replacementRecord = null) {
+  const normalizedDate = normalizeDateKey(date);
+  const index = state.operationRecords.findIndex((item) => String(item?.userId || "") === String(userId || ""));
+  if (replacementRecord) {
+    if (index >= 0) {
+      state.operationRecords[index] = replacementRecord;
+    } else {
+      state.operationRecords.push(replacementRecord);
+    }
+    return;
+  }
+  if (index >= 0) {
+    state.operationRecords.splice(index, 1);
+  }
+  if (state.myRecord?.userId === userId) {
+    const entries = (state.myRecord.entries || []).filter((entry) => normalizeDateKey(entry?.date) !== normalizedDate);
+    state.myRecord = entries.length ? normalizeRecord({ ...state.myRecord, entries }) : null;
+  }
 }
 
-function resetLocalUserForm() {
-  if (elements.localUserSelect) elements.localUserSelect.value = "";
-  hydrateLocalUserForm();
+function refreshManagerDataSoon() {
+  if (!canManage()) return Promise.resolve();
+  return Promise.allSettled([
+    loadOperationRecords(),
+    loadAdminSelectedRecord(),
+    state.session?.id ? loadMyResults() : Promise.resolve()
+  ]).then(() => {
+    renderAll();
+  });
 }
 
 function setSection(sectionId) {
