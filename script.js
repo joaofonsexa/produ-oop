@@ -787,6 +787,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       throw new Error("Selecione pelo menos uma metrica para importar.");
     }
     if (
+      !isMatrixByDateFormat &&
       selectedMetrics.has("production") &&
       idxProduction < 0 &&
       idxProduction0800 < 0 &&
@@ -802,6 +803,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       throw new Error("Voce marcou Producao, entao a planilha precisa ter Producao, Producao 0800/Producao Nuvidio ou os status das esteiras.");
     }
     if (
+      !isMatrixByDateFormat &&
       selectedMetrics.has("effectiveness") &&
       idxEffectiveness < 0 &&
       idx0800Approved < 0 &&
