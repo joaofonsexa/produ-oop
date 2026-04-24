@@ -417,20 +417,75 @@
                 </label>
 
                 <label>
-                  <span>Produção</span>
-                  <input id="admin-production" type="number" min="0" step="0.01" required placeholder="Ex.: 52">
+                  <span>Qualidade (%)</span>
+                  <input id="admin-quality" type="number" min="0" step="0.01" required placeholder="Ex.: 93">
                 </label>
               </div>
 
               <div class="form-grid">
                 <label>
-                  <span>Efetividade (%)</span>
-                  <input id="admin-effectiveness" type="number" min="0" step="0.01" required placeholder="Ex.: 37.5">
+                  <span>Produção 0800</span>
+                  <input id="admin-production-0800" type="number" min="0" step="0.01" readonly placeholder="Calculada automaticamente">
                 </label>
 
                 <label>
-                  <span>Qualidade (%)</span>
-                  <input id="admin-quality" type="number" min="0" step="0.01" required placeholder="Ex.: 93">
+                  <span>Produção Nuvidio</span>
+                  <input id="admin-production-nuvidio" type="number" min="0" step="0.01" readonly placeholder="Calculada automaticamente">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Efetividade 0800 (%)</span>
+                  <input id="admin-effectiveness-0800" type="number" min="0" step="0.01" readonly placeholder="Calculada automaticamente">
+                </label>
+
+                <label>
+                  <span>Efetividade Nuvidio (%)</span>
+                  <input id="admin-effectiveness-nuvidio" type="number" min="0" step="0.01" readonly placeholder="Calculada automaticamente">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>0800 Aprovadas</span>
+                  <input id="admin-0800-approved" type="number" min="0" step="0.01" required placeholder="Ex.: 20">
+                </label>
+
+                <label>
+                  <span>0800 Canceladas</span>
+                  <input id="admin-0800-cancelled" type="number" min="0" step="0.01" required placeholder="Ex.: 8">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>0800 Pendenciadas</span>
+                  <input id="admin-0800-pending" type="number" min="0" step="0.01" required placeholder="Ex.: 6">
+                </label>
+
+                <label>
+                  <span>0800 Sem ação</span>
+                  <input id="admin-0800-no-action" type="number" min="0" step="0.01" required placeholder="Ex.: 18">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Nuvidio Aprovadas</span>
+                  <input id="admin-nuvidio-approved" type="number" min="0" step="0.01" required placeholder="Ex.: 22">
+                </label>
+
+                <label>
+                  <span>Nuvidio Reprovadas</span>
+                  <input id="admin-nuvidio-reproved" type="number" min="0" step="0.01" required placeholder="Ex.: 11">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Nuvidio Sem ação</span>
+                  <input id="admin-nuvidio-no-action" type="number" min="0" step="0.01" required placeholder="Ex.: 9">
                 </label>
               </div>
 
@@ -471,7 +526,7 @@
                 <input id="upload-file" type="file" accept=".xlsx,.xls,.csv">
               </label>
 
-              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Producao e Qualidade. A data e lida da propria planilha, linha a linha.</p>
+              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador, Usuario, Usuario 0800 ou Usuario Nuvidio, Data, status do 0800, status do Nuvidio e Qualidade. A producao e a efetividade sao calculadas automaticamente a partir dos status.</p>
               <p id="upload-status" class="upload-status hidden" role="status" aria-live="polite"></p>
 
               <div class="form-actions">

@@ -104,8 +104,17 @@ const elements = {
   adminForm: document.querySelector("#admin-form"),
   adminUser: document.querySelector("#admin-user"),
   adminDate: document.querySelector("#admin-date"),
-  adminProduction: document.querySelector("#admin-production"),
-  adminEffectiveness: document.querySelector("#admin-effectiveness"),
+  adminProduction0800: document.querySelector("#admin-production-0800"),
+  adminProductionNuvidio: document.querySelector("#admin-production-nuvidio"),
+  adminEffectiveness0800: document.querySelector("#admin-effectiveness-0800"),
+  adminEffectivenessNuvidio: document.querySelector("#admin-effectiveness-nuvidio"),
+  admin0800Approved: document.querySelector("#admin-0800-approved"),
+  admin0800Cancelled: document.querySelector("#admin-0800-cancelled"),
+  admin0800Pending: document.querySelector("#admin-0800-pending"),
+  admin0800NoAction: document.querySelector("#admin-0800-no-action"),
+  adminNuvidioApproved: document.querySelector("#admin-nuvidio-approved"),
+  adminNuvidioReproved: document.querySelector("#admin-nuvidio-reproved"),
+  adminNuvidioNoAction: document.querySelector("#admin-nuvidio-no-action"),
   adminQuality: document.querySelector("#admin-quality"),
   adminUploadForm: document.querySelector("#admin-upload-form"),
   uploadModeOptions: document.querySelector("#upload-mode-options"),
@@ -163,6 +172,17 @@ function bindEvents() {
     button.addEventListener("click", () => setSection(button.dataset.section || "dashboard"));
   });
   elements.adminForm?.addEventListener("submit", handleAdminSave);
+  [
+    elements.admin0800Approved,
+    elements.admin0800Cancelled,
+    elements.admin0800Pending,
+    elements.admin0800NoAction,
+    elements.adminNuvidioApproved,
+    elements.adminNuvidioReproved,
+    elements.adminNuvidioNoAction
+  ].forEach((input) => {
+    input?.addEventListener("input", syncCalculatedAdminFields);
+  });
   elements.adminUser?.addEventListener("change", () => {
     state.adminSelectedUserId = String(elements.adminUser.value || "");
     if (state.overviewSelectedUserId !== "all") {
@@ -415,12 +435,54 @@ async function handleAdminSave(event) {
   const userId = String(elements.adminUser.value || "").trim();
   const selectedUser = state.operators.find((user) => user.id === userId);
   const date = normalizeDateKey(elements.adminDate.value);
-  const productionTotal = parseMetricInput(elements.adminProduction.value);
-  const effectiveness = parseMetricInput(elements.adminEffectiveness.value);
+  const funnel0800Approved = parseMetricInput(elements.admin0800Approved.value);
+  const funnel0800Cancelled = parseMetricInput(elements.admin0800Cancelled.value);
+  const funnel0800Pending = parseMetricInput(elements.admin0800Pending.value);
+  const funnel0800NoAction = parseMetricInput(elements.admin0800NoAction.value);
+  const funnelNuvidioApproved = parseMetricInput(elements.adminNuvidioApproved.value);
+  const funnelNuvidioReproved = parseMetricInput(elements.adminNuvidioReproved.value);
+  const funnelNuvidioNoAction = parseMetricInput(elements.adminNuvidioNoAction.value);
+  const production0800 = calculateProduction0800({
+    approved: funnel0800Approved,
+    cancelled: funnel0800Cancelled,
+    pending: funnel0800Pending,
+    noAction: funnel0800NoAction
+  });
+  const productionNuvidio = calculateProductionNuvidio({
+    approved: funnelNuvidioApproved,
+    reproved: funnelNuvidioReproved,
+    noAction: funnelNuvidioNoAction
+  });
+  const effectiveness0800 = calculateEffectiveness0800({
+    approved: funnel0800Approved,
+    cancelled: funnel0800Cancelled,
+    pending: funnel0800Pending,
+    noAction: funnel0800NoAction
+  });
+  const effectivenessNuvidio = calculateEffectivenessNuvidio({
+    approved: funnelNuvidioApproved,
+    reproved: funnelNuvidioReproved,
+    noAction: funnelNuvidioNoAction
+  });
   const qualityScore = parseMetricInput(elements.adminQuality.value);
+  const productionTotal = sumPlatformProduction({ production0800, productionNuvidio });
+  const effectiveness = averagePlatformEffectiveness({ effectiveness0800, effectivenessNuvidio });
 
-  if (!selectedUser || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
-    window.alert("Preencha operador, data, producao, efetividade e qualidade com valores validos.");
+  if (
+    !selectedUser ||
+    !date ||
+    !Number.isFinite(funnel0800Approved) ||
+    !Number.isFinite(funnel0800Cancelled) ||
+    !Number.isFinite(funnel0800Pending) ||
+    !Number.isFinite(funnel0800NoAction) ||
+    !Number.isFinite(funnelNuvidioApproved) ||
+    !Number.isFinite(funnelNuvidioReproved) ||
+    !Number.isFinite(funnelNuvidioNoAction) ||
+    !Number.isFinite(productionTotal) ||
+    !Number.isFinite(effectiveness) ||
+    !Number.isFinite(qualityScore)
+  ) {
+    window.alert("Preencha operador, data, todos os status do 0800 e Nuvidio, e qualidade com valores validos.");
     return;
   }
 
@@ -433,8 +495,21 @@ async function handleAdminSave(event) {
         userId,
         userName: selectedUser.name || "",
         username: selectedUser.username || "",
+        username0800: selectedUser.username0800 || "",
+        usernameNuvidio: selectedUser.usernameNuvidio || "",
         date,
+        funnel0800Approved,
+        funnel0800Cancelled,
+        funnel0800Pending,
+        funnel0800NoAction,
+        funnelNuvidioApproved,
+        funnelNuvidioReproved,
+        funnelNuvidioNoAction,
+        production0800,
+        productionNuvidio,
         productionTotal,
+        effectiveness0800,
+        effectivenessNuvidio,
         effectiveness,
         qualityScore,
         updatedById: state.session?.id || "",
@@ -640,14 +715,25 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const header = rows[0].map((item) => normalizeLooseText(item));
   const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
   const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
+  const idxUsername0800 = findColumnIndex(header, ["usuario 0800", "login 0800", "username 0800", "matricula 0800"]);
+  const idxUsernameNuvidio = findColumnIndex(header, ["usuario nuvidio", "login nuvidio", "username nuvidio", "matricula nuvidio", "usuario nuvideo", "login nuvideo"]);
   const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
   const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
   const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
+  const idxProduction0800 = findColumnIndex(header, ["producao 0800", "volume 0800", "qtde 0800"]);
+  const idxProductionNuvidio = findColumnIndex(header, ["producao nuvidio", "volume nuvidio", "qtde nuvidio", "producao nuvideo"]);
+  const idx0800Approved = findColumnIndex(header, ["0800 aprovadas", "aprovadas 0800"]);
+  const idx0800Cancelled = findColumnIndex(header, ["0800 canceladas", "canceladas 0800"]);
+  const idx0800Pending = findColumnIndex(header, ["0800 pendenciadas", "pendenciadas 0800"]);
+  const idx0800NoAction = findColumnIndex(header, ["0800 sem acao", "sem acao 0800", "0800 sem ação", "sem ação 0800"]);
+  const idxNuvidioApproved = findColumnIndex(header, ["nuvidio aprovadas", "aprovadas nuvidio", "nuvideo aprovadas"]);
+  const idxNuvidioReproved = findColumnIndex(header, ["nuvidio reprovadas", "reprovadas nuvidio", "nuvideo reprovadas"]);
+  const idxNuvidioNoAction = findColumnIndex(header, ["nuvidio sem acao", "sem acao nuvidio", "nuvidio sem ação", "sem ação nuvidio", "nuvideo sem acao", "nuvideo sem ação"]);
   const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
   const selectedMetrics = getSelectedImportMetrics(options.importMetrics);
 
-  if (idxName < 0 && idxUsername < 0) {
-    throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
+  if (idxName < 0 && idxUsername < 0 && idxUsername0800 < 0 && idxUsernameNuvidio < 0) {
+    throw new Error("A planilha precisa ter Nome do Operador ou um dos usuarios/login: geral, 0800 ou Nuvidio.");
   }
   if (idxDate < 0) {
     throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
@@ -656,19 +742,53 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     if (!selectedMetrics.size) {
       throw new Error("Selecione pelo menos uma metrica para importar.");
     }
-    if (selectedMetrics.has("production") && idxProduction < 0) {
-      throw new Error("Voce marcou Producao, entao a planilha precisa ter a coluna Producao.");
+    if (
+      selectedMetrics.has("production") &&
+      idxProduction < 0 &&
+      idxProduction0800 < 0 &&
+      idxProductionNuvidio < 0 &&
+      idx0800Approved < 0 &&
+      idx0800Cancelled < 0 &&
+      idx0800Pending < 0 &&
+      idx0800NoAction < 0 &&
+      idxNuvidioApproved < 0 &&
+      idxNuvidioReproved < 0 &&
+      idxNuvidioNoAction < 0
+    ) {
+      throw new Error("Voce marcou Producao, entao a planilha precisa ter Producao, Producao 0800/Producao Nuvidio ou os status das esteiras.");
     }
-    if (selectedMetrics.has("effectiveness") && idxEffectiveness < 0) {
-      throw new Error("Voce marcou Efetividade, entao a planilha precisa ter a coluna Efetividade.");
+    if (
+      selectedMetrics.has("effectiveness") &&
+      idxEffectiveness < 0 &&
+      idx0800Approved < 0 &&
+      idx0800Cancelled < 0 &&
+      idx0800Pending < 0 &&
+      idx0800NoAction < 0 &&
+      idxNuvidioApproved < 0 &&
+      idxNuvidioReproved < 0 &&
+      idxNuvidioNoAction < 0
+    ) {
+      throw new Error("Voce marcou Efetividade, entao a planilha precisa ter os status das esteiras ou uma coluna de efetividade pronta.");
     }
     if (selectedMetrics.has("quality") && idxQuality < 0) {
       throw new Error("Voce marcou Qualidade, entao a planilha precisa ter a coluna Qualidade.");
     }
   }
 
-  const operatorByName = new Map(state.operators.map((operator) => [normalizeLooseText(operator.name), operator]));
-  const operatorByUsername = new Map(state.operators.map((operator) => [normalizeLooseText(operator.username), operator]));
+  const operatorByName = new Map();
+  const operatorByUsername = new Map();
+  const operatorByUsername0800 = new Map();
+  const operatorByUsernameNuvidio = new Map();
+  state.operators.forEach((operator) => {
+    const normalizedName = normalizeLooseText(operator.name);
+    if (normalizedName) operatorByName.set(normalizedName, operator);
+    const normalizedUsername = normalizeLooseText(operator.username);
+    if (normalizedUsername) operatorByUsername.set(normalizedUsername, operator);
+    const normalizedUsername0800 = normalizeLooseText(operator.username0800);
+    if (normalizedUsername0800) operatorByUsername0800.set(normalizedUsername0800, operator);
+    const normalizedUsernameNuvidio = normalizeLooseText(operator.usernameNuvidio);
+    if (normalizedUsernameNuvidio) operatorByUsernameNuvidio.set(normalizedUsernameNuvidio, operator);
+  });
   const existingEntries = buildExistingEntriesLookup();
   const importItems = [];
   const uniqueKeys = new Set();
@@ -684,6 +804,8 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     totalRows += 1;
 
     const operator =
+      operatorByUsername0800.get(normalizeLooseText(idxUsername0800 >= 0 ? row[idxUsername0800] : "")) ||
+      operatorByUsernameNuvidio.get(normalizeLooseText(idxUsernameNuvidio >= 0 ? row[idxUsernameNuvidio] : "")) ||
       operatorByUsername.get(normalizeLooseText(idxUsername >= 0 ? row[idxUsername] : "")) ||
       operatorByName.get(normalizeLooseText(idxName >= 0 ? row[idxName] : ""));
     if (!operator) {
@@ -701,6 +823,8 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       userId: operator.id,
       userName: operator.name || "",
       username: operator.username || "",
+      username0800: operator.username0800 || "",
+      usernameNuvidio: operator.usernameNuvidio || "",
       date
     };
     const uniqueKey = `${baseItem.userId}__${baseItem.date}`;
@@ -713,22 +837,76 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     }
 
     const existing = existingEntries.get(uniqueKey) || null;
+    const funnel0800Approved = idx0800Approved >= 0 ? parseMetricInput(row[idx0800Approved]) : Number(existing?.funnel0800Approved);
+    const funnel0800Cancelled = idx0800Cancelled >= 0 ? parseMetricInput(row[idx0800Cancelled]) : Number(existing?.funnel0800Cancelled);
+    const funnel0800Pending = idx0800Pending >= 0 ? parseMetricInput(row[idx0800Pending]) : Number(existing?.funnel0800Pending);
+    const funnel0800NoAction = idx0800NoAction >= 0 ? parseMetricInput(row[idx0800NoAction]) : Number(existing?.funnel0800NoAction);
+    const funnelNuvidioApproved = idxNuvidioApproved >= 0 ? parseMetricInput(row[idxNuvidioApproved]) : Number(existing?.funnelNuvidioApproved);
+    const funnelNuvidioReproved = idxNuvidioReproved >= 0 ? parseMetricInput(row[idxNuvidioReproved]) : Number(existing?.funnelNuvidioReproved);
+    const funnelNuvidioNoAction = idxNuvidioNoAction >= 0 ? parseMetricInput(row[idxNuvidioNoAction]) : Number(existing?.funnelNuvidioNoAction);
+    const production0800FromSheet = idxProduction0800 >= 0 ? parseMetricInput(row[idxProduction0800]) : NaN;
+    const productionNuvidioFromSheet = idxProductionNuvidio >= 0 ? parseMetricInput(row[idxProductionNuvidio]) : NaN;
     const productionFromSheet = idxProduction >= 0 ? parseMetricInput(row[idxProduction]) : NaN;
     const effectivenessFromSheet = idxEffectiveness >= 0 ? parseMetricInput(row[idxEffectiveness], { percent: true }) : NaN;
     const qualityFromSheet = idxQuality >= 0 ? parseMetricInput(row[idxQuality], { percent: true }) : NaN;
 
-    const productionTotal = resolveMetricBySelection({
-      selectedMetrics,
-      metric: "production",
-      parsedValue: productionFromSheet,
-      existingValue: Number(existing?.productionTotal)
-    });
-    const effectiveness = resolveMetricBySelection({
-      selectedMetrics,
-      metric: "effectiveness",
-      parsedValue: effectivenessFromSheet,
-      existingValue: Number(existing?.effectiveness)
-    });
+    const has0800Funnel = [funnel0800Approved, funnel0800Cancelled, funnel0800Pending, funnel0800NoAction].every(Number.isFinite);
+    const hasNuvidioFunnel = [funnelNuvidioApproved, funnelNuvidioReproved, funnelNuvidioNoAction].every(Number.isFinite);
+    const production0800 = has0800Funnel
+      ? calculateProduction0800({
+        approved: funnel0800Approved,
+        cancelled: funnel0800Cancelled,
+        pending: funnel0800Pending,
+        noAction: funnel0800NoAction
+      })
+      : resolvePlatformMetricBySelection({
+        selectedMetrics,
+        metric: "production",
+        parsedPlatformValue: production0800FromSheet,
+        parsedGenericValue: productionFromSheet,
+        existingValue: Number(existing?.production0800)
+      });
+    const productionNuvidio = hasNuvidioFunnel
+      ? calculateProductionNuvidio({
+        approved: funnelNuvidioApproved,
+        reproved: funnelNuvidioReproved,
+        noAction: funnelNuvidioNoAction
+      })
+      : resolvePlatformMetricBySelection({
+        selectedMetrics,
+        metric: "production",
+        parsedPlatformValue: productionNuvidioFromSheet,
+        parsedGenericValue: productionFromSheet,
+        existingValue: Number(existing?.productionNuvidio)
+      });
+    const effectiveness0800 = has0800Funnel
+      ? calculateEffectiveness0800({
+        approved: funnel0800Approved,
+        cancelled: funnel0800Cancelled,
+        pending: funnel0800Pending,
+        noAction: funnel0800NoAction
+      })
+      : resolveMetricBySelection({
+        selectedMetrics,
+        metric: "effectiveness",
+        parsedValue: effectivenessFromSheet,
+        existingValue: Number(existing?.effectiveness0800)
+      });
+    const effectivenessNuvidio = hasNuvidioFunnel
+      ? calculateEffectivenessNuvidio({
+        approved: funnelNuvidioApproved,
+        reproved: funnelNuvidioReproved,
+        noAction: funnelNuvidioNoAction
+      })
+      : resolveMetricBySelection({
+        selectedMetrics,
+        metric: "effectiveness",
+        parsedValue: effectivenessFromSheet,
+        existingValue: Number(existing?.effectivenessNuvidio)
+      });
+
+    const productionTotal = sumPlatformProduction({ production0800, productionNuvidio });
+    const effectiveness = averagePlatformEffectiveness({ effectiveness0800, effectivenessNuvidio });
     const qualityScore = resolveMetricBySelection({
       selectedMetrics,
       metric: "quality",
@@ -736,7 +914,15 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       existingValue: Number(existing?.qualityScore)
     });
 
-    if (!Number.isFinite(effectiveness) || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
+    if (
+      !Number.isFinite(production0800) ||
+      !Number.isFinite(productionNuvidio) ||
+      !Number.isFinite(effectiveness0800) ||
+      !Number.isFinite(effectivenessNuvidio) ||
+      !Number.isFinite(effectiveness) ||
+      !Number.isFinite(productionTotal) ||
+      !Number.isFinite(qualityScore)
+    ) {
       invalidMetricCount += 1;
       continue;
     }
@@ -746,7 +932,18 @@ async function parseSpreadsheetImportFile(file, options = {}) {
 
     importItems.push({
       ...baseItem,
+      funnel0800Approved: Number.isFinite(funnel0800Approved) ? funnel0800Approved : 0,
+      funnel0800Cancelled: Number.isFinite(funnel0800Cancelled) ? funnel0800Cancelled : 0,
+      funnel0800Pending: Number.isFinite(funnel0800Pending) ? funnel0800Pending : 0,
+      funnel0800NoAction: Number.isFinite(funnel0800NoAction) ? funnel0800NoAction : 0,
+      funnelNuvidioApproved: Number.isFinite(funnelNuvidioApproved) ? funnelNuvidioApproved : 0,
+      funnelNuvidioReproved: Number.isFinite(funnelNuvidioReproved) ? funnelNuvidioReproved : 0,
+      funnelNuvidioNoAction: Number.isFinite(funnelNuvidioNoAction) ? funnelNuvidioNoAction : 0,
+      production0800,
+      productionNuvidio,
       productionTotal,
+      effectiveness0800,
+      effectivenessNuvidio,
       effectiveness,
       qualityScore,
       updatedById: state.session?.id || "",
@@ -801,9 +998,9 @@ function handleDownloadTemplate() {
     return;
   }
   const templateColumns = getTemplateColumnsFromSelection(selectedMetrics);
-  const rows = [["Nome do Operador", "Usuario", "Data", ...templateColumns]];
+  const rows = [["Nome do Operador", "Usuario", "Usuario 0800", "Usuario Nuvidio", "Data", ...templateColumns]];
   state.operators.forEach((operator) => {
-    const base = [operator.name || "", operator.username || "", ""];
+    const base = [operator.name || "", operator.username || "", operator.username0800 || "", operator.usernameNuvidio || "", ""];
     rows.push([...base, ...templateColumns.map(() => "")]);
   });
 
@@ -836,9 +1033,36 @@ function getSelectedImportMetrics(initialMetrics = null) {
 
 function getTemplateColumnsFromSelection(selectedMetrics) {
   const list = [];
+  const pushUnique = (value) => {
+    if (!list.includes(value)) list.push(value);
+  };
   IMPORT_METRIC_ORDER.forEach((metric) => {
     if (!selectedMetrics.has(metric)) return;
-    list.push(IMPORT_METRICS[metric].templateColumn);
+    if (metric === "production") {
+      [
+        "0800 Aprovadas",
+        "0800 Canceladas",
+        "0800 Pendenciadas",
+        "0800 Sem Acao",
+        "Nuvidio Aprovadas",
+        "Nuvidio Reprovadas",
+        "Nuvidio Sem Acao"
+      ].forEach(pushUnique);
+      return;
+    }
+    if (metric === "effectiveness") {
+      [
+        "0800 Aprovadas",
+        "0800 Canceladas",
+        "0800 Pendenciadas",
+        "0800 Sem Acao",
+        "Nuvidio Aprovadas",
+        "Nuvidio Reprovadas",
+        "Nuvidio Sem Acao"
+      ].forEach(pushUnique);
+      return;
+    }
+    pushUnique(IMPORT_METRICS[metric].templateColumn);
   });
   return list;
 }
@@ -861,12 +1085,12 @@ function updateUploadModeHelp() {
   }
 
   const templateColumns = getTemplateColumnsFromSelection(selectedMetrics);
-  if (templateColumns.length === IMPORT_METRIC_ORDER.length) {
-    elements.uploadHelpText.textContent = "Colunas aceitas: Nome do Operador (ou Usuario), Data, Producao, Efetividade e Qualidade.";
+  if (selectedMetrics.size === IMPORT_METRIC_ORDER.length) {
+    elements.uploadHelpText.textContent = "Colunas aceitas: Nome do Operador, Usuario, Usuario 0800 ou Usuario Nuvidio, Data, status do 0800, status do Nuvidio e Qualidade. A efetividade e a producao sao calculadas automaticamente.";
     return;
   }
 
-  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador (ou Usuario), Data e ${templateColumns.join(", ")}. As metricas nao marcadas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
+  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador, Usuario, Usuario 0800 ou Usuario Nuvidio, Data e ${templateColumns.join(", ")}. Producao e efetividade serao calculadas automaticamente quando os status forem enviados.`;
 }
 
 function buildExistingEntriesLookup() {
@@ -882,7 +1106,18 @@ function buildExistingEntriesLookup() {
       const date = normalizeDateKey(entry?.date);
       if (!date) return;
       lookup.set(`${userId}__${date}`, {
+        funnel0800Approved: Number(entry?.funnel0800Approved),
+        funnel0800Cancelled: Number(entry?.funnel0800Cancelled),
+        funnel0800Pending: Number(entry?.funnel0800Pending),
+        funnel0800NoAction: Number(entry?.funnel0800NoAction),
+        funnelNuvidioApproved: Number(entry?.funnelNuvidioApproved),
+        funnelNuvidioReproved: Number(entry?.funnelNuvidioReproved),
+        funnelNuvidioNoAction: Number(entry?.funnelNuvidioNoAction),
+        production0800: Number(entry?.production0800),
+        productionNuvidio: Number(entry?.productionNuvidio),
         productionTotal: Number(entry?.productionTotal),
+        effectiveness0800: Number(entry?.effectiveness0800),
+        effectivenessNuvidio: Number(entry?.effectivenessNuvidio),
         effectiveness: Number(entry?.effectiveness),
         qualityScore: Number(entry?.qualityScore)
       });
@@ -898,6 +1133,16 @@ function resolveMetricBySelection({ selectedMetrics, metric, parsedValue, existi
   if (Number.isFinite(existingValue)) {
     return Number(existingValue);
   }
+  return 0;
+}
+
+function resolvePlatformMetricBySelection({ selectedMetrics, metric, parsedPlatformValue, parsedGenericValue, existingValue }) {
+  if (selectedMetrics?.has(metric)) {
+    if (Number.isFinite(parsedPlatformValue)) return Number(parsedPlatformValue);
+    if (Number.isFinite(parsedGenericValue)) return Number(parsedGenericValue);
+    return Number.isFinite(existingValue) ? Number(existingValue) : NaN;
+  }
+  if (Number.isFinite(existingValue)) return Number(existingValue);
   return 0;
 }
 
@@ -1098,7 +1343,7 @@ function renderDashboardAnalyticsFilters() {
     ? state.operators
         .filter((operator) => availableAttendantIds.has(String(operator.id || "")))
         .filter((operator) => {
-          const haystack = normalizeLooseText(`${operator.name || ""} ${operator.username || ""}`);
+          const haystack = normalizeLooseText(`${operator.name || ""} ${operator.username || ""} ${operator.username0800 || ""} ${operator.usernameNuvidio || ""}`);
           return !query || haystack.includes(query);
         })
     : [{
@@ -1717,7 +1962,7 @@ function renderHero() {
   }
 
   elements.latestUpdateTitle.textContent = `${formatMetric(latest.productionTotal)} producoes em ${formatDate(latest.date)}`;
-  elements.latestUpdateCopy.textContent = `Efetividade de ${formatMetric(latest.effectiveness, "%")} e qualidade de ${formatMetric(latest.qualityScore, "%")}.`;
+  elements.latestUpdateCopy.textContent = `Prod 0800 ${formatMetric(latest.production0800)} | Prod Nuvidio ${formatMetric(latest.productionNuvidio)} | Eff 0800 ${formatMetric(latest.effectiveness0800, "%")} | Eff Nuvidio ${formatMetric(latest.effectivenessNuvidio, "%")} | Qualidade ${formatMetric(latest.qualityScore, "%")}.`;
 }
 
 function renderDashboard() {
@@ -1726,9 +1971,11 @@ function renderDashboard() {
   const averages = getRecordAverages(viewRecord);
   const totalProduced = (viewRecord?.entries || []).reduce((sum, entry) => sum + Number(entry?.productionTotal || 0), 0);
   const metrics = [
-    { label: "Total atendido", value: totalProduced, suffix: "" },
-    { label: "Media de producao", value: averages.production, suffix: "" },
-    { label: "Efetividade media", value: averages.effectiveness, suffix: "%" },
+    { label: "Producao total", value: totalProduced, suffix: "" },
+    { label: "Producao 0800", value: averages.production0800, suffix: "" },
+    { label: "Producao Nuvidio", value: averages.productionNuvidio, suffix: "" },
+    { label: "Efetividade 0800", value: averages.effectiveness0800, suffix: "%" },
+    { label: "Efetividade Nuvidio", value: averages.effectivenessNuvidio, suffix: "%" },
     { label: "Qualidade media", value: averages.quality, suffix: "%" }
   ];
 
@@ -1755,8 +2002,10 @@ function renderDashboard() {
         </div>
         <span class="badge script">Disponivel</span>
       </div>
-      <p>Producao: ${escapeHtml(formatMetric(latest.productionTotal))}</p>
-      <p>Efetividade: ${escapeHtml(formatMetric(latest.effectiveness, "%"))}</p>
+      <p>Producao 0800: ${escapeHtml(formatMetric(latest.production0800))}</p>
+      <p>Producao Nuvidio: ${escapeHtml(formatMetric(latest.productionNuvidio))}</p>
+      <p>Efetividade 0800: ${escapeHtml(formatMetric(latest.effectiveness0800, "%"))}</p>
+      <p>Efetividade Nuvidio: ${escapeHtml(formatMetric(latest.effectivenessNuvidio, "%"))}</p>
       <p>Qualidade: ${escapeHtml(formatMetric(latest.qualityScore, "%"))}</p>
     </article>
   `;
@@ -1772,8 +2021,10 @@ function renderDashboard() {
           </div>
           <span class="badge faq">${escapeHtml(message.badge)}</span>
         </div>
-        <p>Media acumulada de producao: ${escapeHtml(formatMetric(averages.production))}</p>
-        <p>Media acumulada de efetividade: ${escapeHtml(formatMetric(averages.effectiveness, "%"))}</p>
+        <p>Media producao 0800: ${escapeHtml(formatMetric(averages.production0800))}</p>
+        <p>Media producao Nuvidio: ${escapeHtml(formatMetric(averages.productionNuvidio))}</p>
+        <p>Media efetividade 0800: ${escapeHtml(formatMetric(averages.effectiveness0800, "%"))}</p>
+        <p>Media efetividade Nuvidio: ${escapeHtml(formatMetric(averages.effectivenessNuvidio, "%"))}</p>
         <p>Media acumulada de qualidade: ${escapeHtml(formatMetric(averages.quality, "%"))}</p>
         <p>Dias com lancamento: ${escapeHtml(String(viewRecord?.daysCount || 0))}</p>
       </article>
@@ -1786,9 +2037,10 @@ function renderMyResults() {
   const latest = getLatestEntry(viewRecord);
   const averages = getRecordAverages(viewRecord);
   const metrics = [
-    { label: "Producao do dia", value: latest?.productionTotal, suffix: "" },
-    { label: "Producao media", value: averages.production, suffix: "" },
-    { label: "Efetividade media", value: averages.effectiveness, suffix: "%" },
+    { label: "Prod 0800", value: latest?.production0800, suffix: "" },
+    { label: "Prod Nuvidio", value: latest?.productionNuvidio, suffix: "" },
+    { label: "Eff 0800", value: averages.effectiveness0800, suffix: "%" },
+    { label: "Eff Nuvidio", value: averages.effectivenessNuvidio, suffix: "%" },
     { label: "Qualidade media", value: averages.quality, suffix: "%" }
   ];
   elements.resultMetrics.innerHTML = metrics.map(renderMetricCard).join("");
@@ -1812,8 +2064,10 @@ function renderMyResults() {
         </div>
         <span class="badge manual">${escapeHtml(formatMetric(entry.qualityScore, "%"))}</span>
       </div>
-      <p>Producao: ${escapeHtml(formatMetric(entry.productionTotal))}</p>
-      <p>Efetividade: ${escapeHtml(formatMetric(entry.effectiveness, "%"))}</p>
+      <p>Producao 0800: ${escapeHtml(formatMetric(entry.production0800))}</p>
+      <p>Producao Nuvidio: ${escapeHtml(formatMetric(entry.productionNuvidio))}</p>
+      <p>Efetividade 0800: ${escapeHtml(formatMetric(entry.effectiveness0800, "%"))}</p>
+      <p>Efetividade Nuvidio: ${escapeHtml(formatMetric(entry.effectivenessNuvidio, "%"))}</p>
       <p>Atualizado em ${escapeHtml(formatDateTime(entry.updatedAt))}</p>
     </article>
   `).join("");
@@ -1843,8 +2097,21 @@ function getManagerHistoryEntries() {
       rows.push({
         userId: String(record?.userId || ""),
         operatorName,
+        username0800: String(record?.username0800 || ""),
+        usernameNuvidio: String(record?.usernameNuvidio || ""),
         date: String(entry?.date || ""),
+        funnel0800Approved: Number(entry?.funnel0800Approved || 0),
+        funnel0800Cancelled: Number(entry?.funnel0800Cancelled || 0),
+        funnel0800Pending: Number(entry?.funnel0800Pending || 0),
+        funnel0800NoAction: Number(entry?.funnel0800NoAction || 0),
+        funnelNuvidioApproved: Number(entry?.funnelNuvidioApproved || 0),
+        funnelNuvidioReproved: Number(entry?.funnelNuvidioReproved || 0),
+        funnelNuvidioNoAction: Number(entry?.funnelNuvidioNoAction || 0),
+        production0800: Number(entry?.production0800 || 0),
+        productionNuvidio: Number(entry?.productionNuvidio || 0),
         productionTotal: Number(entry?.productionTotal || 0),
+        effectiveness0800: Number(entry?.effectiveness0800 || 0),
+        effectivenessNuvidio: Number(entry?.effectivenessNuvidio || 0),
         effectiveness: Number(entry?.effectiveness || 0),
         qualityScore: Number(entry?.qualityScore || 0),
         updatedByName: String(entry?.updatedByName || "Gestor"),
@@ -1871,8 +2138,10 @@ function renderManagerHistoryTable(entries) {
           <tr>
             <th>Operador</th>
             <th>Data</th>
-            <th>Producao</th>
-            <th>Efetividade</th>
+            <th>Prod 0800</th>
+            <th>Prod Nuvidio</th>
+            <th>Eff 0800</th>
+            <th>Eff Nuvidio</th>
             <th>Qualidade</th>
             <th>Lancado por</th>
             <th>Atualizado em</th>
@@ -1884,8 +2153,10 @@ function renderManagerHistoryTable(entries) {
             <tr>
               <td>${escapeHtml(entry.operatorName)}</td>
               <td>${escapeHtml(formatDate(entry.date))}</td>
-              <td>${escapeHtml(formatMetric(entry.productionTotal))}</td>
-              <td>${escapeHtml(formatMetric(entry.effectiveness, "%"))}</td>
+              <td>${escapeHtml(formatMetric(entry.production0800))}</td>
+              <td>${escapeHtml(formatMetric(entry.productionNuvidio))}</td>
+              <td>${escapeHtml(formatMetric(entry.effectiveness0800, "%"))}</td>
+              <td>${escapeHtml(formatMetric(entry.effectivenessNuvidio, "%"))}</td>
               <td>${escapeHtml(formatMetric(entry.qualityScore, "%"))}</td>
               <td>${escapeHtml(entry.updatedByName)}</td>
               <td>${escapeHtml(formatDateTime(entry.updatedAt))}</td>
@@ -1897,8 +2168,17 @@ function renderManagerHistoryTable(entries) {
                     data-action="edit-result"
                     data-user-id="${escapeHtml(entry.userId)}"
                     data-date="${escapeHtml(entry.date)}"
-                    data-production="${escapeHtml(String(entry.productionTotal))}"
-                    data-effectiveness="${escapeHtml(String(entry.effectiveness))}"
+                    data-production-0800="${escapeHtml(String(entry.production0800))}"
+                    data-production-nuvidio="${escapeHtml(String(entry.productionNuvidio))}"
+                    data-effectiveness-0800="${escapeHtml(String(entry.effectiveness0800))}"
+                    data-effectiveness-nuvidio="${escapeHtml(String(entry.effectivenessNuvidio))}"
+                    data-0800-approved="${escapeHtml(String(entry.funnel0800Approved))}"
+                    data-0800-cancelled="${escapeHtml(String(entry.funnel0800Cancelled))}"
+                    data-0800-pending="${escapeHtml(String(entry.funnel0800Pending))}"
+                    data-0800-no-action="${escapeHtml(String(entry.funnel0800NoAction))}"
+                    data-nuvidio-approved="${escapeHtml(String(entry.funnelNuvidioApproved))}"
+                    data-nuvidio-reproved="${escapeHtml(String(entry.funnelNuvidioReproved))}"
+                    data-nuvidio-no-action="${escapeHtml(String(entry.funnelNuvidioNoAction))}"
                     data-quality="${escapeHtml(String(entry.qualityScore))}"
                   >
                     Editar
@@ -2017,8 +2297,10 @@ function renderRecordTable(record, emptyMessage, options = {}) {
         <thead>
           <tr>
             <th>Data</th>
-            <th>Producao</th>
-            <th>Efetividade</th>
+            <th>Prod 0800</th>
+            <th>Prod Nuvidio</th>
+            <th>Eff 0800</th>
+            <th>Eff Nuvidio</th>
             <th>Qualidade</th>
             <th>Lancado por</th>
             <th>Atualizado em</th>
@@ -2029,8 +2311,10 @@ function renderRecordTable(record, emptyMessage, options = {}) {
           ${entries.map((entry) => `
             <tr>
               <td>${escapeHtml(formatDate(entry.date))}</td>
-              <td>${escapeHtml(formatMetric(entry.productionTotal))}</td>
-              <td>${escapeHtml(formatMetric(entry.effectiveness, "%"))}</td>
+              <td>${escapeHtml(formatMetric(entry.production0800))}</td>
+              <td>${escapeHtml(formatMetric(entry.productionNuvidio))}</td>
+              <td>${escapeHtml(formatMetric(entry.effectiveness0800, "%"))}</td>
+              <td>${escapeHtml(formatMetric(entry.effectivenessNuvidio, "%"))}</td>
               <td>${escapeHtml(formatMetric(entry.qualityScore, "%"))}</td>
               <td>${escapeHtml(entry.updatedByName || "Gestor")}</td>
               <td>${escapeHtml(formatDateTime(entry.updatedAt))}</td>
@@ -2044,8 +2328,17 @@ function renderRecordTable(record, emptyMessage, options = {}) {
                         data-action="edit-result"
                         data-user-id="${escapeHtml(userId)}"
                         data-date="${escapeHtml(String(entry.date || ""))}"
-                        data-production="${escapeHtml(String(entry.productionTotal || 0))}"
-                        data-effectiveness="${escapeHtml(String(entry.effectiveness || 0))}"
+                        data-production-0800="${escapeHtml(String(entry.production0800 || 0))}"
+                        data-production-nuvidio="${escapeHtml(String(entry.productionNuvidio || 0))}"
+                        data-effectiveness-0800="${escapeHtml(String(entry.effectiveness0800 || 0))}"
+                        data-effectiveness-nuvidio="${escapeHtml(String(entry.effectivenessNuvidio || 0))}"
+                        data-0800-approved="${escapeHtml(String(entry.funnel0800Approved || 0))}"
+                        data-0800-cancelled="${escapeHtml(String(entry.funnel0800Cancelled || 0))}"
+                        data-0800-pending="${escapeHtml(String(entry.funnel0800Pending || 0))}"
+                        data-0800-no-action="${escapeHtml(String(entry.funnel0800NoAction || 0))}"
+                        data-nuvidio-approved="${escapeHtml(String(entry.funnelNuvidioApproved || 0))}"
+                        data-nuvidio-reproved="${escapeHtml(String(entry.funnelNuvidioReproved || 0))}"
+                        data-nuvidio-no-action="${escapeHtml(String(entry.funnelNuvidioNoAction || 0))}"
                         data-quality="${escapeHtml(String(entry.qualityScore || 0))}"
                       >
                         Editar
@@ -2092,10 +2385,26 @@ async function handleHistoryActionButton(button) {
   if (action === "edit-result") {
     const userId = String(button.getAttribute("data-user-id") || "").trim();
     const date = normalizeDateKey(button.getAttribute("data-date"));
-    const productionTotal = parseMetricInput(button.getAttribute("data-production"));
-    const effectiveness = parseMetricInput(button.getAttribute("data-effectiveness"));
+    const funnel0800Approved = parseMetricInput(button.getAttribute("data-0800-approved"));
+    const funnel0800Cancelled = parseMetricInput(button.getAttribute("data-0800-cancelled"));
+    const funnel0800Pending = parseMetricInput(button.getAttribute("data-0800-pending"));
+    const funnel0800NoAction = parseMetricInput(button.getAttribute("data-0800-no-action"));
+    const funnelNuvidioApproved = parseMetricInput(button.getAttribute("data-nuvidio-approved"));
+    const funnelNuvidioReproved = parseMetricInput(button.getAttribute("data-nuvidio-reproved"));
+    const funnelNuvidioNoAction = parseMetricInput(button.getAttribute("data-nuvidio-no-action"));
     const qualityScore = parseMetricInput(button.getAttribute("data-quality"));
-    if (!userId || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
+    if (
+      !userId ||
+      !date ||
+      !Number.isFinite(funnel0800Approved) ||
+      !Number.isFinite(funnel0800Cancelled) ||
+      !Number.isFinite(funnel0800Pending) ||
+      !Number.isFinite(funnel0800NoAction) ||
+      !Number.isFinite(funnelNuvidioApproved) ||
+      !Number.isFinite(funnelNuvidioReproved) ||
+      !Number.isFinite(funnelNuvidioNoAction) ||
+      !Number.isFinite(qualityScore)
+    ) {
       window.alert("Nao foi possivel carregar os dados do registro para edicao.");
       return;
     }
@@ -2105,8 +2414,14 @@ async function handleHistoryActionButton(button) {
     syncGlobalOperatorSelect();
     hydrateAdminFormFromRecord();
     if (elements.adminDate) elements.adminDate.value = date;
-    if (elements.adminProduction) elements.adminProduction.value = String(productionTotal);
-    if (elements.adminEffectiveness) elements.adminEffectiveness.value = String(effectiveness);
+    if (elements.admin0800Approved) elements.admin0800Approved.value = String(funnel0800Approved);
+    if (elements.admin0800Cancelled) elements.admin0800Cancelled.value = String(funnel0800Cancelled);
+    if (elements.admin0800Pending) elements.admin0800Pending.value = String(funnel0800Pending);
+    if (elements.admin0800NoAction) elements.admin0800NoAction.value = String(funnel0800NoAction);
+    if (elements.adminNuvidioApproved) elements.adminNuvidioApproved.value = String(funnelNuvidioApproved);
+    if (elements.adminNuvidioReproved) elements.adminNuvidioReproved.value = String(funnelNuvidioReproved);
+    if (elements.adminNuvidioNoAction) elements.adminNuvidioNoAction.value = String(funnelNuvidioNoAction);
+    syncCalculatedAdminFields();
     if (elements.adminQuality) elements.adminQuality.value = String(qualityScore);
     setSection("admin");
     window.alert("Registro carregado no formulario de Gestao. Ajuste os campos e clique em Salvar resultado.");
@@ -2160,7 +2475,7 @@ function renderOperatorSelect() {
 function syncAdminOperatorSelect() {
   if (!elements.adminUser) return;
   elements.adminUser.innerHTML = state.operators.length
-    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`).join("")
+    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(formatOperatorOptionLabel(operator))}</option>`).join("")
     : `<option value="">Nenhum operador encontrado</option>`;
   elements.adminUser.value = state.adminSelectedUserId || "";
 }
@@ -2173,7 +2488,7 @@ function syncGlobalOperatorSelect() {
   }
   const options = [
     `<option value="all">Todos os operadores</option>`,
-    ...state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(operator.name || operator.username || "Operador")}</option>`)
+    ...state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(formatOperatorOptionLabel(operator))}</option>`)
   ];
   elements.globalOperatorSelect.innerHTML = options.join("");
   elements.globalOperatorSelect.value = state.overviewSelectedUserId || "all";
@@ -2184,8 +2499,14 @@ function hydrateAdminFormFromRecord() {
   const latest = getLatestEntry(state.adminSelectedRecord);
   const fallbackDate = getDefaultResultDate();
   elements.adminDate.value = latest?.date || fallbackDate;
-  elements.adminProduction.value = Number.isFinite(latest?.productionTotal) ? String(latest.productionTotal) : "";
-  elements.adminEffectiveness.value = Number.isFinite(latest?.effectiveness) ? String(latest.effectiveness) : "";
+  elements.admin0800Approved.value = Number.isFinite(latest?.funnel0800Approved) ? String(latest.funnel0800Approved) : "";
+  elements.admin0800Cancelled.value = Number.isFinite(latest?.funnel0800Cancelled) ? String(latest.funnel0800Cancelled) : "";
+  elements.admin0800Pending.value = Number.isFinite(latest?.funnel0800Pending) ? String(latest.funnel0800Pending) : "";
+  elements.admin0800NoAction.value = Number.isFinite(latest?.funnel0800NoAction) ? String(latest.funnel0800NoAction) : "";
+  elements.adminNuvidioApproved.value = Number.isFinite(latest?.funnelNuvidioApproved) ? String(latest.funnelNuvidioApproved) : "";
+  elements.adminNuvidioReproved.value = Number.isFinite(latest?.funnelNuvidioReproved) ? String(latest.funnelNuvidioReproved) : "";
+  elements.adminNuvidioNoAction.value = Number.isFinite(latest?.funnelNuvidioNoAction) ? String(latest.funnelNuvidioNoAction) : "";
+  syncCalculatedAdminFields();
   elements.adminQuality.value = Number.isFinite(latest?.qualityScore) ? String(latest.qualityScore) : "";
 }
 
@@ -2320,7 +2641,18 @@ function normalizeRecord(record) {
     }
     return {
       date,
+      funnel0800Approved: Number(entry?.funnel0800Approved || 0),
+      funnel0800Cancelled: Number(entry?.funnel0800Cancelled || 0),
+      funnel0800Pending: Number(entry?.funnel0800Pending || 0),
+      funnel0800NoAction: Number(entry?.funnel0800NoAction || 0),
+      funnelNuvidioApproved: Number(entry?.funnelNuvidioApproved || 0),
+      funnelNuvidioReproved: Number(entry?.funnelNuvidioReproved || 0),
+      funnelNuvidioNoAction: Number(entry?.funnelNuvidioNoAction || 0),
+      production0800: Number(entry?.production0800 || 0),
+      productionNuvidio: Number(entry?.productionNuvidio || 0),
       productionTotal,
+      effectiveness0800: Number(entry?.effectiveness0800 || 0),
+      effectivenessNuvidio: Number(entry?.effectivenessNuvidio || 0),
       effectiveness,
       qualityScore,
       updatedAt: String(entry?.updatedAt || ""),
@@ -2336,6 +2668,8 @@ function normalizeRecord(record) {
     userId: String(record.userId || ""),
     userName: String(record.userName || ""),
     username: String(record.username || ""),
+    username0800: String(record.username0800 || ""),
+    usernameNuvidio: String(record.usernameNuvidio || ""),
     entries,
     daysCount: entries.length,
     productionAverage: entries.reduce((sum, entry) => sum + entry.productionTotal, 0) / entries.length,
@@ -2356,18 +2690,133 @@ function getRecordAverages(record) {
   const entries = Array.isArray(record?.entries) ? record.entries : [];
   const count = entries.length;
   if (!count) {
-    return { production: null, effectiveness: null, quality: null };
+    return {
+      production: null,
+      production0800: null,
+      productionNuvidio: null,
+      effectiveness: null,
+      effectiveness0800: null,
+      effectivenessNuvidio: null,
+      quality: null
+    };
   }
 
   const productionSum = entries.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0);
+  const production0800Sum = entries.reduce((sum, entry) => sum + Number(entry.production0800 || 0), 0);
+  const productionNuvidioSum = entries.reduce((sum, entry) => sum + Number(entry.productionNuvidio || 0), 0);
   const effectivenessSum = entries.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0);
+  const effectiveness0800Sum = entries.reduce((sum, entry) => sum + Number(entry.effectiveness0800 || 0), 0);
+  const effectivenessNuvidioSum = entries.reduce((sum, entry) => sum + Number(entry.effectivenessNuvidio || 0), 0);
   const qualitySum = entries.reduce((sum, entry) => sum + Number(entry.qualityScore || 0), 0);
 
   return {
     production: productionSum / count,
+    production0800: production0800Sum / count,
+    productionNuvidio: productionNuvidioSum / count,
     effectiveness: effectivenessSum / count,
+    effectiveness0800: effectiveness0800Sum / count,
+    effectivenessNuvidio: effectivenessNuvidioSum / count,
     quality: qualitySum / count
   };
+}
+
+function sumPlatformProduction(values = {}) {
+  return Number(values.production0800 || 0) + Number(values.productionNuvidio || 0);
+}
+
+function averagePlatformEffectiveness(values = {}) {
+  const items = [Number(values.effectiveness0800), Number(values.effectivenessNuvidio)].filter(Number.isFinite);
+  if (!items.length) return NaN;
+  return items.reduce((sum, value) => sum + value, 0) / items.length;
+}
+
+function calculateEffectiveness0800(values = {}) {
+  const approved = Number(values.approved || 0);
+  const cancelled = Number(values.cancelled || 0);
+  const pending = Number(values.pending || 0);
+  const noAction = Number(values.noAction || 0);
+  const total = approved + cancelled + pending + noAction;
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return ((approved + cancelled + pending) / total) * 100;
+}
+
+function calculateEffectivenessNuvidio(values = {}) {
+  const approved = Number(values.approved || 0);
+  const reproved = Number(values.reproved || 0);
+  const noAction = Number(values.noAction || 0);
+  const total = approved + reproved + noAction;
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return ((approved + reproved) / total) * 100;
+}
+
+function calculateProduction0800(values = {}) {
+  const approved = Number(values.approved || 0);
+  const cancelled = Number(values.cancelled || 0);
+  const pending = Number(values.pending || 0);
+  const noAction = Number(values.noAction || 0);
+  const total = approved + cancelled + pending + noAction;
+  return Number.isFinite(total) ? total : 0;
+}
+
+function calculateProductionNuvidio(values = {}) {
+  const approved = Number(values.approved || 0);
+  const reproved = Number(values.reproved || 0);
+  const noAction = Number(values.noAction || 0);
+  const total = approved + reproved + noAction;
+  return Number.isFinite(total) ? total : 0;
+}
+
+function syncCalculatedAdminFields() {
+  const funnel0800Approved = parseMetricInput(elements.admin0800Approved?.value);
+  const funnel0800Cancelled = parseMetricInput(elements.admin0800Cancelled?.value);
+  const funnel0800Pending = parseMetricInput(elements.admin0800Pending?.value);
+  const funnel0800NoAction = parseMetricInput(elements.admin0800NoAction?.value);
+  const funnelNuvidioApproved = parseMetricInput(elements.adminNuvidioApproved?.value);
+  const funnelNuvidioReproved = parseMetricInput(elements.adminNuvidioReproved?.value);
+  const funnelNuvidioNoAction = parseMetricInput(elements.adminNuvidioNoAction?.value);
+
+  const production0800 = calculateProduction0800({
+    approved: funnel0800Approved,
+    cancelled: funnel0800Cancelled,
+    pending: funnel0800Pending,
+    noAction: funnel0800NoAction
+  });
+  const productionNuvidio = calculateProductionNuvidio({
+    approved: funnelNuvidioApproved,
+    reproved: funnelNuvidioReproved,
+    noAction: funnelNuvidioNoAction
+  });
+  const effectiveness0800 = calculateEffectiveness0800({
+    approved: funnel0800Approved,
+    cancelled: funnel0800Cancelled,
+    pending: funnel0800Pending,
+    noAction: funnel0800NoAction
+  });
+  const effectivenessNuvidio = calculateEffectivenessNuvidio({
+    approved: funnelNuvidioApproved,
+    reproved: funnelNuvidioReproved,
+    noAction: funnelNuvidioNoAction
+  });
+
+  if (elements.adminProduction0800) elements.adminProduction0800.value = formatFormNumber(production0800);
+  if (elements.adminProductionNuvidio) elements.adminProductionNuvidio.value = formatFormNumber(productionNuvidio);
+  if (elements.adminEffectiveness0800) elements.adminEffectiveness0800.value = formatFormNumber(effectiveness0800);
+  if (elements.adminEffectivenessNuvidio) elements.adminEffectivenessNuvidio.value = formatFormNumber(effectivenessNuvidio);
+}
+
+function formatFormNumber(value) {
+  if (!Number.isFinite(value)) return "";
+  return String(Math.round(value * 100) / 100);
+}
+
+function formatOperatorOptionLabel(operator) {
+  const name = String(operator?.name || operator?.username || "Operador").trim();
+  const access0800 = String(operator?.username0800 || "").trim();
+  const accessNuvidio = String(operator?.usernameNuvidio || "").trim();
+  const suffixes = [];
+  if (access0800) suffixes.push(`0800: ${access0800}`);
+  if (accessNuvidio) suffixes.push(`Nuvidio: ${accessNuvidio}`);
+  return suffixes.length ? `${name} (${suffixes.join(" | ")})` : name;
 }
 
 function getRecentEntries(record, maxItems = 10) {
