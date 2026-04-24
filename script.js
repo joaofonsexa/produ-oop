@@ -619,14 +619,10 @@ async function handleSpreadsheetUpload() {
       );
     }
 
-    const fileBase64 = arrayBufferToBase64(buffer);
-    const bulkResult = await fetchJson(`${REMOTE_API_BASE}/import/upload-and-process`, {
+    const bulkResult = await fetchJson(`${REMOTE_API_BASE}/operator-results/bulk`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        fileName: file.name || "import.xlsx",
-        mimeType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        fileBase64,
         items: importItems
       }),
       timeoutMs: 120000
@@ -3060,7 +3056,9 @@ async function fetchJson(url, options = {}) {
     const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
     const payload = await response.json().catch(() => null);
     if (!response.ok || payload?.ok === false) {
-      throw new Error(payload?.error || "Falha na comunicacao com a API.");
+      const detail = String(payload?.detail || "").trim();
+      const message = String(payload?.error || "Falha na comunicacao com a API.").trim();
+      throw new Error(detail ? `${message}\n${detail}` : message);
     }
     return payload;
   } catch (error) {
