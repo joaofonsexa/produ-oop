@@ -56,6 +56,15 @@ function base64UrlDecodeJson(value) {
   return JSON.parse(text);
 }
 
+function normalizeLookupKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 async function importHmacKey(sharedSecret) {
   const keyData = new TextEncoder().encode(sharedSecret);
   return crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
@@ -306,19 +315,25 @@ async function verifyLocalUserLogin(db, username, password) {
 async function readOperatorAccessLinks(db) {
   await ensureOperatorAccessLinksTable(db);
   const rows = await db.prepare("SELECT * FROM operator_access_links").all();
-  const map = new Map();
+  const byUserId = new Map();
+  const byName = new Map();
+  const byUsername = new Map();
   for (const row of rows.results || []) {
     const userId = String(row.user_id || "").trim();
-    if (!userId) continue;
-    map.set(userId, {
+    const entry = {
       userId,
       userName: String(row.user_name || ""),
       username: String(row.username || ""),
       username0800: String(row.username_0800 || ""),
       usernameNuvidio: String(row.username_nuvidio || "")
-    });
+    };
+    if (userId) byUserId.set(userId, entry);
+    const nameKey = normalizeLookupKey(entry.userName);
+    if (nameKey) byName.set(nameKey, entry);
+    const usernameKey = normalizeLookupKey(entry.username);
+    if (usernameKey) byUsername.set(usernameKey, entry);
   }
-  return map;
+  return { byUserId, byName, byUsername };
 }
 
 async function saveOperatorAccessLink(db, payload = {}) {
@@ -519,7 +534,10 @@ async function resolveOperators(env) {
   return users
     .map(sanitizeUser)
     .map((user) => {
-      const saved = savedAccessLinks.get(String(user.id || ""));
+      const saved =
+        savedAccessLinks.byUserId.get(String(user.id || "")) ||
+        savedAccessLinks.byUsername.get(normalizeLookupKey(user.username)) ||
+        savedAccessLinks.byName.get(normalizeLookupKey(user.name));
       if (!saved) return user;
       return {
         ...user,

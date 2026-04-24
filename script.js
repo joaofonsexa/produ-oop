@@ -27,6 +27,8 @@ const state = {
   overviewSelectedUserId: "all",
   adminSelectedRecord: null,
   operationRecords: [],
+  operationRecordsLoaded: false,
+  operationRecordsLoading: false,
   importInProgress: false,
   systemMaintenance: {
     enabled: false,
@@ -357,6 +359,8 @@ async function hydratePortal(options = {}) {
     } else {
       state.operators = [];
       state.operationRecords = [];
+      state.operationRecordsLoaded = false;
+      state.operationRecordsLoading = false;
       state.adminSelectedUserId = "";
       state.adminSelectedRecord = null;
     }
@@ -366,20 +370,6 @@ async function hydratePortal(options = {}) {
   } finally {
     setBusy(false);
   }
-
-  if (canManage()) {
-    void hydrateManagerBackgroundData();
-  }
-}
-
-async function hydrateManagerBackgroundData() {
-  try {
-    await Promise.all([
-      loadOperationRecords(),
-      loadAdminSelectedRecord()
-    ]);
-    renderAll();
-  } catch {}
 }
 
 async function loadSystemMaintenanceStatus() {
@@ -398,11 +388,19 @@ function normalizeSystemMaintenanceStatus(status) {
 async function loadOperationRecords() {
   if (!canManage()) {
     state.operationRecords = [];
+    state.operationRecordsLoaded = false;
+    state.operationRecordsLoading = false;
     return;
   }
-  const payload = await fetchJson(`${REMOTE_API_BASE}/results/all`);
-  const records = Array.isArray(payload?.records) ? payload.records : [];
-  state.operationRecords = records.map((record) => normalizeRecord(record)).filter(Boolean);
+  state.operationRecordsLoading = true;
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/results/all`);
+    const records = Array.isArray(payload?.records) ? payload.records : [];
+    state.operationRecords = records.map((record) => normalizeRecord(record)).filter(Boolean);
+    state.operationRecordsLoaded = true;
+  } finally {
+    state.operationRecordsLoading = false;
+  }
 }
 
 async function loadMyResults() {
@@ -1245,10 +1243,16 @@ async function handleMaintenanceToggle() {
 function renderAll() {
   renderHero();
   renderDashboard();
-  renderDashboardAnalytics();
   renderMyResults();
-  renderHistory();
-  renderAdminHistory();
+  if (state.section === "dashboard-analytics") {
+    renderDashboardAnalytics();
+  }
+  if (state.section === "history") {
+    renderHistory();
+  }
+  if (state.section === "admin") {
+    renderAdminHistory();
+  }
 }
 
 function handleAnalyticsClearFilters() {
@@ -1296,6 +1300,23 @@ async function handleAnalyticsAttendantChange(event) {
 }
 
 function renderDashboardAnalytics() {
+  if (canManage() && !state.operationRecordsLoaded) {
+    const loadingMessage = state.operationRecordsLoading
+      ? "Carregando os dados da operacao para montar as analises."
+      : "Abra esta aba por alguns instantes para carregar as analises da operacao.";
+    elements.analyticsKpiRow.innerHTML = emptyState("Carregando analises", loadingMessage);
+    elements.analyticsGauges.innerHTML = "";
+    elements.analyticsConsistency.innerHTML = "";
+    elements.analyticsPerformanceBands.innerHTML = "";
+    elements.analyticsDailyBars.innerHTML = "";
+    elements.analyticsTagsBars.innerHTML = "";
+    elements.analyticsDepartments.innerHTML = "";
+    elements.analyticsTopDays.innerHTML = "";
+    elements.analyticsWorkdays.innerHTML = "";
+    void ensureManagerOperationRecords();
+    return;
+  }
+
   renderDashboardAnalyticsFilters();
 
   const filtered = getAnalyticsFilteredEntries();
@@ -2102,6 +2123,15 @@ function renderHistory() {
     return;
   }
 
+  if (!state.operationRecordsLoaded) {
+    const loadingMessage = state.operationRecordsLoading
+      ? "Carregando o historico completo da operacao."
+      : "Abra esta aba por alguns instantes para carregar o historico.";
+    elements.historyTableWrapper.innerHTML = emptyState("Carregando historico", loadingMessage);
+    void ensureManagerOperationRecords();
+    return;
+  }
+
   const entries = getManagerHistoryEntries();
   if (!entries.length) {
     elements.historyTableWrapper.innerHTML = emptyState("Sem historico", "Nenhum registro encontrado na operacao.");
@@ -2572,11 +2602,14 @@ function removeRecordEntryFromState(userId, date, replacementRecord = null) {
 
 function refreshManagerDataSoon() {
   if (!canManage()) return Promise.resolve();
-  return Promise.allSettled([
-    loadOperationRecords(),
+  const jobs = [
     loadAdminSelectedRecord(),
     state.session?.id ? loadMyResults() : Promise.resolve()
-  ]).then(() => {
+  ];
+  if (state.operationRecordsLoaded || state.section === "dashboard-analytics" || state.section === "history") {
+    jobs.unshift(loadOperationRecords());
+  }
+  return Promise.allSettled(jobs).then(() => {
     renderAll();
   });
 }
@@ -2597,6 +2630,10 @@ function setSection(sectionId) {
   elements.heroHeader?.classList.remove("hidden");
   elements.heroGrid?.classList.toggle("hidden", nextSection !== "dashboard");
   updateGlobalOperatorFilterVisibility();
+  if (canManage() && (nextSection === "dashboard-analytics" || nextSection === "history")) {
+    void ensureManagerOperationRecords();
+  }
+  renderAll();
 }
 
 function updateGlobalOperatorFilterVisibility() {
@@ -3068,10 +3105,23 @@ function getPrimaryViewRecord() {
 function getOverviewViewRecord() {
   if (!canManage()) return state.myRecord;
   if (state.overviewSelectedUserId === "all") {
+    if (!state.operationRecordsLoaded) {
+      void ensureManagerOperationRecords();
+      return state.adminSelectedRecord || state.myRecord;
+    }
     return buildOperationAggregateRecord();
   }
   const selected = (state.operationRecords || []).find((record) => record?.userId === state.overviewSelectedUserId);
   return selected || state.adminSelectedRecord || state.myRecord;
+}
+
+function ensureManagerOperationRecords() {
+  if (!canManage()) return Promise.resolve();
+  if (state.operationRecordsLoaded) return Promise.resolve();
+  if (state.operationRecordsLoading) return Promise.resolve();
+  return loadOperationRecords().then(() => {
+    renderAll();
+  }).catch(() => {});
 }
 
 function getSelectedOperatorName() {
