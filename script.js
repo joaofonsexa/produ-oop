@@ -754,27 +754,28 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
   if (!rows.length) throw new Error("Planilha vazia.");
 
-  const header = rows[0].map((item) => normalizeLooseText(item));
-  const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
-  const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
-  const idxUsername0800 = findColumnIndex(header, ["usuario 0800", "login 0800", "username 0800", "matricula 0800"]);
-  const idxUsernameNuvidio = findColumnIndex(header, ["usuario nuvidio", "login nuvidio", "username nuvidio", "matricula nuvidio", "usuario nuvideo", "login nuvideo"]);
-  const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
-  const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
-  const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
-  const idxProduction0800 = findColumnIndex(header, ["producao 0800", "volume 0800", "qtde 0800"]);
-  const idxProductionNuvidio = findColumnIndex(header, ["producao nuvidio", "volume nuvidio", "qtde nuvidio", "producao nuvideo"]);
-  const idx0800Approved = findColumnIndex(header, ["0800 aprovadas", "aprovadas 0800"]);
-  const idx0800Cancelled = findColumnIndex(header, ["0800 canceladas", "canceladas 0800"]);
-  const idx0800Pending = findColumnIndex(header, ["0800 pendenciadas", "pendenciadas 0800"]);
-  const idx0800NoAction = findColumnIndex(header, ["0800 sem acao", "sem acao 0800", "0800 sem ação", "sem ação 0800"]);
-  const idxNuvidioApproved = findColumnIndex(header, ["nuvidio aprovadas", "aprovadas nuvidio", "nuvideo aprovadas"]);
-  const idxNuvidioReproved = findColumnIndex(header, ["nuvidio reprovadas", "reprovadas nuvidio", "nuvideo reprovadas"]);
-  const idxNuvidioNoAction = findColumnIndex(header, ["nuvidio sem acao", "sem acao nuvidio", "nuvidio sem ação", "sem ação nuvidio", "nuvideo sem acao", "nuvideo sem ação"]);
-  const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
+  const rawHeader = rows[0];
+  const normalizedHeader = rawHeader.map((item) => normalizeLooseText(item));
+  const idxName = findColumnIndex(normalizedHeader, ["nome do operador", "nome operador", "nome"]);
+  const idxUsername = findColumnIndex(normalizedHeader, ["usuario", "login", "username", "matricula"]);
+  const idxUsername0800 = findColumnIndex(normalizedHeader, ["usuario 0800", "login 0800", "username 0800", "matricula 0800"]);
+  const idxUsernameNuvidio = findColumnIndex(normalizedHeader, ["usuario nuvidio", "login nuvidio", "username nuvidio", "matricula nuvidio", "usuario nuvideo", "login nuvideo"]);
+  const idxDate = findColumnIndex(normalizedHeader, ["data", "dia", "resultado", "data resultado", "dt"]);
+  const idxEffectiveness = findColumnIndex(normalizedHeader, ["efetividade", "conversao", "tx efetividade"]);
+  const idxProduction = findColumnIndex(normalizedHeader, ["producao", "producao total", "volume", "qtde"]);
+  const idxProduction0800 = findColumnIndex(normalizedHeader, ["producao 0800", "volume 0800", "qtde 0800"]);
+  const idxProductionNuvidio = findColumnIndex(normalizedHeader, ["producao nuvidio", "volume nuvidio", "qtde nuvidio", "producao nuvideo"]);
+  const idx0800Approved = findColumnIndex(normalizedHeader, ["0800 aprovadas", "aprovadas 0800"]);
+  const idx0800Cancelled = findColumnIndex(normalizedHeader, ["0800 canceladas", "canceladas 0800"]);
+  const idx0800Pending = findColumnIndex(normalizedHeader, ["0800 pendenciadas", "pendenciadas 0800"]);
+  const idx0800NoAction = findColumnIndex(normalizedHeader, ["0800 sem acao", "sem acao 0800", "0800 sem ação", "sem ação 0800"]);
+  const idxNuvidioApproved = findColumnIndex(normalizedHeader, ["nuvidio aprovadas", "aprovadas nuvidio", "nuvideo aprovadas"]);
+  const idxNuvidioReproved = findColumnIndex(normalizedHeader, ["nuvidio reprovadas", "reprovadas nuvidio", "nuvideo reprovadas"]);
+  const idxNuvidioNoAction = findColumnIndex(normalizedHeader, ["nuvidio sem acao", "sem acao nuvidio", "nuvidio sem ação", "sem ação nuvidio", "nuvideo sem acao", "nuvideo sem ação"]);
+  const idxQuality = findColumnIndex(normalizedHeader, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
   const selectedMetrics = getSelectedImportMetrics(options.importMetrics);
   const importContext = getSelectedImportContext();
-  const isMatrixByDateFormat = idxDate < 0 && header.slice(1).some((value) => Boolean(normalizeSpreadsheetDate(value)));
+  const isMatrixByDateFormat = idxDate < 0 && rawHeader.slice(1).some((value) => Boolean(normalizeSpreadsheetDate(value)));
 
   if (!isMatrixByDateFormat && idxName < 0 && idxUsername < 0 && idxUsername0800 < 0 && idxUsernameNuvidio < 0) {
     throw new Error("A planilha precisa ter Nome do Operador ou um dos usuarios/login: geral, 0800 ou Nuvidio.");
@@ -851,7 +852,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     return parseMatrixSpreadsheetImportRows({
       buffer,
       rows,
-      header,
+      header: rawHeader,
       importContext,
       operatorByName,
       operatorByUsername,
