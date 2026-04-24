@@ -816,11 +816,11 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     ) {
       throw new Error("Voce marcou Efetividade, entao a planilha precisa ter os status das esteiras ou uma coluna de efetividade pronta.");
     }
-    if (selectedMetrics.has("quality") && idxQuality < 0) {
+    if (!isMatrixByDateFormat && selectedMetrics.has("quality") && idxQuality < 0) {
       throw new Error("Voce marcou Qualidade, entao a planilha precisa ter a coluna Qualidade.");
     }
     if (isMatrixByDateFormat && selectedMetrics.has("quality")) {
-      throw new Error("Planilha consolidada por data nao traz Qualidade. Desmarque Qualidade para essa carga.");
+      selectedMetrics.delete("quality");
     }
   }
 
