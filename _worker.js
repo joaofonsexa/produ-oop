@@ -172,6 +172,189 @@ async function ensureSystemSettingsTable(db) {
   ).run();
 }
 
+async function ensureOperatorAccessLinksTable(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS operator_access_links (
+      user_id TEXT PRIMARY KEY,
+      user_name TEXT NOT NULL DEFAULT '',
+      username TEXT NOT NULL DEFAULT '',
+      username_0800 TEXT NOT NULL DEFAULT '',
+      username_nuvidio TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_by_id TEXT NOT NULL DEFAULT '',
+      updated_by_name TEXT NOT NULL DEFAULT ''
+    )`
+  ).run();
+}
+
+async function ensureLocalUsersTable(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS local_portal_users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'operador',
+      access_level TEXT NOT NULL DEFAULT '',
+      username_0800 TEXT NOT NULL DEFAULT '',
+      username_nuvidio TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_by_id TEXT NOT NULL DEFAULT '',
+      updated_by_name TEXT NOT NULL DEFAULT ''
+    )`
+  ).run();
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(String(value || ""));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
+function sanitizeLocalUser(row) {
+  return {
+    id: String(row?.id || ""),
+    name: String(row?.name || ""),
+    username: String(row?.username || ""),
+    username0800: String(row?.username_0800 || ""),
+    usernameNuvidio: String(row?.username_nuvidio || ""),
+    role: String(row?.role || "operador"),
+    accessLevel: String(row?.access_level || "")
+  };
+}
+
+async function readLocalUsers(db) {
+  await ensureLocalUsersTable(db);
+  const rows = await db.prepare("SELECT * FROM local_portal_users ORDER BY name ASC, username ASC").all();
+  return (rows.results || []).map(sanitizeLocalUser);
+}
+
+async function saveLocalUser(db, payload = {}) {
+  await ensureLocalUsersTable(db);
+  const id = String(payload?.id || "").trim() || `local-${crypto.randomUUID()}`;
+  const name = String(payload?.name || "").trim();
+  const username = String(payload?.username || "").trim();
+  const role = String(payload?.role || "operador").trim() || "operador";
+  const password = String(payload?.password || "");
+  const username0800 = String(payload?.username0800 || "").trim();
+  const usernameNuvidio = String(payload?.usernameNuvidio || "").trim();
+  const updatedById = String(payload?.updatedById || "").trim();
+  const updatedByName = String(payload?.updatedByName || "").trim();
+
+  if (!name || !username) {
+    return { ok: false, error: "Nome e login do portal sao obrigatorios." };
+  }
+
+  const existing = await db.prepare("SELECT * FROM local_portal_users WHERE id = ? LIMIT 1").bind(id).first();
+  let passwordHash = String(existing?.password_hash || "");
+  if (password) {
+    passwordHash = await sha256Hex(password);
+  }
+  if (!passwordHash) {
+    return { ok: false, error: "Informe uma senha para o usuario." };
+  }
+
+  await db.prepare(
+    `INSERT INTO local_portal_users (
+      id, name, username, password_hash, role, access_level, username_0800, username_nuvidio,
+      created_at, updated_at, updated_by_id, updated_by_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      username = excluded.username,
+      password_hash = excluded.password_hash,
+      role = excluded.role,
+      access_level = excluded.access_level,
+      username_0800 = excluded.username_0800,
+      username_nuvidio = excluded.username_nuvidio,
+      updated_at = excluded.updated_at,
+      updated_by_id = excluded.updated_by_id,
+      updated_by_name = excluded.updated_by_name`
+  )
+    .bind(
+      id,
+      name,
+      username,
+      passwordHash,
+      role,
+      "",
+      username0800,
+      usernameNuvidio,
+      new Date().toISOString(),
+      updatedById,
+      updatedByName
+    )
+    .run();
+
+  return { ok: true, id };
+}
+
+async function verifyLocalUserLogin(db, username, password) {
+  await ensureLocalUsersTable(db);
+  const row = await db.prepare("SELECT * FROM local_portal_users WHERE username = ? LIMIT 1").bind(username).first();
+  if (!row) {
+    throw new Error("Usuario ou senha invalidos.");
+  }
+  const passwordHash = await sha256Hex(password);
+  if (String(row.password_hash || "") !== passwordHash) {
+    throw new Error("Usuario ou senha invalidos.");
+  }
+  return sanitizeLocalUser(row);
+}
+
+async function readOperatorAccessLinks(db) {
+  await ensureOperatorAccessLinksTable(db);
+  const rows = await db.prepare("SELECT * FROM operator_access_links").all();
+  const map = new Map();
+  for (const row of rows.results || []) {
+    const userId = String(row.user_id || "").trim();
+    if (!userId) continue;
+    map.set(userId, {
+      userId,
+      userName: String(row.user_name || ""),
+      username: String(row.username || ""),
+      username0800: String(row.username_0800 || ""),
+      usernameNuvidio: String(row.username_nuvidio || "")
+    });
+  }
+  return map;
+}
+
+async function saveOperatorAccessLink(db, payload = {}) {
+  await ensureOperatorAccessLinksTable(db);
+  const userId = String(payload?.userId || "").trim();
+  if (!userId) {
+    return { ok: false, error: "userId obrigatorio para salvar acessos do operador." };
+  }
+
+  const userName = String(payload?.userName || "").trim();
+  const username = String(payload?.username || "").trim();
+  const username0800 = String(payload?.username0800 || "").trim();
+  const usernameNuvidio = String(payload?.usernameNuvidio || "").trim();
+  const updatedById = String(payload?.updatedById || "").trim();
+  const updatedByName = String(payload?.updatedByName || "").trim();
+  const updatedAt = new Date().toISOString();
+
+  await db.prepare(
+    `INSERT INTO operator_access_links (
+      user_id, user_name, username, username_0800, username_nuvidio, updated_at, updated_by_id, updated_by_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      user_name = excluded.user_name,
+      username = excluded.username,
+      username_0800 = excluded.username_0800,
+      username_nuvidio = excluded.username_nuvidio,
+      updated_at = excluded.updated_at,
+      updated_by_id = excluded.updated_by_id,
+      updated_by_name = excluded.updated_by_name`
+  )
+    .bind(userId, userName, username, username0800, usernameNuvidio, updatedAt, updatedById, updatedByName)
+    .run();
+
+  return { ok: true, userId };
+}
+
 function normalizeMaintenanceStatus(raw = {}) {
   return {
     enabled: Boolean(raw?.enabled),
@@ -327,12 +510,30 @@ function sanitizeUser(user) {
 }
 
 async function resolveOperators(env) {
-  const payload = await fetchCentral(env, "/api/users", { method: "GET" });
-  const users = Array.isArray(payload?.users) ? payload.users : [];
-  return users
+  let users = [];
+  try {
+    const payload = await fetchCentral(env, "/api/users", { method: "GET" });
+    users = Array.isArray(payload?.users) ? payload.users : [];
+  } catch {}
+  const savedAccessLinks = await readOperatorAccessLinks(env.DB);
+  const centralUsers = users
     .map(sanitizeUser)
-    .filter((user) => user.id && user.role !== "gestor")
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+    .map((user) => {
+      const saved = savedAccessLinks.get(String(user.id || ""));
+      if (!saved) return user;
+      return {
+        ...user,
+        username0800: saved.username0800 || user.username0800 || "",
+        usernameNuvidio: saved.usernameNuvidio || user.usernameNuvidio || ""
+      };
+    })
+    .filter((user) => user.id && user.role !== "gestor");
+  const localUsers = (await readLocalUsers(env.DB)).filter((user) => user.id && user.role !== "gestor");
+  const merged = new Map();
+  [...centralUsers, ...localUsers].forEach((user) => {
+    merged.set(String(user.id || ""), user);
+  });
+  return [...merged.values()].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
 }
 
 async function readRecord(db, userId) {
@@ -602,13 +803,21 @@ export default {
           return jsonResponse({ ok: false, error: "Usuario e senha obrigatorios." }, 400);
         }
 
-        const payload = await fetchCentral(env, "/api/login", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ username, password })
-        });
-
-        return jsonResponse({ ok: true, user: sanitizeUser(payload.user) });
+        try {
+          const payload = await fetchCentral(env, "/api/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ username, password })
+          });
+          return jsonResponse({ ok: true, user: sanitizeUser(payload.user) });
+        } catch (centralError) {
+          try {
+            const user = await verifyLocalUserLogin(env.DB, username, password);
+            return jsonResponse({ ok: true, user });
+          } catch {
+            return jsonResponse({ ok: false, error: "Usuario ou senha invalidos." }, 401);
+          }
+        }
       }
 
       if (url.pathname === "/api/sso/consume" && request.method === "POST") {
@@ -629,6 +838,31 @@ export default {
       if (url.pathname === "/api/operators" && request.method === "GET") {
         const operators = await resolveOperators(env);
         return jsonResponse({ ok: true, operators });
+      }
+
+      if (url.pathname === "/api/users/local" && request.method === "GET") {
+        const users = await readLocalUsers(env.DB);
+        return jsonResponse({ ok: true, users });
+      }
+
+      if (url.pathname === "/api/users/local" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await saveLocalUser(env.DB, body || {});
+        if (!result.ok) {
+          return jsonResponse({ ok: false, error: result.error || "Nao foi possivel salvar o usuario." }, 400);
+        }
+        const users = await readLocalUsers(env.DB);
+        return jsonResponse({ ok: true, users, id: result.id });
+      }
+
+      if (url.pathname === "/api/operators/access" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await saveOperatorAccessLink(env.DB, body || {});
+        if (!result.ok) {
+          return jsonResponse({ ok: false, error: result.error || "Nao foi possivel salvar os acessos do operador." }, 400);
+        }
+        const operators = await resolveOperators(env);
+        return jsonResponse({ ok: true, operators, userId: result.userId });
       }
 
       if (url.pathname === "/api/system-status" && request.method === "GET") {

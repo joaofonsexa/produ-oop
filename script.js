@@ -22,6 +22,7 @@ const state = {
   theme: DEFAULT_THEME,
   session: null,
   myRecord: null,
+  localUsers: [],
   operators: [],
   adminSelectedUserId: "",
   overviewSelectedUserId: "all",
@@ -101,6 +102,19 @@ const elements = {
   analyticsWorkdays: document.querySelector("#analytics-workdays"),
   historyTableWrapper: document.querySelector("#history-table-wrapper"),
   historyDeleteAll: document.querySelector("#history-delete-all"),
+  localUserForm: document.querySelector("#local-user-form"),
+  localUserSelect: document.querySelector("#local-user-select"),
+  localUserName: document.querySelector("#local-user-name"),
+  localUserUsername: document.querySelector("#local-user-username"),
+  localUserPassword: document.querySelector("#local-user-password"),
+  localUserRole: document.querySelector("#local-user-role"),
+  localUserUsername0800: document.querySelector("#local-user-username-0800"),
+  localUserUsernameNuvidio: document.querySelector("#local-user-username-nuvidio"),
+  localUserReset: document.querySelector("#local-user-reset"),
+  adminAccessForm: document.querySelector("#admin-access-form"),
+  adminAccessUser: document.querySelector("#admin-access-user"),
+  adminAccess0800: document.querySelector("#admin-access-0800"),
+  adminAccessNuvidio: document.querySelector("#admin-access-nuvidio"),
   adminForm: document.querySelector("#admin-form"),
   adminUser: document.querySelector("#admin-user"),
   adminDate: document.querySelector("#admin-date"),
@@ -171,6 +185,18 @@ function bindEvents() {
   elements.navLinks.forEach((button) => {
     button.addEventListener("click", () => setSection(button.dataset.section || "dashboard"));
   });
+  elements.localUserForm?.addEventListener("submit", handleLocalUserSave);
+  elements.localUserSelect?.addEventListener("change", hydrateLocalUserForm);
+  elements.localUserReset?.addEventListener("click", resetLocalUserForm);
+  elements.adminAccessForm?.addEventListener("submit", handleAdminAccessSave);
+  elements.adminAccessUser?.addEventListener("change", () => {
+    state.adminSelectedUserId = String(elements.adminAccessUser.value || "");
+    syncAdminOperatorSelect();
+    hydrateAdminAccessForm();
+    hydrateAdminFormFromRecord();
+    void loadAdminSelectedRecord();
+    syncGlobalOperatorSelect();
+  });
   elements.adminForm?.addEventListener("submit", handleAdminSave);
   [
     elements.admin0800Approved,
@@ -188,6 +214,8 @@ function bindEvents() {
     if (state.overviewSelectedUserId !== "all") {
       state.overviewSelectedUserId = state.adminSelectedUserId;
     }
+    syncAdminAccessOperatorSelect();
+    hydrateAdminAccessForm();
     hydrateAdminFormFromRecord();
     void loadAdminSelectedRecord();
     syncGlobalOperatorSelect();
@@ -197,6 +225,8 @@ function bindEvents() {
     if (state.overviewSelectedUserId !== "all") {
       state.adminSelectedUserId = state.overviewSelectedUserId;
       syncAdminOperatorSelect();
+      syncAdminAccessOperatorSelect();
+      hydrateAdminAccessForm();
       hydrateAdminFormFromRecord();
       void loadAdminSelectedRecord();
     } else {
@@ -349,10 +379,12 @@ async function hydratePortal(options = {}) {
 
     await loadMyResults();
     if (canManage()) {
+      await loadLocalUsers();
       await loadOperators();
       await loadOperationRecords();
       await loadAdminSelectedRecord();
     } else {
+      state.localUsers = [];
       state.operators = [];
       state.operationRecords = [];
       state.adminSelectedUserId = "";
@@ -412,7 +444,110 @@ async function loadOperators() {
   if (!state.overviewSelectedUserId) state.overviewSelectedUserId = "all";
 
   renderOperatorSelect();
+  hydrateAdminAccessForm();
   hydrateAdminFormFromRecord();
+}
+
+async function loadLocalUsers() {
+  if (!canManage()) {
+    state.localUsers = [];
+    return;
+  }
+  const payload = await fetchJson(`${REMOTE_API_BASE}/users/local`);
+  state.localUsers = (Array.isArray(payload?.users) ? payload.users : [])
+    .filter((user) => user && user.id)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+  renderLocalUserSelect();
+  hydrateLocalUserForm();
+}
+
+async function handleLocalUserSave(event) {
+  event.preventDefault();
+  if (!canManage()) return;
+
+  const selectedId = String(elements.localUserSelect?.value || "").trim();
+  const name = String(elements.localUserName?.value || "").trim();
+  const username = String(elements.localUserUsername?.value || "").trim();
+  const password = String(elements.localUserPassword?.value || "");
+  const role = String(elements.localUserRole?.value || "operador").trim();
+  const username0800 = String(elements.localUserUsername0800?.value || "").trim();
+  const usernameNuvidio = String(elements.localUserUsernameNuvidio?.value || "").trim();
+
+  if (!name || !username) {
+    window.alert("Preencha nome completo e login do portal.");
+    return;
+  }
+  if (!selectedId && !password) {
+    window.alert("Informe uma senha para criar o novo usuario.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    await fetchJson(`${REMOTE_API_BASE}/users/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: selectedId || "",
+        name,
+        username,
+        password,
+        role,
+        username0800,
+        usernameNuvidio,
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor"
+      })
+    });
+    await loadLocalUsers();
+    await loadOperators();
+    resetLocalUserForm();
+    window.alert("Usuario salvo com sucesso.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel salvar o usuario.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleAdminAccessSave(event) {
+  event.preventDefault();
+  if (!canManage()) return;
+
+  const userId = String(elements.adminAccessUser?.value || "").trim();
+  const selectedUser = state.operators.find((user) => String(user.id || "") === userId);
+  const username0800 = String(elements.adminAccess0800?.value || "").trim();
+  const usernameNuvidio = String(elements.adminAccessNuvidio?.value || "").trim();
+
+  if (!selectedUser) {
+    window.alert("Selecione um operador para salvar os acessos.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    await fetchJson(`${REMOTE_API_BASE}/operators/access`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        userName: selectedUser.name || "",
+        username: selectedUser.username || "",
+        username0800,
+        usernameNuvidio,
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor"
+      })
+    });
+    await loadOperators();
+    syncAdminOperatorSelect();
+    hydrateAdminAccessForm();
+    window.alert("Acessos do operador salvos com sucesso.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel salvar os acessos do operador.");
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function loadAdminSelectedRecord() {
@@ -442,17 +577,21 @@ async function handleAdminSave(event) {
   const funnelNuvidioApproved = parseMetricInput(elements.adminNuvidioApproved.value);
   const funnelNuvidioReproved = parseMetricInput(elements.adminNuvidioReproved.value);
   const funnelNuvidioNoAction = parseMetricInput(elements.adminNuvidioNoAction.value);
-  const production0800 = calculateProduction0800({
+  const typedProduction0800 = parseMetricInput(elements.adminProduction0800.value);
+  const typedProductionNuvidio = parseMetricInput(elements.adminProductionNuvidio.value);
+  const calculatedProduction0800 = calculateProduction0800({
     approved: funnel0800Approved,
     cancelled: funnel0800Cancelled,
     pending: funnel0800Pending,
     noAction: funnel0800NoAction
   });
-  const productionNuvidio = calculateProductionNuvidio({
+  const calculatedProductionNuvidio = calculateProductionNuvidio({
     approved: funnelNuvidioApproved,
     reproved: funnelNuvidioReproved,
     noAction: funnelNuvidioNoAction
   });
+  const production0800 = Number.isFinite(typedProduction0800) ? typedProduction0800 : calculatedProduction0800;
+  const productionNuvidio = Number.isFinite(typedProductionNuvidio) ? typedProductionNuvidio : calculatedProductionNuvidio;
   const effectiveness0800 = calculateEffectiveness0800({
     approved: funnel0800Approved,
     cancelled: funnel0800Cancelled,
@@ -478,6 +617,8 @@ async function handleAdminSave(event) {
     !Number.isFinite(funnelNuvidioApproved) ||
     !Number.isFinite(funnelNuvidioReproved) ||
     !Number.isFinite(funnelNuvidioNoAction) ||
+    !Number.isFinite(production0800) ||
+    !Number.isFinite(productionNuvidio) ||
     !Number.isFinite(productionTotal) ||
     !Number.isFinite(effectiveness) ||
     !Number.isFinite(qualityScore)
@@ -2421,6 +2562,8 @@ async function handleHistoryActionButton(button) {
     if (elements.adminNuvidioApproved) elements.adminNuvidioApproved.value = String(funnelNuvidioApproved);
     if (elements.adminNuvidioReproved) elements.adminNuvidioReproved.value = String(funnelNuvidioReproved);
     if (elements.adminNuvidioNoAction) elements.adminNuvidioNoAction.value = String(funnelNuvidioNoAction);
+    if (elements.adminProduction0800) elements.adminProduction0800.value = formatFormNumber(parseMetricInput(button.getAttribute("data-production-0800")));
+    if (elements.adminProductionNuvidio) elements.adminProductionNuvidio.value = formatFormNumber(parseMetricInput(button.getAttribute("data-production-nuvidio")));
     syncCalculatedAdminFields();
     if (elements.adminQuality) elements.adminQuality.value = String(qualityScore);
     setSection("admin");
@@ -2469,7 +2612,17 @@ async function handleDeleteResultButton(button) {
 
 function renderOperatorSelect() {
   syncAdminOperatorSelect();
+  syncAdminAccessOperatorSelect();
   syncGlobalOperatorSelect();
+}
+
+function renderLocalUserSelect() {
+  if (!elements.localUserSelect) return;
+  const options = [
+    `<option value="">Novo usuario</option>`,
+    ...state.localUsers.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(formatOperatorOptionLabel(user))}</option>`)
+  ];
+  elements.localUserSelect.innerHTML = options.join("");
 }
 
 function syncAdminOperatorSelect() {
@@ -2478,6 +2631,14 @@ function syncAdminOperatorSelect() {
     ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(formatOperatorOptionLabel(operator))}</option>`).join("")
     : `<option value="">Nenhum operador encontrado</option>`;
   elements.adminUser.value = state.adminSelectedUserId || "";
+}
+
+function syncAdminAccessOperatorSelect() {
+  if (!elements.adminAccessUser) return;
+  elements.adminAccessUser.innerHTML = state.operators.length
+    ? state.operators.map((operator) => `<option value="${escapeHtml(operator.id)}">${escapeHtml(formatOperatorOptionLabel(operator))}</option>`).join("")
+    : `<option value="">Nenhum operador encontrado</option>`;
+  elements.adminAccessUser.value = state.adminSelectedUserId || "";
 }
 
 function syncGlobalOperatorSelect() {
@@ -2506,8 +2667,34 @@ function hydrateAdminFormFromRecord() {
   elements.adminNuvidioApproved.value = Number.isFinite(latest?.funnelNuvidioApproved) ? String(latest.funnelNuvidioApproved) : "";
   elements.adminNuvidioReproved.value = Number.isFinite(latest?.funnelNuvidioReproved) ? String(latest.funnelNuvidioReproved) : "";
   elements.adminNuvidioNoAction.value = Number.isFinite(latest?.funnelNuvidioNoAction) ? String(latest.funnelNuvidioNoAction) : "";
+  elements.adminProduction0800.value = Number.isFinite(latest?.production0800) ? String(latest.production0800) : "";
+  elements.adminProductionNuvidio.value = Number.isFinite(latest?.productionNuvidio) ? String(latest.productionNuvidio) : "";
   syncCalculatedAdminFields();
   elements.adminQuality.value = Number.isFinite(latest?.qualityScore) ? String(latest.qualityScore) : "";
+}
+
+function hydrateAdminAccessForm() {
+  if (!canManage()) return;
+  const selectedUser = state.operators.find((user) => String(user.id || "") === String(state.adminSelectedUserId || ""));
+  if (elements.adminAccess0800) elements.adminAccess0800.value = String(selectedUser?.username0800 || "");
+  if (elements.adminAccessNuvidio) elements.adminAccessNuvidio.value = String(selectedUser?.usernameNuvidio || "");
+}
+
+function hydrateLocalUserForm() {
+  if (!canManage()) return;
+  const selectedId = String(elements.localUserSelect?.value || "").trim();
+  const user = state.localUsers.find((item) => String(item.id || "") === selectedId);
+  if (elements.localUserName) elements.localUserName.value = String(user?.name || "");
+  if (elements.localUserUsername) elements.localUserUsername.value = String(user?.username || "");
+  if (elements.localUserPassword) elements.localUserPassword.value = "";
+  if (elements.localUserRole) elements.localUserRole.value = String(user?.role || "operador");
+  if (elements.localUserUsername0800) elements.localUserUsername0800.value = String(user?.username0800 || "");
+  if (elements.localUserUsernameNuvidio) elements.localUserUsernameNuvidio.value = String(user?.usernameNuvidio || "");
+}
+
+function resetLocalUserForm() {
+  if (elements.localUserSelect) elements.localUserSelect.value = "";
+  hydrateLocalUserForm();
 }
 
 function setSection(sectionId) {
@@ -2798,8 +2985,6 @@ function syncCalculatedAdminFields() {
     noAction: funnelNuvidioNoAction
   });
 
-  if (elements.adminProduction0800) elements.adminProduction0800.value = formatFormNumber(production0800);
-  if (elements.adminProductionNuvidio) elements.adminProductionNuvidio.value = formatFormNumber(productionNuvidio);
   if (elements.adminEffectiveness0800) elements.adminEffectiveness0800.value = formatFormNumber(effectiveness0800);
   if (elements.adminEffectivenessNuvidio) elements.adminEffectivenessNuvidio.value = formatFormNumber(effectivenessNuvidio);
 }
