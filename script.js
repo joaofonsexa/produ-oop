@@ -16,6 +16,7 @@ const IMPORT_METRICS = {
 };
 
 const IMPORT_METRIC_ORDER = ["production", "effectiveness", "quality"];
+const BULK_IMPORT_BATCH_SIZE = 150;
 
 const QUICK_ENTRY_STATUS_OPTIONS = {
   "0800": [
@@ -619,16 +620,24 @@ async function handleSpreadsheetUpload() {
       );
     }
 
-    const bulkResult = await fetchJson(`${REMOTE_API_BASE}/operator-results/bulk`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        items: importItems
-      }),
-      timeoutMs: 120000
-    });
-    updatedCount = Number(bulkResult?.imported || 0);
-    const bulkFailed = Number(bulkResult?.failed || 0);
+    let bulkFailed = 0;
+    for (let start = 0; start < importItems.length; start += BULK_IMPORT_BATCH_SIZE) {
+      const batch = importItems.slice(start, start + BULK_IMPORT_BATCH_SIZE);
+      setUploadStatus(
+        `Importando planilha em lotes. ${Math.min(start + batch.length, importItems.length)} de ${importItems.length} registros preparados.`,
+        "loading"
+      );
+      const bulkResult = await fetchJson(`${REMOTE_API_BASE}/operator-results/bulk`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          items: batch
+        }),
+        timeoutMs: 120000
+      });
+      updatedCount += Number(bulkResult?.imported || 0);
+      bulkFailed += Number(bulkResult?.failed || 0);
+    }
     if (!updatedCount) {
       throw new Error(
         `Nenhuma linha foi gravada no servidor.\n` +
