@@ -45,7 +45,7 @@ const state = {
   operationRecordsLoading: false,
   importInProgress: false,
   adminQuickEntry: {
-    platform: "0800",
+    platform: "nuvidio",
     status: "approved"
   },
   systemMaintenance: {
@@ -137,8 +137,6 @@ const elements = {
   adminNuvidioNoAction: document.querySelector("#admin-nuvidio-no-action"),
   adminQuickPlatform: document.querySelector("#admin-quick-platform"),
   adminQuickStatus: document.querySelector("#admin-quick-status"),
-  adminQuickQuantity: document.querySelector("#admin-quick-quantity"),
-  adminQuickAdd: document.querySelector("#admin-quick-add"),
   adminQuality: document.querySelector("#admin-quality"),
   adminUploadForm: document.querySelector("#admin-upload-form"),
   uploadModeOptions: document.querySelector("#upload-mode-options"),
@@ -198,7 +196,6 @@ function bindEvents() {
   elements.adminForm?.addEventListener("submit", handleAdminSave);
   elements.adminQuickPlatform?.addEventListener("click", handleAdminQuickPlatformClick);
   elements.adminQuickStatus?.addEventListener("click", handleAdminQuickStatusClick);
-  elements.adminQuickAdd?.addEventListener("click", handleAdminQuickAdd);
   [
     elements.admin0800Approved,
     elements.admin0800Cancelled,
@@ -776,11 +773,13 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const idxNuvidioNoAction = findColumnIndex(header, ["nuvidio sem acao", "sem acao nuvidio", "nuvidio sem ação", "sem ação nuvidio", "nuvideo sem acao", "nuvideo sem ação"]);
   const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
   const selectedMetrics = getSelectedImportMetrics(options.importMetrics);
+  const importContext = getSelectedImportContext();
+  const isMatrixByDateFormat = idxDate < 0 && header.slice(1).some((value) => Boolean(normalizeSpreadsheetDate(value)));
 
-  if (idxName < 0 && idxUsername < 0 && idxUsername0800 < 0 && idxUsernameNuvidio < 0) {
+  if (!isMatrixByDateFormat && idxName < 0 && idxUsername < 0 && idxUsername0800 < 0 && idxUsernameNuvidio < 0) {
     throw new Error("A planilha precisa ter Nome do Operador ou um dos usuarios/login: geral, 0800 ou Nuvidio.");
   }
-  if (idxDate < 0) {
+  if (!isMatrixByDateFormat && idxDate < 0) {
     throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
   }
   if (!options.forRemoval) {
@@ -818,6 +817,9 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     if (selectedMetrics.has("quality") && idxQuality < 0) {
       throw new Error("Voce marcou Qualidade, entao a planilha precisa ter a coluna Qualidade.");
     }
+    if (isMatrixByDateFormat && selectedMetrics.has("quality")) {
+      throw new Error("Planilha consolidada por data nao traz Qualidade. Desmarque Qualidade para essa carga.");
+    }
   }
 
   const operatorByName = new Map();
@@ -842,6 +844,21 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   let invalidDateCount = 0;
   let complementedRowsCount = 0;
   let totalRows = 0;
+
+  if (isMatrixByDateFormat) {
+    return parseMatrixSpreadsheetImportRows({
+      buffer,
+      rows,
+      header,
+      importContext,
+      operatorByName,
+      operatorByUsername,
+      operatorByUsername0800,
+      operatorByUsernameNuvidio,
+      existingEntries,
+      options
+    });
+  }
 
   for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] || [];
@@ -1004,6 +1021,239 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     invalidMetricCount,
     invalidDateCount,
     complementedRowsCount
+  };
+}
+
+function parseMatrixSpreadsheetImportRows(context = {}) {
+  const {
+    buffer,
+    rows,
+    header,
+    importContext,
+    operatorByName,
+    operatorByUsername,
+    operatorByUsername0800,
+    operatorByUsernameNuvidio,
+    existingEntries,
+    options
+  } = context;
+
+  const importItems = [];
+  const uniqueKeys = new Set();
+  let unmatchedOperatorCount = 0;
+  let invalidMetricCount = 0;
+  let invalidDateCount = 0;
+  let complementedRowsCount = 0;
+  let totalRows = 0;
+
+  const identifyOperator = (rawValue) => {
+    const normalized = normalizeLooseText(rawValue);
+    if (!normalized) return null;
+    if (importContext.platform === "0800") {
+      return (
+        operatorByUsername0800.get(normalized) ||
+        operatorByUsername.get(normalized) ||
+        operatorByName.get(normalized)
+      );
+    }
+    return (
+      operatorByUsernameNuvidio.get(normalized) ||
+      operatorByUsername.get(normalized) ||
+      operatorByName.get(normalized)
+    );
+  };
+
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] || [];
+    const operator = identifyOperator(row[0]);
+    if (!operator) {
+      unmatchedOperatorCount += 1;
+      continue;
+    }
+
+    for (let columnIndex = 1; columnIndex < header.length; columnIndex += 1) {
+      const date = normalizeSpreadsheetDate(header[columnIndex]);
+      if (!date) {
+        invalidDateCount += 1;
+        continue;
+      }
+      const quantity = parseMetricInput(row[columnIndex]);
+      if (!Number.isFinite(quantity)) continue;
+      totalRows += 1;
+
+      const baseItem = {
+        userId: operator.id,
+        userName: operator.name || "",
+        username: operator.username || "",
+        username0800: operator.username0800 || "",
+        usernameNuvidio: operator.usernameNuvidio || "",
+        date
+      };
+      const uniqueKey = `${baseItem.userId}__${baseItem.date}`;
+      if (uniqueKeys.has(uniqueKey)) continue;
+      uniqueKeys.add(uniqueKey);
+
+      if (options.forRemoval) {
+        importItems.push(baseItem);
+        continue;
+      }
+
+      const existing = existingEntries.get(uniqueKey) || null;
+      const item = buildImportItemFromStatusContext({
+        baseItem,
+        existing,
+        quantity,
+        importContext
+      });
+      if (!item) {
+        invalidMetricCount += 1;
+        continue;
+      }
+      if (!existing) complementedRowsCount += 1;
+      importItems.push(item);
+    }
+  }
+
+  return {
+    buffer,
+    importItems,
+    totalRows,
+    unmatchedOperatorCount,
+    invalidMetricCount,
+    invalidDateCount,
+    complementedRowsCount
+  };
+}
+
+function buildImportItemFromStatusContext(context = {}) {
+  const { baseItem, existing, quantity, importContext } = context;
+  if (!Number.isFinite(quantity)) return null;
+
+  const funnel0800Approved = Number(existing?.funnel0800Approved || 0);
+  const funnel0800Cancelled = Number(existing?.funnel0800Cancelled || 0);
+  const funnel0800Pending = Number(existing?.funnel0800Pending || 0);
+  const funnel0800NoAction = Number(existing?.funnel0800NoAction || 0);
+  const funnelNuvidioApproved = Number(existing?.funnelNuvidioApproved || 0);
+  const funnelNuvidioReproved = Number(existing?.funnelNuvidioReproved || 0);
+  const funnelNuvidioNoAction = Number(existing?.funnelNuvidioNoAction || 0);
+
+  if (importContext.platform === "0800") {
+    if (importContext.status === "approved") {
+      return finalizeImportItem(baseItem, existing, {
+        funnel0800Approved: quantity,
+        funnel0800Cancelled,
+        funnel0800Pending,
+        funnel0800NoAction,
+        funnelNuvidioApproved,
+        funnelNuvidioReproved,
+        funnelNuvidioNoAction
+      });
+    }
+    if (importContext.status === "cancelled") {
+      return finalizeImportItem(baseItem, existing, {
+        funnel0800Approved,
+        funnel0800Cancelled: quantity,
+        funnel0800Pending,
+        funnel0800NoAction,
+        funnelNuvidioApproved,
+        funnelNuvidioReproved,
+        funnelNuvidioNoAction
+      });
+    }
+    if (importContext.status === "pending") {
+      return finalizeImportItem(baseItem, existing, {
+        funnel0800Approved,
+        funnel0800Cancelled,
+        funnel0800Pending: quantity,
+        funnel0800NoAction,
+        funnelNuvidioApproved,
+        funnelNuvidioReproved,
+        funnelNuvidioNoAction
+      });
+    }
+    return finalizeImportItem(baseItem, existing, {
+      funnel0800Approved,
+      funnel0800Cancelled,
+      funnel0800Pending,
+      funnel0800NoAction: quantity,
+      funnelNuvidioApproved,
+      funnelNuvidioReproved,
+      funnelNuvidioNoAction
+    });
+  }
+
+  if (importContext.status === "approved") {
+    return finalizeImportItem(baseItem, existing, {
+      funnel0800Approved,
+      funnel0800Cancelled,
+      funnel0800Pending,
+      funnel0800NoAction,
+      funnelNuvidioApproved: quantity,
+      funnelNuvidioReproved,
+      funnelNuvidioNoAction
+    });
+  }
+  if (importContext.status === "reproved") {
+    return finalizeImportItem(baseItem, existing, {
+      funnel0800Approved,
+      funnel0800Cancelled,
+      funnel0800Pending,
+      funnel0800NoAction,
+      funnelNuvidioApproved,
+      funnelNuvidioReproved: quantity,
+      funnelNuvidioNoAction
+    });
+  }
+  return finalizeImportItem(baseItem, existing, {
+    funnel0800Approved,
+    funnel0800Cancelled,
+    funnel0800Pending,
+    funnel0800NoAction,
+    funnelNuvidioApproved,
+    funnelNuvidioReproved,
+    funnelNuvidioNoAction: quantity
+  });
+}
+
+function finalizeImportItem(baseItem, existing, values) {
+  const production0800 = calculateProduction0800({
+    approved: values.funnel0800Approved,
+    cancelled: values.funnel0800Cancelled,
+    pending: values.funnel0800Pending,
+    noAction: values.funnel0800NoAction
+  });
+  const productionNuvidio = calculateProductionNuvidio({
+    approved: values.funnelNuvidioApproved,
+    reproved: values.funnelNuvidioReproved,
+    noAction: values.funnelNuvidioNoAction
+  });
+  const effectiveness0800 = calculateEffectiveness0800({
+    approved: values.funnel0800Approved,
+    cancelled: values.funnel0800Cancelled,
+    pending: values.funnel0800Pending,
+    noAction: values.funnel0800NoAction
+  });
+  const effectivenessNuvidio = calculateEffectivenessNuvidio({
+    approved: values.funnelNuvidioApproved,
+    reproved: values.funnelNuvidioReproved,
+    noAction: values.funnelNuvidioNoAction
+  });
+  const productionTotal = sumPlatformProduction({ production0800, productionNuvidio });
+  const effectiveness = averagePlatformEffectiveness({ effectiveness0800, effectivenessNuvidio });
+  const qualityScore = Number(existing?.qualityScore || 0);
+
+  return {
+    ...baseItem,
+    ...values,
+    production0800,
+    productionNuvidio,
+    productionTotal,
+    effectiveness0800,
+    effectivenessNuvidio,
+    effectiveness,
+    qualityScore,
+    updatedById: state.session?.id || "",
+    updatedByName: state.session?.name || "Gestor"
   };
 }
 
@@ -2595,7 +2845,6 @@ function hydrateAdminFormFromRecord() {
   elements.adminProductionNuvidio.value = Number.isFinite(latest?.productionNuvidio) ? String(latest.productionNuvidio) : "";
   syncCalculatedAdminFields();
   elements.adminQuality.value = Number.isFinite(latest?.qualityScore) ? String(latest.qualityScore) : "";
-  if (elements.adminQuickQuantity) elements.adminQuickQuantity.value = "";
   renderAdminQuickEntryControls();
 }
 
@@ -2644,32 +2893,14 @@ function handleAdminQuickStatusClick(event) {
   renderAdminQuickEntryControls();
 }
 
-function handleAdminQuickAdd() {
-  const platform = state.adminQuickEntry?.platform === "nuvidio" ? "nuvidio" : "0800";
-  const status = String(state.adminQuickEntry?.status || "");
-  const quantity = parseMetricInput(elements.adminQuickQuantity?.value);
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    window.alert("Informe uma quantidade valida para adicionar.");
-    return;
-  }
-
-  const targetOption = (QUICK_ENTRY_STATUS_OPTIONS[platform] || []).find((option) => option.value === status);
-  if (!targetOption) {
-    window.alert("Selecione uma esteira e um status validos.");
-    return;
-  }
-
-  const targetInput = elements[targetOption.field];
-  if (!targetInput) {
-    window.alert("Nao foi possivel localizar o campo desse status.");
-    return;
-  }
-
-  const currentValue = parseMetricInput(targetInput.value);
-  const nextValue = (Number.isFinite(currentValue) ? currentValue : 0) + quantity;
-  targetInput.value = formatFormNumber(nextValue);
-  if (elements.adminQuickQuantity) elements.adminQuickQuantity.value = "";
-  syncCalculatedAdminFields();
+function getSelectedImportContext() {
+  const platform = state.adminQuickEntry?.platform === "0800" ? "0800" : "nuvidio";
+  const options = QUICK_ENTRY_STATUS_OPTIONS[platform] || [];
+  const valid = options.some((option) => option.value === state.adminQuickEntry?.status);
+  return {
+    platform,
+    status: valid ? state.adminQuickEntry.status : (options[0]?.value || "approved")
+  };
 }
 
 function upsertRecordInState(record) {

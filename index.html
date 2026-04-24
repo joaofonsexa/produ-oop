@@ -422,37 +422,6 @@
                 </label>
               </div>
 
-              <div class="quick-entry-card">
-                <div class="quick-entry-head">
-                  <div>
-                    <span class="quick-entry-eyebrow">Lançamento rápido</span>
-                    <strong>Escolha a esteira, o status e a quantidade</strong>
-                  </div>
-                  <p>O portal soma automaticamente no campo correto logo abaixo.</p>
-                </div>
-
-                <div class="quick-entry-group">
-                  <span class="quick-entry-label">Esteira</span>
-                  <div id="admin-quick-platform" class="quick-entry-options">
-                    <button type="button" class="quick-entry-option active" data-platform="0800">0800</button>
-                    <button type="button" class="quick-entry-option" data-platform="nuvidio">Nuvidio</button>
-                  </div>
-                </div>
-
-                <div class="quick-entry-group">
-                  <span class="quick-entry-label">Status</span>
-                  <div id="admin-quick-status" class="quick-entry-options"></div>
-                </div>
-
-                <div class="quick-entry-actions">
-                  <label>
-                    <span>Quantidade</span>
-                    <input id="admin-quick-quantity" type="number" min="0" step="0.01" placeholder="Ex.: 25">
-                  </label>
-                  <button id="admin-quick-add" class="primary-button" type="button">Adicionar ao status</button>
-                </div>
-              </div>
-
               <div class="form-grid">
                 <label>
                   <span>Produção 0800</span>
@@ -535,6 +504,29 @@
             </div>
 
             <form id="admin-upload-form" class="admin-form">
+              <div class="quick-entry-card">
+                <div class="quick-entry-head">
+                  <div>
+                    <span class="quick-entry-eyebrow">Contexto da planilha</span>
+                    <strong>Informe de qual esteira e status é essa carga</strong>
+                  </div>
+                  <p>Use isso para planilhas consolidadas por operador e data, como a que você enviou.</p>
+                </div>
+
+                <div class="quick-entry-group">
+                  <span class="quick-entry-label">Esteira da carga</span>
+                  <div id="admin-quick-platform" class="quick-entry-options">
+                    <button type="button" class="quick-entry-option active" data-platform="0800">0800</button>
+                    <button type="button" class="quick-entry-option" data-platform="nuvidio">Nuvidio</button>
+                  </div>
+                </div>
+
+                <div class="quick-entry-group">
+                  <span class="quick-entry-label">Status da carga</span>
+                  <div id="admin-quick-status" class="quick-entry-options"></div>
+                </div>
+              </div>
+
               <fieldset class="upload-mode-fieldset">
                 <legend>Modelo de importacao</legend>
                 <div id="upload-mode-options" class="upload-mode-options">
@@ -557,7 +549,7 @@
                 <input id="upload-file" type="file" accept=".xlsx,.xls,.csv">
               </label>
 
-              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador, Usuario, Usuario 0800 ou Usuario Nuvidio, Data, status do 0800, status do Nuvidio e Qualidade. A producao e a efetividade sao calculadas automaticamente a partir dos status.</p>
+              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador, Usuario, Usuario 0800 ou Usuario Nuvidio, Data, status do 0800, status do Nuvidio e Qualidade. Para planilha consolidada com operador nas linhas e datas nas colunas, selecione acima a esteira e o status da carga.</p>
               <p id="upload-status" class="upload-status hidden" role="status" aria-live="polite"></p>
 
               <div class="form-actions">
