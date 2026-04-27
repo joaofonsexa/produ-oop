@@ -926,14 +926,18 @@ function handleDownloadTemplate() {
     window.alert("Marque pelo menos uma metrica para baixar o modelo.");
     return;
   }
-  const templateColumns = getTemplateColumnsFromSelection(selectedMetrics, getSelectedImportOperation());
-  const rows = [["Nome do Operador", "Usuario", "Usuario Nuvidio", "Usuario 0800", "Data", ...templateColumns]];
+  const selectedOperation = getSelectedImportOperation();
+  const templateColumns = getTemplateColumnsFromSelection(selectedMetrics, selectedOperation);
+  const operationUserColumn = selectedOperation === "0800" ? "Usuario 0800" : "Usuario Nuvidio";
+  const rows = [["Nome do Operador", "Usuario", operationUserColumn, "Data", ...templateColumns]];
   state.operators.forEach((operator) => {
+    const operationUserValue = selectedOperation === "0800"
+      ? (operator.line0800Username || "")
+      : (operator.nuvidioUsername || "");
     const base = [
       operator.name || "",
       operator.username || "",
-      operator.nuvidioUsername || "",
-      operator.line0800Username || "",
+      operationUserValue,
       ""
     ];
     rows.push([...base, ...templateColumns.map(() => "")]);
@@ -1420,7 +1424,8 @@ function buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, l
 }
 
 function buildAnalyticsTrendPanel(entries, workdaysCount = 0) {
-  const effectivenessDaily = buildDailyMetricCard(entries, "effectiveness", "Efetividade (%) dia a dia", "%");
+  const effectivenessEntries = getEffectivenessChartEntries(entries);
+  const effectivenessDaily = buildDailyMetricCard(effectivenessEntries, "effectiveness", "Efetividade (%) dia a dia", "%");
   const qualityKpi = buildMonthlyQualityKpiCard(entries);
   return `
     <div class="analytics-trend-two">
@@ -2120,7 +2125,10 @@ function renderMyResultsVisuals(viewRecord) {
 
   const latest = entries[entries.length - 1];
   const prodLine = buildLineChartSvg(entries, "productionTotal", "#4ea1ff");
-  const effLine = buildLineChartSvg(entries, "effectiveness", "#ffb16c", 100);
+  const effectivenessEntries = getEffectivenessChartEntries(entries);
+  const effLine = effectivenessEntries.length
+    ? buildLineChartSvg(effectivenessEntries, "effectiveness", "#ffb16c", 100)
+    : `<p class="analytics-empty">Sem pontos validos de efetividade (com producao e valor acima de zero).</p>`;
 
   elements.myResultsChart.innerHTML = `
     <article class="chart-card">
@@ -2538,6 +2546,12 @@ function getRecentEntries(record, maxItems = 10) {
   entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
   if (entries.length <= maxItems) return entries;
   return entries.slice(entries.length - maxItems);
+}
+
+function getEffectivenessChartEntries(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => Number(entry?.productionTotal || 0) > 0)
+    .filter((entry) => Number(entry?.effectiveness || 0) > 0);
 }
 
 function buildLineChartSvg(entries, field, color, fixedMax = null) {
