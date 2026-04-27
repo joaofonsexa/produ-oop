@@ -375,6 +375,28 @@
               </div>
               <div id="analytics-top-days" class="analytics-top-days"></div>
             </section>
+
+            <div class="analytics-lower-grid analytics-new-views-grid">
+              <section class="panel">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Planilhas</p>
+                    <h3>Resumo por esteira e prestadora</h3>
+                  </div>
+                </div>
+                <div id="analytics-sheet-summary" class="analytics-departments"></div>
+              </section>
+
+              <section class="panel">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Motivos</p>
+                    <h3>Subtags e operadores em destaque</h3>
+                  </div>
+                </div>
+                <div id="analytics-sheet-breakdown" class="analytics-top-days"></div>
+              </section>
+            </div>
           </div>
         </div>
       </section>
@@ -571,6 +593,63 @@
               <p id="maintenance-status-text" class="field-help">Manutencao desativada.</p>
               <button id="maintenance-toggle-button" class="ghost-button danger" type="button">Ativar manutencao</button>
             </div>
+          </section>
+
+          <section id="spreadsheet-sources-panel" class="panel hidden">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Fontes automaticas</p>
+                <h3>Planilhas 0800 e Nuvidio</h3>
+              </div>
+            </div>
+
+            <form id="spreadsheet-sources-form" class="admin-form">
+              <label>
+                <span>URL CSV Nuvidio</span>
+                <input id="sheet-url-nuvidio" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=...">
+              </label>
+
+              <div class="form-grid">
+                <label>
+                  <span>URL geral 0800</span>
+                  <input id="sheet-url-0800-general" type="url" placeholder="Base unica com operador, data, status e quantidade">
+                </label>
+
+                <label>
+                  <span>URL 0800 Aprovadas</span>
+                  <input id="sheet-url-0800-approved" type="url" placeholder="Planilha matriz por data">
+                </label>
+
+                <label>
+                  <span>URL 0800 Canceladas</span>
+                  <input id="sheet-url-0800-cancelled" type="url" placeholder="Planilha matriz por data">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>URL 0800 Pendenciadas</span>
+                  <input id="sheet-url-0800-pending" type="url" placeholder="Planilha matriz por data">
+                </label>
+
+                <label>
+                  <span>URL 0800 Sem acao</span>
+                  <input id="sheet-url-0800-no-action" type="url" placeholder="Planilha matriz por data">
+                </label>
+              </div>
+
+              <label class="checkbox-row">
+                <input id="sheet-auto-sync" type="checkbox">
+                <span>Sincronizar automaticamente ao abrir o portal</span>
+              </label>
+
+              <p id="sheet-sources-status" class="field-help">Cole as URLs publicas das planilhas e sincronize para atualizar a operacao automaticamente.</p>
+
+              <div class="form-actions">
+                <button id="sheet-sources-save" class="ghost-button" type="button">Salvar URLs</button>
+                <button id="sheet-sources-sync" class="primary-button" type="button">Sincronizar planilhas</button>
+              </div>
+            </form>
           </section>
         </div>
 

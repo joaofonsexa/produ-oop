@@ -45,6 +45,18 @@ const state = {
   operationRecordsLoaded: false,
   operationRecordsLoading: false,
   importInProgress: false,
+  spreadsheetSources: {
+    nuvidioUrl: "",
+    url0800General: "",
+    url0800Approved: "",
+    url0800Cancelled: "",
+    url0800Pending: "",
+    url0800NoAction: "",
+    autoSyncOnOpen: false,
+    lastSyncedAt: "",
+    lastSyncSummary: null
+  },
+  sourceInsights: null,
   adminQuickEntry: {
     platform: "nuvidio",
     status: "approved"
@@ -151,7 +163,21 @@ const elements = {
   systemMaintenancePanel: document.querySelector("#system-maintenance-panel"),
   maintenanceStatusText: document.querySelector("#maintenance-status-text"),
   maintenanceToggleButton: document.querySelector("#maintenance-toggle-button"),
+  spreadsheetSourcesPanel: document.querySelector("#spreadsheet-sources-panel"),
+  spreadsheetSourcesForm: document.querySelector("#spreadsheet-sources-form"),
+  sheetUrlNuvidio: document.querySelector("#sheet-url-nuvidio"),
+  sheetUrl0800General: document.querySelector("#sheet-url-0800-general"),
+  sheetUrl0800Approved: document.querySelector("#sheet-url-0800-approved"),
+  sheetUrl0800Cancelled: document.querySelector("#sheet-url-0800-cancelled"),
+  sheetUrl0800Pending: document.querySelector("#sheet-url-0800-pending"),
+  sheetUrl0800NoAction: document.querySelector("#sheet-url-0800-no-action"),
+  sheetAutoSync: document.querySelector("#sheet-auto-sync"),
+  sheetSourcesStatus: document.querySelector("#sheet-sources-status"),
+  sheetSourcesSave: document.querySelector("#sheet-sources-save"),
+  sheetSourcesSync: document.querySelector("#sheet-sources-sync"),
   adminHistoryWrapper: document.querySelector("#admin-history-wrapper"),
+  analyticsSheetSummary: document.querySelector("#analytics-sheet-summary"),
+  analyticsSheetBreakdown: document.querySelector("#analytics-sheet-breakdown"),
   sections: Array.from(document.querySelectorAll(".content-section"))
 };
 
@@ -241,6 +267,8 @@ function bindEvents() {
   elements.analyticsAttendantList?.addEventListener("change", handleAnalyticsAttendantChange);
   elements.historyDeleteAll?.addEventListener("click", () => void handleDeleteAllResults());
   elements.maintenanceToggleButton?.addEventListener("click", () => void handleMaintenanceToggle());
+  elements.sheetSourcesSave?.addEventListener("click", () => void handleSpreadsheetSourcesSave());
+  elements.sheetSourcesSync?.addEventListener("click", () => void handleSpreadsheetSourcesSync());
   document.addEventListener("click", handleDocumentClick);
 }
 
@@ -377,13 +405,16 @@ async function hydratePortal(options = {}) {
     await myResultsPromise;
     if (canManage()) {
       await Promise.all([
-        loadOperators()
+        loadOperators(),
+        loadSpreadsheetSources()
       ]);
     } else {
       state.operators = [];
       state.operationRecords = [];
       state.operationRecordsLoaded = false;
       state.operationRecordsLoading = false;
+      state.spreadsheetSources = normalizeSpreadsheetSources({});
+      state.sourceInsights = null;
       state.adminSelectedUserId = "";
       state.adminSelectedRecord = null;
     }
@@ -392,6 +423,14 @@ async function hydratePortal(options = {}) {
     if (!options.preserveSection) setSection(state.section || "dashboard");
   } finally {
     setBusy(false);
+  }
+
+  if (canManage()) {
+    if (state.spreadsheetSources.autoSyncOnOpen) {
+      void syncSpreadsheetSourcesInBackground();
+    } else {
+      void loadSourceInsights();
+    }
   }
 }
 
@@ -406,6 +445,41 @@ function normalizeSystemMaintenanceStatus(status) {
   const updatedAt = String(status?.updatedAt || "").trim();
   const updatedByName = String(status?.updatedByName || "").trim();
   return { enabled, message, updatedAt, updatedByName };
+}
+
+function normalizeSpreadsheetSources(settings) {
+  return {
+    nuvidioUrl: String(settings?.nuvidioUrl || "").trim(),
+    url0800General: String(settings?.url0800General || "").trim(),
+    url0800Approved: String(settings?.url0800Approved || "").trim(),
+    url0800Cancelled: String(settings?.url0800Cancelled || "").trim(),
+    url0800Pending: String(settings?.url0800Pending || "").trim(),
+    url0800NoAction: String(settings?.url0800NoAction || "").trim(),
+    autoSyncOnOpen: Boolean(settings?.autoSyncOnOpen),
+    lastSyncedAt: String(settings?.lastSyncedAt || "").trim(),
+    lastSyncSummary: settings?.lastSyncSummary && typeof settings.lastSyncSummary === "object"
+      ? settings.lastSyncSummary
+      : null
+  };
+}
+
+async function loadSpreadsheetSources() {
+  if (!canManage()) return;
+  const payload = await fetchJson(`${REMOTE_API_BASE}/source-settings`);
+  state.spreadsheetSources = normalizeSpreadsheetSources(payload?.settings || {});
+}
+
+async function loadSourceInsights() {
+  if (!canManage()) {
+    state.sourceInsights = null;
+    return;
+  }
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/source-insights`);
+    state.sourceInsights = payload?.insights || null;
+  } catch {
+    state.sourceInsights = null;
+  }
 }
 
 async function loadOperationRecords() {
@@ -1457,6 +1531,7 @@ function syncAuthView() {
   elements.appShell?.classList.toggle("hidden", !isLogged || blockedByMaintenance);
   elements.adminNavLink?.classList.toggle("hidden", !canManage());
   elements.systemMaintenancePanel?.classList.toggle("hidden", !canManage());
+  elements.spreadsheetSourcesPanel?.classList.toggle("hidden", !canManage());
   updateGlobalOperatorFilterVisibility();
   elements.historyDeleteAll?.classList.toggle("hidden", !canManage());
 
@@ -1475,6 +1550,7 @@ function syncAuthView() {
   syncGlobalOperatorSelect();
   renderMaintenanceControls();
   renderAdminQuickEntryControls();
+  renderSpreadsheetSourceControls();
 }
 
 function renderMaintenanceControls() {
@@ -1492,6 +1568,126 @@ function renderMaintenanceControls() {
     elements.maintenanceToggleButton.textContent = state.systemMaintenance.enabled ? "Desativar manutencao" : "Ativar manutencao";
     elements.maintenanceToggleButton.classList.toggle("danger", !state.systemMaintenance.enabled);
   }
+}
+
+function renderSpreadsheetSourceControls() {
+  if (!canManage()) return;
+  const settings = normalizeSpreadsheetSources(state.spreadsheetSources || {});
+  if (elements.sheetUrlNuvidio) elements.sheetUrlNuvidio.value = settings.nuvidioUrl;
+  if (elements.sheetUrl0800General) elements.sheetUrl0800General.value = settings.url0800General;
+  if (elements.sheetUrl0800Approved) elements.sheetUrl0800Approved.value = settings.url0800Approved;
+  if (elements.sheetUrl0800Cancelled) elements.sheetUrl0800Cancelled.value = settings.url0800Cancelled;
+  if (elements.sheetUrl0800Pending) elements.sheetUrl0800Pending.value = settings.url0800Pending;
+  if (elements.sheetUrl0800NoAction) elements.sheetUrl0800NoAction.value = settings.url0800NoAction;
+  if (elements.sheetAutoSync) elements.sheetAutoSync.checked = settings.autoSyncOnOpen;
+
+  if (!elements.sheetSourcesStatus) return;
+  const summary = settings.lastSyncSummary || null;
+  if (settings.lastSyncedAt) {
+    const imported = Number(summary?.importedDailyRows || 0);
+    const events = Number(summary?.importedEvents || 0);
+    elements.sheetSourcesStatus.textContent = `Ultima sincronizacao em ${formatDateTime(settings.lastSyncedAt)}. Consolidado: ${imported} dia(s) de operador e ${events} evento(s) importado(s).`;
+    return;
+  }
+  elements.sheetSourcesStatus.textContent = "Cole as URLs publicas das planilhas e sincronize para atualizar a operacao automaticamente.";
+}
+
+function collectSpreadsheetSourcePayload() {
+  return {
+    nuvidioUrl: String(elements.sheetUrlNuvidio?.value || "").trim(),
+    url0800General: String(elements.sheetUrl0800General?.value || "").trim(),
+    url0800Approved: String(elements.sheetUrl0800Approved?.value || "").trim(),
+    url0800Cancelled: String(elements.sheetUrl0800Cancelled?.value || "").trim(),
+    url0800Pending: String(elements.sheetUrl0800Pending?.value || "").trim(),
+    url0800NoAction: String(elements.sheetUrl0800NoAction?.value || "").trim(),
+    autoSyncOnOpen: Boolean(elements.sheetAutoSync?.checked)
+  };
+}
+
+async function handleSpreadsheetSourcesSave() {
+  if (!canManage()) return;
+  setBusy(true);
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/source-settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...collectSpreadsheetSourcePayload(),
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor"
+      })
+    });
+    state.spreadsheetSources = normalizeSpreadsheetSources(payload?.settings || {});
+    renderSpreadsheetSourceControls();
+    window.alert("URLs das planilhas salvas com sucesso.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel salvar as URLs das planilhas.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleSpreadsheetSourcesSync() {
+  if (!canManage()) return;
+  setBusy(true);
+  try {
+    const savePayload = await fetchJson(`${REMOTE_API_BASE}/source-settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...collectSpreadsheetSourcePayload(),
+        updatedById: state.session?.id || "",
+        updatedByName: state.session?.name || "Gestor"
+      })
+    });
+    state.spreadsheetSources = normalizeSpreadsheetSources(savePayload?.settings || {});
+    const syncPayload = await fetchJson(`${REMOTE_API_BASE}/source-sync`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actorId: state.session?.id || "",
+        actorName: state.session?.name || "Gestor"
+      }),
+      timeoutMs: 120000
+    });
+    state.spreadsheetSources = normalizeSpreadsheetSources(syncPayload?.settings || state.spreadsheetSources);
+    state.sourceInsights = syncPayload?.insights || state.sourceInsights;
+    await Promise.allSettled([
+      loadMyResults(),
+      canManage() ? loadOperationRecords() : Promise.resolve(),
+      canManage() ? loadAdminSelectedRecord() : Promise.resolve()
+    ]);
+    renderSpreadsheetSourceControls();
+    renderAll();
+    window.alert("Planilhas sincronizadas com sucesso.");
+  } catch (error) {
+    window.alert(error?.message || "Nao foi possivel sincronizar as planilhas.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function syncSpreadsheetSourcesInBackground() {
+  return fetchJson(`${REMOTE_API_BASE}/source-sync`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      actorId: state.session?.id || "",
+      actorName: state.session?.name || "Gestor"
+    }),
+    timeoutMs: 120000
+  }).then((payload) => {
+    state.spreadsheetSources = normalizeSpreadsheetSources(payload?.settings || state.spreadsheetSources);
+    state.sourceInsights = payload?.insights || state.sourceInsights;
+    return Promise.allSettled([
+      loadMyResults(),
+      canManage() ? loadOperationRecords() : Promise.resolve(),
+      canManage() ? loadAdminSelectedRecord() : Promise.resolve()
+    ]);
+  }).then(() => {
+    renderSpreadsheetSourceControls();
+    renderAll();
+  }).catch(() => {});
 }
 
 async function handleMaintenanceToggle() {
@@ -1598,6 +1794,7 @@ function renderDashboardAnalytics() {
     elements.analyticsDepartments.innerHTML = "";
     elements.analyticsTopDays.innerHTML = "";
     elements.analyticsWorkdays.innerHTML = "";
+    renderSpreadsheetInsightsPanels();
     void ensureManagerOperationRecords();
     return;
   }
@@ -1615,6 +1812,7 @@ function renderDashboardAnalytics() {
     elements.analyticsDepartments.innerHTML = "";
     elements.analyticsTopDays.innerHTML = "";
     elements.analyticsWorkdays.innerHTML = "";
+    renderSpreadsheetInsightsPanels();
     return;
   }
 
@@ -1647,6 +1845,105 @@ function renderDashboardAnalytics() {
   elements.analyticsDepartments.innerHTML = buildAnalyticsTrendPanel(filtered, filtered.length);
   elements.analyticsTopDays.innerHTML = buildAnalyticsTopDays(filtered);
   elements.analyticsWorkdays.innerHTML = "";
+  renderSpreadsheetInsightsPanels();
+}
+
+function renderSpreadsheetInsightsPanels() {
+  if (!elements.analyticsSheetSummary || !elements.analyticsSheetBreakdown) return;
+  if (!canManage()) {
+    elements.analyticsSheetSummary.innerHTML = emptyState("Sem acesso", "As visoes de fonte automatica ficam disponiveis para a gestao.");
+    elements.analyticsSheetBreakdown.innerHTML = "";
+    return;
+  }
+
+  const insights = state.sourceInsights;
+  if (!insights || !insights.summary) {
+    elements.analyticsSheetSummary.innerHTML = emptyState("Planilhas automaticas", "Salve as URLs e rode a sincronizacao para liberar essas visoes.");
+    elements.analyticsSheetBreakdown.innerHTML = "";
+    return;
+  }
+
+  const summary = insights.summary || {};
+  const status0800 = Array.isArray(insights.status0800) ? insights.status0800 : [];
+  const departments = Array.isArray(insights.departments) ? insights.departments : [];
+  const providers = Array.isArray(insights.providers) ? insights.providers : [];
+  const subtags = Array.isArray(insights.subtags) ? insights.subtags : [];
+  const topOperators = Array.isArray(insights.topOperators) ? insights.topOperators : [];
+
+  elements.analyticsSheetSummary.innerHTML = `
+    <article class="analytics-department-card">
+      <strong>${escapeHtml(formatMetric(Number(summary.productionNuvidio || 0)))}</strong>
+      <span>Nuvidio importado</span>
+      <small>Efetividade ${escapeHtml(formatMetric(Number(summary.effectivenessNuvidio || 0), "%"))}</small>
+    </article>
+    <article class="analytics-department-card">
+      <strong>${escapeHtml(formatMetric(Number(summary.production0800 || 0)))}</strong>
+      <span>0800 importado</span>
+      <small>Efetividade ${escapeHtml(formatMetric(Number(summary.effectiveness0800 || 0), "%"))}</small>
+    </article>
+    <article class="analytics-department-card">
+      <strong>${escapeHtml(formatMetric(Number(summary.operators || 0)))}</strong>
+      <span>Operadores cruzados</span>
+      <small>${escapeHtml(formatMetric(Number(summary.days || 0)))} dia(s) sincronizados</small>
+    </article>
+    <article class="analytics-department-card">
+      <strong>${escapeHtml(formatMetric(Number(summary.avgNuvidioTmaSeconds || 0)))}</strong>
+      <span>TMA medio Nuvidio (s)</span>
+      <small>Espera media ${escapeHtml(formatMetric(Number(summary.avgNuvidioWaitSeconds || 0)))}s</small>
+    </article>
+  `;
+
+  const sectionBlock = (title, items, formatter) => `
+    <div class="top-days-card">
+      <div class="top-days-head">
+        <strong>${escapeHtml(title)}</strong>
+      </div>
+      ${items.length ? items.map((item) => formatter(item)).join("") : `<p class="analytics-empty">Sem dados.</p>`}
+    </div>
+  `;
+
+  elements.analyticsSheetBreakdown.innerHTML = [
+    sectionBlock("Status 0800", status0800.slice(0, 4), (item) => `
+      <div class="top-days-item">
+        <span>${escapeHtml(getStatusLabel(item.label))}</span>
+        <strong>${escapeHtml(formatMetric(Number(item.value || 0)))}</strong>
+      </div>
+    `),
+    sectionBlock("Departamentos Nuvidio", departments.slice(0, 5), (item) => `
+      <div class="top-days-item">
+        <span>${escapeHtml(item.label || "--")}</span>
+        <strong>${escapeHtml(formatMetric(Number(item.value || 0)))}</strong>
+      </div>
+    `),
+    sectionBlock("Prestadoras", providers.slice(0, 5), (item) => `
+      <div class="top-days-item">
+        <span>${escapeHtml(item.label || "--")}</span>
+        <strong>${escapeHtml(formatMetric(Number(item.value || 0)))}</strong>
+      </div>
+    `),
+    sectionBlock("Subtags", subtags.slice(0, 5), (item) => `
+      <div class="top-days-item">
+        <span>${escapeHtml(item.label || "--")}</span>
+        <strong>${escapeHtml(formatMetric(Number(item.value || 0)))}</strong>
+      </div>
+    `),
+    sectionBlock("Top operadores", topOperators.slice(0, 5), (item) => `
+      <div class="top-days-item">
+        <span>${escapeHtml(item.userName || "Operador")}</span>
+        <strong>${escapeHtml(formatMetric(Number(item.productionTotal || 0)))}</strong>
+      </div>
+    `)
+  ].join("");
+}
+
+function getStatusLabel(value) {
+  const key = String(value || "");
+  if (key === "approved") return "Aprovada";
+  if (key === "reproved") return "Reprovada";
+  if (key === "cancelled") return "Cancelada";
+  if (key === "pending") return "Pendenciada";
+  if (key === "noAction") return "Sem acao";
+  return key || "--";
 }
 
 function renderDashboardAnalyticsFilters() {
