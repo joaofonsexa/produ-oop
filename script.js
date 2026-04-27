@@ -712,8 +712,27 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const header = rows[0].map((item) => normalizeLooseText(item));
   const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
   const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
-  const idxNuvidioUsername = findColumnIndex(header, ["usuario nuvidio", "username nuvidio", "login nuvidio", "nuvidio"]);
-  const idx0800Username = findColumnIndex(header, ["usuario 0800", "username 0800", "login 0800", "0800"]);
+  const idxNuvidioUsername = findColumnIndex(header, [
+    "usuario nuvidio",
+    "usuario do nuvidio",
+    "user nuvidio",
+    "username nuvidio",
+    "login nuvidio",
+    "usuario nv",
+    "usuario nuv",
+    "usuario n",
+    "nuvidio"
+  ]);
+  const idx0800Username = findColumnIndex(header, [
+    "usuario 0800",
+    "usuario do 0800",
+    "user 0800",
+    "username 0800",
+    "login 0800",
+    "usuario 08",
+    "usuario 800",
+    "0800"
+  ]);
   const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
   const idxOperation = findColumnIndex(header, ["operacao", "operacao/canal", "canal", "fila"]);
   const idxApproved = findColumnIndex(header, ["aprovadas", "aprovado", "aprovados"]);
@@ -727,7 +746,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const selectedOperation = normalizeOperationType(options.importOperation || getSelectedImportOperation());
 
   if (idxName < 0 && idxUsername < 0 && idxNuvidioUsername < 0 && idx0800Username < 0) {
-    throw new Error("A planilha precisa ter Nome do Operador, Usuario/Login, Usuario Nuvidio ou Usuario 0800.");
+    throw new Error("A planilha precisa ter pelo menos uma coluna de identificacao: Usuario Nuvidio, Usuario 0800, Nome do Operador ou Usuario/Login.");
   }
   if (idxDate < 0) {
     throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
@@ -783,13 +802,17 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     if (!row.length) continue;
     totalRows += 1;
 
-    const usernameKeys = [
-      idxUsername >= 0 ? normalizeLooseText(row[idxUsername]) : "",
+    const channelKeys = [
       idxNuvidioUsername >= 0 ? normalizeLooseText(row[idxNuvidioUsername]) : "",
       idx0800Username >= 0 ? normalizeLooseText(row[idx0800Username]) : ""
     ].filter(Boolean);
+    const genericKeys = [
+      idxUsername >= 0 ? normalizeLooseText(row[idxUsername]) : ""
+    ].filter(Boolean);
+
     const operator =
-      usernameKeys.map((key) => operatorByAnyUsername.get(key)).find(Boolean) ||
+      channelKeys.map((key) => operatorByAnyUsername.get(key)).find(Boolean) ||
+      genericKeys.map((key) => operatorByAnyUsername.get(key)).find(Boolean) ||
       operatorByName.get(normalizeLooseText(idxName >= 0 ? row[idxName] : ""));
     if (!operator) {
       unmatchedOperatorCount += 1;
@@ -1018,7 +1041,7 @@ function updateUploadModeHelp() {
   const templateColumns = getTemplateColumnsFromSelection(selectedMetrics, selectedOperation);
   if (selectedMetrics.has("effectiveness")) {
     const operationLabel = selectedOperation === "0800" ? "0800" : "Nuvidio";
-    elements.uploadHelpText.textContent = `Operacao selecionada: ${operationLabel}. Identificacao por Nome, Usuario, Usuario Nuvidio ou Usuario 0800. Efetividade e calculada automaticamente (efetivos/total), e total inclui Sem Acao.`;
+    elements.uploadHelpText.textContent = `Operacao selecionada: ${operationLabel}. Pode identificar o operador somente por Usuario Nuvidio ou Usuario 0800 (nome/login sao opcionais). Efetividade e calculada automaticamente (efetivos/total), e total inclui Sem Acao.`;
     return;
   }
 
@@ -1886,7 +1909,7 @@ function renderDashboard() {
   const metrics = [
     { label: "Total atendido", value: totalProduced, suffix: "" },
     { label: "Media de producao", value: averages.production, suffix: "" },
-    { label: "Efetividade media", value: averages.effectiveness, suffix: "%" },
+    { label: "Efetividade media", value: Number.isFinite(averages.effectiveness) ? Math.round(averages.effectiveness) : averages.effectiveness, suffix: "%" },
     { label: "Qualidade media", value: averages.quality, suffix: "%" }
   ];
 
