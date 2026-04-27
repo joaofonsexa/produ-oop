@@ -921,6 +921,50 @@ async function handleR2RefreshData() {
   setUploadStatus(`Atualizando dados do R2 (${selectedOperationLabel})...`, "loading");
 
   try {
+    if (!window.XLSX) {
+      throw new Error("Biblioteca de planilha indisponivel para leitura de XLSX.");
+    }
+
+    const latestBasePayload = await fetchJson(`${REMOTE_API_BASE}/r2-base/latest`, { timeoutMs: 120000 });
+    const baseMeta = selectedOperation === "0800"
+      ? latestBasePayload?.bases?.line0800
+      : latestBasePayload?.bases?.nuvidio;
+    const baseKey = String(baseMeta?.key || "");
+    if (!baseKey) {
+      throw new Error(`Nao achei base em bases/${selectedOperation}/base/ (aceito .xlsx ou .csv).`);
+    }
+
+    const isXlsxBase = /\.xlsx$/i.test(baseKey);
+    if (isXlsxBase) {
+      setUploadStatus(`Lendo XLSX da base (${selectedOperationLabel})...`, "loading");
+      const response = await fetch(`${REMOTE_API_BASE}/r2-source/download?key=${encodeURIComponent(baseKey)}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || `Falha ao baixar base XLSX (${selectedOperationLabel}).`);
+      }
+      const fileBlob = await response.blob();
+      const buffer = await fileBlob.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const bestSheetName = selectBestSheetForR2Base(workbook);
+      const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
+      const normalized = extractNormalizedSheetData(bestSheet);
+      const csvRaw = buildCsvFromNormalizedRows(normalized.headers, normalized.rows);
+      if (!String(csvRaw || "").trim()) {
+        throw new Error(`Base XLSX (${selectedOperationLabel}) sem linhas validas para processar.`);
+      }
+      const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
+      const sourceName = baseKey.split("/").pop() || `base-${selectedOperation}.xlsx`;
+      const parsedFileName = `${String(sourceName).replace(/\.xlsx$/i, "")}.parsed.csv`;
+      await uploadBlobToR2Multipart({
+        blob: csvBlob,
+        fileName: parsedFileName,
+        operationType: selectedOperation,
+        kind: "parsed",
+        contentType: "text/csv;charset=utf-8",
+        label: `${selectedOperationLabel} (parsed auto do xlsx)`
+      });
+    }
+
     await fetchJson(`${REMOTE_API_BASE}/r2-base-folders/ensure`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -967,7 +1011,7 @@ async function handleR2RefreshData() {
       `Pastas esperadas no R2:\n` +
       `- bases/nuvidio/base/\n` +
       `- bases/0800/base/\n` +
-      `O botao apenas le a base ja cadastrada no R2 (sem conversao).`
+      `Voce pode subir XLSX na base. O sistema processa automaticamente no atualizar dados.`
     );
   } catch (error) {
     const message = String(error?.message || "Falha ao atualizar dados direto do R2.");

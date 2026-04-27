@@ -1048,8 +1048,27 @@ async function resolveR2SourceFiles(bucket) {
   };
   const csvObjects = objects.filter(isCsvLike);
 
-  const line0800 = pickLatest(csvObjects, (key) => key.includes("bases/0800/base/")) || null;
-  const nuvidio = pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/base/")) || null;
+  const line0800 =
+    pickLatest(csvObjects, (key) => key.includes("bases/0800/parsed/")) ||
+    pickLatest(csvObjects, (key) => key.includes("bases/0800/base/")) ||
+    null;
+  const nuvidio =
+    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/parsed/")) ||
+    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/base/")) ||
+    null;
+  return { line0800, nuvidio };
+}
+
+async function resolveR2LatestBaseFiles(bucket) {
+  const objects = await listAllR2Objects(bucket);
+  const keyRaw = (obj) => String(obj?.key || "").trim().toLowerCase();
+  const pickLatest = (matcher) => {
+    return objects
+      .filter((obj) => matcher(keyRaw(obj)))
+      .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
+  };
+  const line0800 = pickLatest((key) => key.includes("bases/0800/base/")) || null;
+  const nuvidio = pickLatest((key) => key.includes("bases/nuvidio/base/")) || null;
   return { line0800, nuvidio };
 }
 
@@ -1161,7 +1180,7 @@ async function syncOperatorResultsFromR2(env, operationTypeInput, options = {}) 
   const files = await resolveR2SourceFiles(bucket);
   const targetFile = operationType === "0800" ? files.line0800 : files.nuvidio;
   if (!targetFile?.key) {
-    return { ok: false, error: `Nao achei CSV em bases/${operationType}/base/.` };
+    return { ok: false, error: `Nao achei base em bases/${operationType}/base/ (aceito .xlsx ou .csv).` };
   }
 
   const rows = await readCsvFromR2Object(bucket, targetFile);
@@ -1666,6 +1685,33 @@ export default {
         return jsonResponse({
           ok: true,
           sources: {
+            nuvidio: files.nuvidio
+              ? {
+                key: files.nuvidio.key || "",
+                size: Number(files.nuvidio.size || 0),
+                uploaded: String(files.nuvidio.uploaded || "")
+              }
+              : null,
+            line0800: files.line0800
+              ? {
+                key: files.line0800.key || "",
+                size: Number(files.line0800.size || 0),
+                uploaded: String(files.line0800.uploaded || "")
+              }
+              : null
+          }
+        });
+      }
+
+      if (url.pathname === "/api/r2-base/latest" && request.method === "GET") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+        const files = await resolveR2LatestBaseFiles(bucket);
+        return jsonResponse({
+          ok: true,
+          bases: {
             nuvidio: files.nuvidio
               ? {
                 key: files.nuvidio.key || "",
