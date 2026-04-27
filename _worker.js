@@ -1666,8 +1666,20 @@ export default {
         return jsonResponse({
           ok: true,
           sources: {
-            nuvidio: files.nuvidio?.key || "",
-            line0800: files.line0800?.key || ""
+            nuvidio: files.nuvidio
+              ? {
+                key: files.nuvidio.key || "",
+                size: Number(files.nuvidio.size || 0),
+                uploaded: String(files.nuvidio.uploaded || "")
+              }
+              : null,
+            line0800: files.line0800
+              ? {
+                key: files.line0800.key || "",
+                size: Number(files.line0800.size || 0),
+                uploaded: String(files.line0800.uploaded || "")
+              }
+              : null
           }
         });
       }

@@ -48,6 +48,7 @@ const state = {
 
 let chartIdSeed = 0;
 const R2_MULTIPART_CHUNK_BYTES = 8 * 1024 * 1024;
+const R2_SOURCE_CONVERT_MAX_BYTES = 45 * 1024 * 1024;
 
 const elements = {
   body: document.body,
@@ -916,21 +917,15 @@ async function handleR2RefreshData() {
   if (elements.removeUpload) elements.removeUpload.disabled = true;
   if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
   if (elements.r2RefreshData) elements.r2RefreshData.disabled = true;
-  setUploadStatus("Atualizando dados direto do R2 (Nuvidio + 0800)...", "loading");
+  const selectedOperation = getSelectedImportOperation();
+  const selectedOperationLabel = selectedOperation === "0800" ? "0800" : "Nuvidio";
+  setUploadStatus(`Atualizando dados do R2 (${selectedOperationLabel})...`, "loading");
 
   try {
-    if (!window.XLSX) {
-      throw new Error("Biblioteca de planilha indisponivel para converter XLSX do R2.");
-    }
-    setUploadStatus("Convertendo bases brutas (source) para parsed...", "loading");
-    const sourceConversions = [];
-    sourceConversions.push(await convertR2SourceXlsxToParsed("nuvidio"));
-    sourceConversions.push(await convertR2SourceXlsxToParsed("0800"));
-
     const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operationType: "all" }),
+      body: JSON.stringify({ operationType: selectedOperation }),
       timeoutMs: 180000
     });
     state.r2Insights = rebuilt?.views || state.r2Insights;
@@ -939,7 +934,7 @@ async function handleR2RefreshData() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        operationType: "all",
+        operationType: selectedOperation,
         fullSync: true
       }),
       timeoutMs: 10 * 60 * 1000
@@ -961,14 +956,12 @@ async function handleR2RefreshData() {
     window.alert(
       `Atualizacao concluida.\n` +
       `- Registros sincronizados: ${totalImported}\n` +
-      `- Conversao source->parsed (Nuvidio): ${sourceConversions[0]?.converted ? "ok" : "sem arquivo source"}\n` +
-      `- Conversao source->parsed (0800): ${sourceConversions[1]?.converted ? "ok" : "sem arquivo source"}\n` +
       `- Fonte Nuvidio: ${String(nuvidioItem?.sourceKey || rebuilt?.sources?.nuvidio || "n/d")}\n` +
       `- Fonte 0800: ${String(line0800Item?.sourceKey || rebuilt?.sources?.line0800 || "n/d")}\n\n` +
       `Pastas esperadas no R2:\n` +
-      `- bases/nuvidio/source/ (xlsx bruto)\n` +
-      `- bases/0800/source/ (xlsx bruto)\n` +
-      `O portal converte para parsed automaticamente no atualizar dados.`
+      `- bases/nuvidio/parsed/\n` +
+      `- bases/0800/parsed/\n` +
+      `O botao apenas le a base ja cadastrada no R2 (sem conversao).`
     );
   } catch (error) {
     const message = String(error?.message || "Falha ao atualizar dados direto do R2.");
@@ -987,51 +980,96 @@ async function handleR2RefreshData() {
   }
 }
 
-async function convertR2SourceXlsxToParsed(operationType) {
+async function convertR2SourceXlsxToParsed(operationType, sourcesInput = null) {
   const lane = normalizeOperationType(operationType || "nuvidio");
-  const latest = await fetchJson(`${REMOTE_API_BASE}/r2-source/latest`);
-  const sourceKey = lane === "0800"
-    ? String(latest?.sources?.line0800 || "")
-    : String(latest?.sources?.nuvidio || "");
+  const sourceMetaRaw = lane === "0800"
+    ? (sourcesInput?.line0800 ?? null)
+    : (sourcesInput?.nuvidio ?? null);
+  const sourceMeta = (sourceMetaRaw && typeof sourceMetaRaw === "object")
+    ? sourceMetaRaw
+    : { key: String(sourceMetaRaw || ""), size: 0, uploaded: "" };
+  const sourceKey = String(sourceMeta?.key || "");
   if (!sourceKey) {
-    return { converted: false, operationType: lane, sourceKey: "", parsedKey: "" };
+    return { converted: false, skipped: true, operationType: lane, sourceKey: "", parsedKey: "", reason: "sem arquivo source" };
   }
 
-  const response = await fetch(`${REMOTE_API_BASE}/r2-source/download?key=${encodeURIComponent(sourceKey)}`);
+  const sourceSize = Number(sourceMeta?.size || 0);
+  if (sourceSize > R2_SOURCE_CONVERT_MAX_BYTES) {
+    return {
+      converted: false,
+      skipped: true,
+      operationType: lane,
+      sourceKey,
+      parsedKey: "",
+      reason: `arquivo grande (${formatFileSize(sourceSize)}), limite atual ${formatFileSize(R2_SOURCE_CONVERT_MAX_BYTES)}`
+    };
+  }
+
+  const response = await fetchWithTimeout(
+    `${REMOTE_API_BASE}/r2-source/download?key=${encodeURIComponent(sourceKey)}`,
+    {},
+    3 * 60 * 1000
+  );
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error || `Falha ao baixar base source do R2 (${lane}).`);
+    return {
+      converted: false,
+      skipped: false,
+      operationType: lane,
+      sourceKey,
+      parsedKey: "",
+      reason: payload?.error || `Falha ao baixar base source do R2 (${lane}).`
+    };
   }
 
-  const sourceBlob = await response.blob();
-  const workbookBuffer = await sourceBlob.arrayBuffer();
-  const workbook = XLSX.read(workbookBuffer, { type: "array" });
-  const bestSheetName = selectBestSheetForR2Base(workbook);
-  const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
-  const normalizedSheetData = extractNormalizedSheetData(bestSheet);
-  const csvRaw = buildCsvFromNormalizedRows(normalizedSheetData.headers, normalizedSheetData.rows);
-  if (!String(csvRaw || "").trim()) {
-    throw new Error(`Base ${lane} em source foi lida, mas sem dados parseados.`);
+  try {
+    const sourceBlob = await response.blob();
+    const workbookBuffer = await sourceBlob.arrayBuffer();
+    const workbook = XLSX.read(workbookBuffer, { type: "array" });
+    const bestSheetName = selectBestSheetForR2Base(workbook);
+    const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
+    const normalizedSheetData = extractNormalizedSheetData(bestSheet);
+    const csvRaw = buildCsvFromNormalizedRows(normalizedSheetData.headers, normalizedSheetData.rows);
+    if (!String(csvRaw || "").trim()) {
+      return {
+        converted: false,
+        skipped: false,
+        operationType: lane,
+        sourceKey,
+        parsedKey: "",
+        reason: "planilha sem linhas parseadas"
+      };
+    }
+
+    const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
+    const sourceName = sourceKey.split("/").pop() || `base-${lane}.xlsx`;
+    const parsedFileName = `${String(sourceName).replace(/\.xlsx$/i, "")}.parsed.csv`;
+    const parsedPayload = await uploadBlobToR2Multipart({
+      blob: csvBlob,
+      fileName: parsedFileName,
+      operationType: lane,
+      kind: "parsed",
+      contentType: "text/csv;charset=utf-8",
+      label: `${lane === "0800" ? "0800" : "Nuvidio"} (parsed auto)`
+    });
+
+    return {
+      converted: true,
+      skipped: false,
+      operationType: lane,
+      sourceKey,
+      parsedKey: String(parsedPayload?.key || "")
+    };
+  } catch (error) {
+    return {
+      converted: false,
+      skipped: false,
+      operationType: lane,
+      sourceKey,
+      parsedKey: "",
+      reason: String(error?.message || "falha ao converter xlsx")
+    };
   }
-
-  const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
-  const sourceName = sourceKey.split("/").pop() || `base-${lane}.xlsx`;
-  const parsedFileName = `${String(sourceName).replace(/\.xlsx$/i, "")}.parsed.csv`;
-  const parsedPayload = await uploadBlobToR2Multipart({
-    blob: csvBlob,
-    fileName: parsedFileName,
-    operationType: lane,
-    kind: "parsed",
-    contentType: "text/csv;charset=utf-8",
-    label: `${lane === "0800" ? "0800" : "Nuvidio"} (parsed auto)`
-  });
-
-  return {
-    converted: true,
-    operationType: lane,
-    sourceKey,
-    parsedKey: String(parsedPayload?.key || "")
-  };
 }
 
 function selectBestSheetForR2Base(workbook) {
@@ -3595,6 +3633,16 @@ async function fetchJson(url, options = {}) {
       throw new Error("Tempo limite excedido na comunicacao com o servidor.");
     }
     throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 180000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(url, { ...(options || {}), signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
