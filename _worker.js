@@ -14,6 +14,16 @@ function jsonResponse(data, status = 200) {
   });
 }
 
+function binaryResponse(stream, contentType = "application/octet-stream", status = 200) {
+  return new Response(stream, {
+    status,
+    headers: {
+      ...CORS_HEADERS,
+      "content-type": contentType
+    }
+  });
+}
+
 function decodeBase64ToBytes(value) {
   const binary = atob(String(value || ""));
   const bytes = new Uint8Array(binary.length);
@@ -1057,6 +1067,28 @@ async function resolveR2SourceFiles(bucket) {
   return { line0800, nuvidio };
 }
 
+async function resolveR2LatestXlsxSources(bucket) {
+  const objects = await listAllR2Objects(bucket);
+  const keyRaw = (obj) => String(obj?.key || "").trim().toLowerCase();
+  const isXlsx = (obj) => keyRaw(obj).endsWith(".xlsx");
+  const pickLatest = (pool, matcher) => {
+    return pool
+      .filter((obj) => matcher(keyRaw(obj), normalizeCsvText(obj.key || "")))
+      .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
+  };
+  const xlsxObjects = objects.filter(isXlsx);
+
+  const line0800 =
+    pickLatest(xlsxObjects, (key) => key.includes("bases/0800/source/")) ||
+    pickLatest(xlsxObjects, (key) => key.includes("bases/0800/")) ||
+    null;
+  const nuvidio =
+    pickLatest(xlsxObjects, (key) => key.includes("bases/nuvidio/source/")) ||
+    pickLatest(xlsxObjects, (key) => key.includes("bases/nuvidio/")) ||
+    null;
+  return { line0800, nuvidio };
+}
+
 async function readCsvFromR2Object(bucket, objectMeta) {
   if (!objectMeta?.key) return [];
   const key = String(objectMeta.key || "").trim().toLowerCase();
@@ -1623,6 +1655,41 @@ export default {
         }
         const result = await writeR2InsightsSnapshot(env.DB, views);
         return jsonResponse({ ok: true, updatedAt: result.updatedAt });
+      }
+
+      if (url.pathname === "/api/r2-source/latest" && request.method === "GET") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+        const files = await resolveR2LatestXlsxSources(bucket);
+        return jsonResponse({
+          ok: true,
+          sources: {
+            nuvidio: files.nuvidio?.key || "",
+            line0800: files.line0800?.key || ""
+          }
+        });
+      }
+
+      if (url.pathname === "/api/r2-source/download" && request.method === "GET") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+        const key = String(url.searchParams.get("key") || "").trim();
+        if (!key) {
+          return jsonResponse({ ok: false, error: "Informe a chave do arquivo no R2." }, 400);
+        }
+        const object = await bucket.get(key);
+        if (!object) {
+          return jsonResponse({ ok: false, error: "Arquivo nao encontrado no R2 para a chave informada." }, 404);
+        }
+        const contentType = String(
+          object.httpMetadata?.contentType ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ).trim();
+        return binaryResponse(object.body, contentType, 200);
       }
 
       if (url.pathname === "/api/r2-sync-results" && request.method === "POST") {

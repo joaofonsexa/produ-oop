@@ -919,6 +919,14 @@ async function handleR2RefreshData() {
   setUploadStatus("Atualizando dados direto do R2 (Nuvidio + 0800)...", "loading");
 
   try {
+    if (!window.XLSX) {
+      throw new Error("Biblioteca de planilha indisponivel para converter XLSX do R2.");
+    }
+    setUploadStatus("Convertendo bases brutas (source) para parsed...", "loading");
+    const sourceConversions = [];
+    sourceConversions.push(await convertR2SourceXlsxToParsed("nuvidio"));
+    sourceConversions.push(await convertR2SourceXlsxToParsed("0800"));
+
     const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -953,12 +961,14 @@ async function handleR2RefreshData() {
     window.alert(
       `Atualizacao concluida.\n` +
       `- Registros sincronizados: ${totalImported}\n` +
+      `- Conversao source->parsed (Nuvidio): ${sourceConversions[0]?.converted ? "ok" : "sem arquivo source"}\n` +
+      `- Conversao source->parsed (0800): ${sourceConversions[1]?.converted ? "ok" : "sem arquivo source"}\n` +
       `- Fonte Nuvidio: ${String(nuvidioItem?.sourceKey || rebuilt?.sources?.nuvidio || "n/d")}\n` +
       `- Fonte 0800: ${String(line0800Item?.sourceKey || rebuilt?.sources?.line0800 || "n/d")}\n\n` +
       `Pastas esperadas no R2:\n` +
-      `- bases/nuvidio/parsed/ (preferencial)\n` +
-      `- bases/0800/parsed/ (preferencial)\n` +
-      `Tambem aceita CSV em bases/nuvidio/ e bases/0800/.`
+      `- bases/nuvidio/source/ (xlsx bruto)\n` +
+      `- bases/0800/source/ (xlsx bruto)\n` +
+      `O portal converte para parsed automaticamente no atualizar dados.`
     );
   } catch (error) {
     const message = String(error?.message || "Falha ao atualizar dados direto do R2.");
@@ -975,6 +985,53 @@ async function handleR2RefreshData() {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
   }
+}
+
+async function convertR2SourceXlsxToParsed(operationType) {
+  const lane = normalizeOperationType(operationType || "nuvidio");
+  const latest = await fetchJson(`${REMOTE_API_BASE}/r2-source/latest`);
+  const sourceKey = lane === "0800"
+    ? String(latest?.sources?.line0800 || "")
+    : String(latest?.sources?.nuvidio || "");
+  if (!sourceKey) {
+    return { converted: false, operationType: lane, sourceKey: "", parsedKey: "" };
+  }
+
+  const response = await fetch(`${REMOTE_API_BASE}/r2-source/download?key=${encodeURIComponent(sourceKey)}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.error || `Falha ao baixar base source do R2 (${lane}).`);
+  }
+
+  const sourceBlob = await response.blob();
+  const workbookBuffer = await sourceBlob.arrayBuffer();
+  const workbook = XLSX.read(workbookBuffer, { type: "array" });
+  const bestSheetName = selectBestSheetForR2Base(workbook);
+  const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
+  const normalizedSheetData = extractNormalizedSheetData(bestSheet);
+  const csvRaw = buildCsvFromNormalizedRows(normalizedSheetData.headers, normalizedSheetData.rows);
+  if (!String(csvRaw || "").trim()) {
+    throw new Error(`Base ${lane} em source foi lida, mas sem dados parseados.`);
+  }
+
+  const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
+  const sourceName = sourceKey.split("/").pop() || `base-${lane}.xlsx`;
+  const parsedFileName = `${String(sourceName).replace(/\.xlsx$/i, "")}.parsed.csv`;
+  const parsedPayload = await uploadBlobToR2Multipart({
+    blob: csvBlob,
+    fileName: parsedFileName,
+    operationType: lane,
+    kind: "parsed",
+    contentType: "text/csv;charset=utf-8",
+    label: `${lane === "0800" ? "0800" : "Nuvidio"} (parsed auto)`
+  });
+
+  return {
+    converted: true,
+    operationType: lane,
+    sourceKey,
+    parsedKey: String(parsedPayload?.key || "")
+  };
 }
 
 function selectBestSheetForR2Base(workbook) {
