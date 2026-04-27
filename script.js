@@ -47,6 +47,7 @@ const state = {
 };
 
 let chartIdSeed = 0;
+const R2_MULTIPART_CHUNK_BYTES = 8 * 1024 * 1024;
 
 const elements = {
   body: document.body,
@@ -738,7 +739,7 @@ async function handleR2BaseUpload() {
 
   const file = elements.uploadFile?.files?.[0];
   if (!file) {
-    window.alert("Selecione a planilha base (.csv) para enviar ao R2.");
+    window.alert("Selecione a planilha base (.xlsx) para enviar ao R2.");
     return;
   }
 
@@ -770,16 +771,13 @@ async function handleR2BaseUpload() {
   setUploadStatus(`Enviando base ${operationLabel} para o R2...`, "loading");
 
   try {
-    const sourcePayload = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload`, {
-      method: "POST",
-      headers: {
-        "content-type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "x-file-name": file.name || "base.xlsx",
-        "x-operation-type": operation,
-        "x-r2-kind": "source"
-      },
-      body: file,
-      timeoutMs: 60 * 60 * 1000
+    const sourcePayload = await uploadBlobToR2Multipart({
+      blob: file,
+      fileName: file.name || "base.xlsx",
+      operationType: operation,
+      kind: "source",
+      contentType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      label: `${operationLabel} (xlsx)`
     });
 
     const workbookBuffer = await file.arrayBuffer();
@@ -789,16 +787,13 @@ async function handleR2BaseUpload() {
     const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
     const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
 
-    const parsedPayload = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload`, {
-      method: "POST",
-      headers: {
-        "content-type": "text/csv;charset=utf-8",
-        "x-file-name": parsedFileName,
-        "x-operation-type": operation,
-        "x-r2-kind": "parsed"
-      },
-      body: csvBlob,
-      timeoutMs: 60 * 60 * 1000
+    const parsedPayload = await uploadBlobToR2Multipart({
+      blob: csvBlob,
+      fileName: parsedFileName,
+      operationType: operation,
+      kind: "parsed",
+      contentType: "text/csv;charset=utf-8",
+      label: `${operationLabel} (parseada)`
     });
 
     const sourceKey = String(sourcePayload?.key || "");
@@ -833,6 +828,62 @@ async function handleR2BaseUpload() {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
   }
+}
+
+async function uploadBlobToR2Multipart({ blob, fileName, operationType, kind, contentType, label = "" }) {
+  const init = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload/multipart/init`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      fileName,
+      operationType,
+      kind,
+      contentType
+    }),
+    timeoutMs: 120000
+  });
+  const key = String(init?.key || "");
+  const uploadId = String(init?.uploadId || "");
+  if (!key || !uploadId) {
+    throw new Error("Falha ao iniciar upload multipart no R2.");
+  }
+
+  const totalSize = Number(blob?.size || 0);
+  const totalParts = Math.max(1, Math.ceil(totalSize / R2_MULTIPART_CHUNK_BYTES));
+  const parts = [];
+
+  for (let index = 0; index < totalParts; index += 1) {
+    const partNumber = index + 1;
+    const start = index * R2_MULTIPART_CHUNK_BYTES;
+    const end = Math.min(totalSize, start + R2_MULTIPART_CHUNK_BYTES);
+    const chunk = blob.slice(start, end);
+    const progressLabel = label ? `${label}: ` : "";
+    setUploadStatus(`Enviando ${progressLabel}parte ${partNumber}/${totalParts}...`, "loading");
+
+    const partResponse = await fetchJson(
+      `${REMOTE_API_BASE}/r2-base-upload/multipart/part?key=${encodeURIComponent(key)}&uploadId=${encodeURIComponent(uploadId)}&partNumber=${partNumber}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: chunk,
+        timeoutMs: 10 * 60 * 1000
+      }
+    );
+    const etag = String(partResponse?.etag || "");
+    if (!etag) {
+      throw new Error(`Falha ao enviar parte ${partNumber} para o R2.`);
+    }
+    parts.push({ partNumber, etag });
+  }
+
+  await fetchJson(`${REMOTE_API_BASE}/r2-base-upload/multipart/complete`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key, uploadId, parts }),
+    timeoutMs: 120000
+  });
+
+  return { key, uploadId, parts: parts.length };
 }
 
 async function parseSpreadsheetImportFile(file, options = {}) {

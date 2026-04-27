@@ -37,6 +37,14 @@ function sanitizeR2Kind(value) {
   return "source";
 }
 
+function buildR2BaseKey(operationType, r2Kind, fileName) {
+  const safeName = safeFileName(fileName || (r2Kind === "parsed" ? "base.parsed.csv" : "base.xlsx"));
+  if (r2Kind === "parsed") {
+    return `bases/${operationType}/parsed/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+  }
+  return `bases/${operationType}/source/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+}
+
 function getAuthBase(env) {
   return String(env.AUTH_API_BASE || env.CENTRAL_AUTH_BASE || "").trim().replace(/\/+$/, "");
 }
@@ -1006,6 +1014,87 @@ export default {
         return jsonResponse({ ok: true, records });
       }
 
+      if (url.pathname === "/api/r2-base-upload/multipart/init" && request.method === "POST") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const operationType = sanitizeOperationType(body?.operationType || "nuvidio");
+        const r2Kind = sanitizeR2Kind(body?.kind || "source");
+        const fileName = String(body?.fileName || "").trim() || (r2Kind === "parsed" ? "base.parsed.csv" : "base.xlsx");
+        const contentType = String(body?.contentType || (r2Kind === "parsed" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")).trim();
+        const key = buildR2BaseKey(operationType, r2Kind, fileName);
+
+        const upload = await bucket.createMultipartUpload(key, {
+          httpMetadata: { contentType },
+          customMetadata: {
+            source: "portal",
+            operationType,
+            kind: r2Kind
+          }
+        });
+
+        return jsonResponse({
+          ok: true,
+          key,
+          uploadId: upload.uploadId,
+          operationType,
+          kind: r2Kind
+        });
+      }
+
+      if (url.pathname === "/api/r2-base-upload/multipart/part" && request.method === "POST") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+        const key = String(url.searchParams.get("key") || "").trim();
+        const uploadId = String(url.searchParams.get("uploadId") || "").trim();
+        const partNumber = Number(url.searchParams.get("partNumber"));
+        if (!key || !uploadId || !Number.isInteger(partNumber) || partNumber < 1) {
+          return jsonResponse({ ok: false, error: "Informe key, uploadId e partNumber validos." }, 400);
+        }
+        if (!request.body) {
+          return jsonResponse({ ok: false, error: "Parte vazia." }, 400);
+        }
+
+        const upload = bucket.resumeMultipartUpload(key, uploadId);
+        const part = await upload.uploadPart(partNumber, request.body);
+        return jsonResponse({
+          ok: true,
+          key,
+          uploadId,
+          partNumber,
+          etag: String(part?.etag || "")
+        });
+      }
+
+      if (url.pathname === "/api/r2-base-upload/multipart/complete" && request.method === "POST") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+        const body = await request.json().catch(() => ({}));
+        const key = String(body?.key || "").trim();
+        const uploadId = String(body?.uploadId || "").trim();
+        const partsRaw = Array.isArray(body?.parts) ? body.parts : [];
+        const parts = partsRaw
+          .map((item) => ({
+            partNumber: Number(item?.partNumber),
+            etag: String(item?.etag || "")
+          }))
+          .filter((item) => Number.isInteger(item.partNumber) && item.partNumber > 0 && item.etag);
+        if (!key || !uploadId || !parts.length) {
+          return jsonResponse({ ok: false, error: "Informe key, uploadId e parts para concluir upload multipart." }, 400);
+        }
+
+        const upload = bucket.resumeMultipartUpload(key, uploadId);
+        await upload.complete(parts);
+        return jsonResponse({ ok: true, key, uploadId, parts: parts.length });
+      }
+
       if (url.pathname === "/api/r2-base-upload" && request.method === "POST") {
         const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
         if (!bucket) {
@@ -1021,9 +1110,7 @@ export default {
         const fileNameRaw = request.headers.get("x-file-name") || url.searchParams.get("fileName") || "base.csv";
         const fileName = safeFileName(fileNameRaw || "base.csv");
         const contentType = String(request.headers.get("content-type") || "text/csv").trim() || "text/csv";
-        const key = r2Kind === "parsed"
-          ? `bases/${operationType}/parsed/${Date.now()}-${crypto.randomUUID()}-${fileName}`
-          : `bases/${operationType}/source/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+        const key = buildR2BaseKey(operationType, r2Kind, fileName);
 
         if (!request.body) {
           return jsonResponse({ ok: false, error: "Arquivo nao enviado no corpo da requisicao." }, 400);
