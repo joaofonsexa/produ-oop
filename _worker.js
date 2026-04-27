@@ -1049,6 +1049,7 @@ async function resolveR2SourceFiles(bucket) {
   const csvObjects = objects.filter(isCsvLike);
 
   const line0800 =
+    pickLatest(csvObjects, (key) => key.includes("bases/0800/base/")) ||
     pickLatest(csvObjects, (key) => key.includes("bases/0800/parsed/")) ||
     pickLatest(csvObjects, (key) => key.includes("bases/0800/")) ||
     pickLatest(csvObjects, (keyRawValue, keyNorm) => (
@@ -1057,6 +1058,7 @@ async function resolveR2SourceFiles(bucket) {
     )) ||
     null;
   const nuvidio =
+    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/base/")) ||
     pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/parsed/")) ||
     pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/")) ||
     pickLatest(csvObjects, (keyRawValue, keyNorm) => (
@@ -1168,7 +1170,7 @@ async function syncOperatorResultsFromR2(env, operationTypeInput, options = {}) 
   if (!rows.length) {
     return {
       ok: false,
-      error: `Arquivo parseado vazio (${targetFile.key}). Use CSV em bases/${operationType}/parsed/ ou bases/${operationType}/.`
+      error: `Arquivo base vazio ou invalido (${targetFile.key}). Use CSV em bases/${operationType}/base/.`
     };
   }
 
