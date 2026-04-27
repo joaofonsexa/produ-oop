@@ -782,8 +782,9 @@ async function handleR2BaseUpload() {
 
     const workbookBuffer = await file.arrayBuffer();
     const workbook = XLSX.read(workbookBuffer, { type: "array" });
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    const csvRaw = XLSX.utils.sheet_to_csv(firstSheet, { FS: ";", RS: "\n", blankrows: false });
+    const bestSheetName = selectBestSheetForR2Base(workbook, operation);
+    const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
+    const csvRaw = XLSX.utils.sheet_to_csv(bestSheet, { FS: ";", RS: "\n", blankrows: false });
     const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
     const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
 
@@ -828,6 +829,30 @@ async function handleR2BaseUpload() {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
   }
+}
+
+function selectBestSheetForR2Base(workbook, operationType) {
+  const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  if (!names.length) return "";
+  const expected = operationType === "0800"
+    ? ["motivo", "sub-motivo", "analista", "usuario de abertura", "data recebimento"]
+    : ["atendente", "tag", "subtag", "data abreviada", "duracao em segundos"];
+
+  let bestName = names[0];
+  let bestScore = -1;
+  names.forEach((name) => {
+    const sheet = workbook.Sheets[name];
+    if (!sheet) return;
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, range: 0 });
+    const header = Array.isArray(rows?.[0]) ? rows[0] : [];
+    const normalizedHeader = header.map((cell) => normalizeLooseText(cell));
+    const score = expected.reduce((acc, key) => acc + (normalizedHeader.some((col) => col.includes(normalizeLooseText(key))) ? 1 : 0), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestName = name;
+    }
+  });
+  return bestName;
 }
 
 async function uploadBlobToR2Multipart({ blob, fileName, operationType, kind, contentType, label = "" }) {
@@ -2185,6 +2210,9 @@ function buildAnalyticsR2Views(views) {
           ${buildR2Kpi("Sem acao", nuvidio?.statuses?.semAcao || 0)}
           ${buildR2Kpi("TMA medio", formatMetric(nuvidio.avgTmaSeconds || 0, "s"))}
         </div>
+        ${buildR2TopList("Producao por operador", nuvidio.producaoPorOperador, {
+    formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`
+  })}
         ${buildR2TopList("Top subtags", nuvidio.topSubtags)}
         ${buildR2TopList("Top atendentes", nuvidio.topAtendentes, {
     formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`
@@ -2205,6 +2233,9 @@ function buildAnalyticsR2Views(views) {
           ${buildR2Kpi("FCR (Sim)", formatMetric(line0800?.fcrSimRate || 0, "%"))}
           ${buildR2Kpi("Dias resolucao", formatMetric(line0800?.avgResolutionDays || 0))}
         </div>
+        ${buildR2TopList("Producao por operador", line0800.producaoPorOperador, {
+    formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`
+  })}
         ${buildR2TopList("Top sub-motivos", line0800.topSubMotivos)}
         ${buildR2TopList("Top analistas", line0800.topAnalistas, {
     formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`

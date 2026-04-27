@@ -725,11 +725,26 @@ function aggregateNuvidio(rows) {
     }
 
     pushTopCounter(subtags, getRowValueByHeader(row, ["Subtag"]));
-    const atendente = getRowValueByHeader(row, ["Atendente"]);
+    const atendente = getRowValueByHeader(row, [
+      "Atendente",
+      "Analista",
+      "Usuario de Abertura da Ocorrencia",
+      "Usuário de Abertura da Ocorrência",
+      "Funcionario",
+      "Funcionário",
+      "Operador",
+      "Usuario",
+      "Usuário"
+    ]);
     if (atendente) {
       atendentes.set(atendente, Number(atendentes.get(atendente) || 0) + 1);
     }
   }
+
+  const producaoPorOperador = [...atendentes.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
 
   return {
     totalAtendimentos: total,
@@ -737,10 +752,8 @@ function aggregateNuvidio(rows) {
     avgWaitSeconds: waitCount ? (waitSum / waitCount) : 0,
     avgTmaSeconds: tmaCount ? (tmaSum / tmaCount) : 0,
     topSubtags: mapToTopList(subtags, 5),
-    topAtendentes: [...atendentes.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
+    topAtendentes: producaoPorOperador.slice(0, 5),
+    producaoPorOperador
   };
 }
 
@@ -775,8 +788,22 @@ function aggregate0800(rows) {
     }
 
     pushTopCounter(subMotivos, getRowValueByHeader(row, ["Sub-Motivo", "Sub Motivo"]));
-    pushTopCounter(analistas, getRowValueByHeader(row, ["Analista", "Usuario de Abertura da Ocorrencia", "Usuário de Abertura da Ocorrência"]));
+    pushTopCounter(analistas, getRowValueByHeader(row, [
+      "Analista",
+      "Usuario de Abertura da Ocorrencia",
+      "Usuário de Abertura da Ocorrência",
+      "Funcionario",
+      "Funcionário",
+      "Operador",
+      "Usuario",
+      "Usuário"
+    ]));
   }
+
+  const producaoPorOperador = [...analistas.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
 
   return {
     totalOcorrencias: total,
@@ -784,10 +811,8 @@ function aggregate0800(rows) {
     avgResolutionDays: daysCount ? (daysSum / daysCount) : 0,
     fcrSimRate: fcrTotal ? ((fcrYes * 100) / fcrTotal) : 0,
     topSubMotivos: mapToTopList(subMotivos, 5),
-    topAnalistas: [...analistas.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
+    topAnalistas: producaoPorOperador.slice(0, 5),
+    producaoPorOperador
   };
 }
 
