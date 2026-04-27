@@ -2438,6 +2438,151 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   gap: 12px;
 }
 
+.analytics-lanes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.analytics-lane-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(150deg, rgba(255,255,255,0.03), rgba(76, 132, 210, 0.09));
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.analytics-lane-head {
+  display: grid;
+  gap: 4px;
+}
+
+.analytics-lane-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.status-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.status-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-chart-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--dot);
+}
+
+.status-line-chart-scroll {
+  overflow-x: hidden;
+}
+
+.status-line-chart-scroll.is-scrollable {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.status-line-chart-svg {
+  min-width: 100%;
+  display: block;
+  height: 220px;
+}
+
+.analytics-r2-views {
+  display: grid;
+}
+
+.r2-views-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.r2-view-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(255,255,255,0.03), rgba(78, 161, 255, 0.08));
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.r2-view-head {
+  display: grid;
+  gap: 2px;
+}
+
+.r2-view-head strong {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.r2-view-head span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.r2-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.r2-kpi-pill {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(6, 14, 26, 0.72);
+  padding: 8px 9px;
+  display: grid;
+  gap: 3px;
+}
+
+.r2-kpi-pill span {
+  color: var(--muted);
+  font-size: 0.77rem;
+}
+
+.r2-kpi-pill strong {
+  font-size: 1rem;
+}
+
+.r2-top-block {
+  display: grid;
+  gap: 6px;
+}
+
+.r2-top-block p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.r2-top-block ul {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.r2-top-block li {
+  font-size: 0.9rem;
+}
+
 .analytics-gauge-card {
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -2979,6 +3124,8 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
   .analytics-kpi-row,
   .analytics-gauges,
+  .analytics-lanes-grid,
+  .r2-views-grid,
   .analytics-lower-grid,
   .analytics-new-views-grid,
   .analytics-consistency {

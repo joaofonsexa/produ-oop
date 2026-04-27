@@ -42,7 +42,8 @@ const state = {
     selectedAttendantId: "all",
     selectedDates: [],
     recordKey: ""
-  }
+  },
+  r2Insights: null
 };
 
 let chartIdSeed = 0;
@@ -98,10 +99,12 @@ const elements = {
   analyticsConsistency: document.querySelector("#analytics-consistency"),
   analyticsPerformanceBands: document.querySelector("#analytics-performance-bands"),
   analyticsDailyBars: document.querySelector("#analytics-daily-bars"),
+  analyticsLanes: document.querySelector("#analytics-lanes"),
   analyticsTagsBars: document.querySelector("#analytics-tags-bars"),
   analyticsDepartments: document.querySelector("#analytics-departments"),
   analyticsTopDays: document.querySelector("#analytics-top-days"),
   analyticsWorkdays: document.querySelector("#analytics-workdays"),
+  analyticsR2Views: document.querySelector("#analytics-r2-views"),
   historyTableWrapper: document.querySelector("#history-table-wrapper"),
   historyDeleteAll: document.querySelector("#history-delete-all"),
   adminForm: document.querySelector("#admin-form"),
@@ -126,6 +129,7 @@ const elements = {
   importUpload: document.querySelector("#import-upload"),
   downloadTemplate: document.querySelector("#download-template"),
   removeUpload: document.querySelector("#remove-upload"),
+  r2BaseUpload: document.querySelector("#r2-base-upload"),
   systemMaintenancePanel: document.querySelector("#system-maintenance-panel"),
   maintenanceStatusText: document.querySelector("#maintenance-status-text"),
   maintenanceToggleButton: document.querySelector("#maintenance-toggle-button"),
@@ -207,6 +211,7 @@ function bindEvents() {
   elements.importUpload?.addEventListener("click", () => void handleSpreadsheetUpload());
   elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
   elements.removeUpload?.addEventListener("click", () => void handleSpreadsheetRemoval());
+  elements.r2BaseUpload?.addEventListener("click", () => void handleR2BaseUpload());
   elements.analyticsClearFilters?.addEventListener("click", handleAnalyticsClearFilters);
   elements.analyticsAttendantSearch?.addEventListener("input", handleAnalyticsAttendantSearchInput);
   elements.analyticsDateList?.addEventListener("change", handleAnalyticsDateChange);
@@ -345,6 +350,7 @@ async function hydratePortal(options = {}) {
     }
 
     await loadMyResults();
+    await loadR2Insights();
     if (canManage()) {
       await loadOperators();
       await loadOperationRecords();
@@ -389,6 +395,15 @@ async function loadOperationRecords() {
 async function loadMyResults() {
   const payload = await fetchJson(`${REMOTE_API_BASE}/results?userId=${encodeURIComponent(state.session.id)}`);
   state.myRecord = normalizeRecord(payload.record);
+}
+
+async function loadR2Insights() {
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/r2-insights`);
+    state.r2Insights = payload?.views || null;
+  } catch {
+    state.r2Insights = null;
+  }
 }
 
 async function loadOperators() {
@@ -503,6 +518,11 @@ async function handleAdminSave(event) {
         userName: selectedUser.name || "",
         username: selectedUser.username || "",
         date,
+        operationType: operation,
+        approvedCount: approved,
+        reprovedCount: reproved,
+        pendingCount: operation === "0800" ? pending : 0,
+        noActionCount: noAction,
         productionTotal,
         effectiveness,
         qualityScore,
@@ -544,6 +564,7 @@ async function handleSpreadsheetUpload() {
   if (elements.uploadFile) elements.uploadFile.disabled = true;
   if (elements.importUpload) elements.importUpload.disabled = true;
   if (elements.removeUpload) elements.removeUpload.disabled = true;
+  if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
   setUploadStatus("Importando planilha em segundo plano. Voce pode continuar navegando no portal.", "loading");
 
   try {
@@ -614,6 +635,7 @@ async function handleSpreadsheetUpload() {
     if (elements.uploadFile) elements.uploadFile.disabled = false;
     if (elements.importUpload) elements.importUpload.disabled = false;
     if (elements.removeUpload) elements.removeUpload.disabled = false;
+    if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
     window.setTimeout(() => {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
@@ -637,13 +659,14 @@ async function handleSpreadsheetRemoval() {
     return;
   }
 
-  const confirmed = window.confirm("Deseja remover os lancamentos desta planilha? A exclusao sera feita por Operador + Data.");
+  const confirmed = window.confirm("Deseja remover os lancamentos desta planilha? A exclusao sera feita por Operador + Data + Operacao.");
   if (!confirmed) return;
 
   state.importInProgress = true;
   if (elements.uploadFile) elements.uploadFile.disabled = true;
   if (elements.importUpload) elements.importUpload.disabled = true;
   if (elements.removeUpload) elements.removeUpload.disabled = true;
+  if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
   setUploadStatus("Removendo carga da planilha. Voce pode continuar navegando.", "loading");
 
   try {
@@ -652,7 +675,10 @@ async function handleSpreadsheetRemoval() {
       totalRows,
       unmatchedOperatorCount,
       invalidDateCount
-    } = await parseSpreadsheetImportFile(file, { forRemoval: true });
+    } = await parseSpreadsheetImportFile(file, {
+      forRemoval: true,
+      importOperation: getSelectedImportOperation()
+    });
 
     if (!importItems.length) {
       throw new Error(
@@ -696,6 +722,86 @@ async function handleSpreadsheetRemoval() {
     if (elements.uploadFile) elements.uploadFile.disabled = false;
     if (elements.importUpload) elements.importUpload.disabled = false;
     if (elements.removeUpload) elements.removeUpload.disabled = false;
+    if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
+    window.setTimeout(() => {
+      if (!state.importInProgress) setUploadStatus("");
+    }, 8000);
+  }
+}
+
+async function handleR2BaseUpload() {
+  if (!canManage()) return;
+  if (state.importInProgress) {
+    window.alert("Ja existe uma operacao em andamento. Aguarde para enviar a base para o R2.");
+    return;
+  }
+
+  const file = elements.uploadFile?.files?.[0];
+  if (!file) {
+    window.alert("Selecione a planilha base (.csv) para enviar ao R2.");
+    return;
+  }
+
+  const isCsv = String(file.name || "").toLowerCase().endsWith(".csv") || String(file.type || "").toLowerCase().includes("csv");
+  if (!isCsv) {
+    window.alert("Para base do R2, envie um arquivo .csv.");
+    return;
+  }
+
+  const maxFileBytes = 250 * 1024 * 1024;
+  if (Number(file.size || 0) > maxFileBytes) {
+    window.alert("Arquivo acima de 250MB. Divida a base antes de enviar.");
+    return;
+  }
+
+  const operation = getSelectedImportOperation();
+  const operationLabel = operation === "0800" ? "0800" : "Nuvidio";
+
+  state.importInProgress = true;
+  if (elements.uploadFile) elements.uploadFile.disabled = true;
+  if (elements.importUpload) elements.importUpload.disabled = true;
+  if (elements.removeUpload) elements.removeUpload.disabled = true;
+  if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
+  setUploadStatus(`Enviando base ${operationLabel} para o R2...`, "loading");
+
+  try {
+    const payload = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload`, {
+      method: "POST",
+      headers: {
+        "content-type": file.type || "text/csv",
+        "x-file-name": file.name || "base.csv",
+        "x-operation-type": operation
+      },
+      body: file,
+      timeoutMs: 60 * 60 * 1000
+    });
+
+    const key = String(payload?.key || "");
+    setUploadStatus(`Base ${operationLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
+    window.alert(
+      `Upload para R2 concluido.\n` +
+      `- Operacao: ${operationLabel}\n` +
+      `- Arquivo: ${file.name}\n` +
+      `- Tamanho: ${formatFileSize(file.size)}\n` +
+      `- Chave R2: ${key || "n/d"}`
+    );
+    await loadR2Insights();
+    renderDashboardAnalytics();
+  } catch (error) {
+    const message = String(error?.message || "Falha ao enviar base para o R2.");
+    if (message.includes("413")) {
+      setUploadStatus("Falha 413: o plano Cloudflare bloqueou o tamanho da requisicao.", "error");
+      window.alert("Upload recusado (413 - Request too large). O limite depende do plano Cloudflare da conta.");
+    } else {
+      setUploadStatus(message, "error");
+      window.alert(message);
+    }
+  } finally {
+    state.importInProgress = false;
+    if (elements.uploadFile) elements.uploadFile.disabled = false;
+    if (elements.importUpload) elements.importUpload.disabled = false;
+    if (elements.removeUpload) elements.removeUpload.disabled = false;
+    if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
     window.setTimeout(() => {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
@@ -825,22 +931,6 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       continue;
     }
 
-    const baseItem = {
-      userId: operator.id,
-      userName: operator.name || "",
-      username: operator.username || "",
-      date
-    };
-    const uniqueKey = `${baseItem.userId}__${baseItem.date}`;
-    if (uniqueKeys.has(uniqueKey)) continue;
-    uniqueKeys.add(uniqueKey);
-
-    if (options.forRemoval) {
-      importItems.push(baseItem);
-      continue;
-    }
-
-    const existing = existingEntries.get(uniqueKey) || null;
     const operationFromSheet = idxOperation >= 0 ? String(row[idxOperation] || "") : selectedOperation;
     const approvedFromSheet = idxApproved >= 0 ? parseMetricInput(row[idxApproved]) : NaN;
     const reprovedFromSheet = idxReproved >= 0 ? parseMetricInput(row[idxReproved]) : NaN;
@@ -858,6 +948,23 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       Number.isFinite(reprovedFromSheet) &&
       Number.isFinite(noActionFromSheet) &&
       (computedFromCounts.operation === "0800" ? Number.isFinite(pendingFromSheet) : true);
+    const operationType = computedFromCounts.operation;
+    const baseItem = {
+      userId: operator.id,
+      userName: operator.name || "",
+      username: operator.username || "",
+      date,
+      operationType
+    };
+    const uniqueKey = buildImportEntryKey(baseItem.userId, baseItem.date, operationType);
+    if (uniqueKeys.has(uniqueKey)) continue;
+    uniqueKeys.add(uniqueKey);
+
+    if (options.forRemoval) {
+      importItems.push(baseItem);
+      continue;
+    }
+    const existing = existingEntries.get(uniqueKey) || null;
 
     const productionFromSheet = idxProduction >= 0 ? parseMetricInput(row[idxProduction]) : NaN;
     const productionFromComputed = hasCountsForCalculation ? computedFromCounts.total : NaN;
@@ -884,6 +991,19 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       parsedValue: qualityFromSheet,
       existingValue: Number(existing?.qualityScore)
     });
+    const approvedCount = Number.isFinite(approvedFromSheet)
+      ? approvedFromSheet
+      : (Number.isFinite(Number(existing?.approvedCount)) ? Number(existing?.approvedCount) : 0);
+    const reprovedCount = Number.isFinite(reprovedFromSheet)
+      ? reprovedFromSheet
+      : (Number.isFinite(Number(existing?.reprovedCount)) ? Number(existing?.reprovedCount) : 0);
+    const pendingCountRaw = Number.isFinite(pendingFromSheet)
+      ? pendingFromSheet
+      : (Number.isFinite(Number(existing?.pendingCount)) ? Number(existing?.pendingCount) : 0);
+    const noActionCount = Number.isFinite(noActionFromSheet)
+      ? noActionFromSheet
+      : (Number.isFinite(Number(existing?.noActionCount)) ? Number(existing?.noActionCount) : 0);
+    const pendingCount = operationType === "0800" ? pendingCountRaw : 0;
 
     if (!Number.isFinite(effectiveness) || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
       invalidMetricCount += 1;
@@ -895,6 +1015,11 @@ async function parseSpreadsheetImportFile(file, options = {}) {
 
     importItems.push({
       ...baseItem,
+      operationType,
+      approvedCount,
+      reprovedCount,
+      pendingCount,
+      noActionCount,
       productionTotal,
       effectiveness,
       qualityScore,
@@ -1048,6 +1173,11 @@ function updateUploadModeHelp() {
   elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador, Usuario, Usuario Nuvidio ou Usuario 0800, Data e ${templateColumns.join(", ")}. As metricas nao marcadas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
 }
 
+function buildImportEntryKey(userId, date, operationType) {
+  const operation = normalizeOperationType(operationType || "", "nuvidio");
+  return `${String(userId || "").trim()}__${String(date || "").trim()}__${operation}`;
+}
+
 function buildExistingEntriesLookup() {
   const lookup = new Map();
   const records = [...(state.operationRecords || [])];
@@ -1060,10 +1190,15 @@ function buildExistingEntriesLookup() {
     (record?.entries || []).forEach((entry) => {
       const date = normalizeDateKey(entry?.date);
       if (!date) return;
-      lookup.set(`${userId}__${date}`, {
+      const operationType = normalizeOperationType(entry?.operationType || "", "nuvidio");
+      lookup.set(buildImportEntryKey(userId, date, operationType), {
         productionTotal: Number(entry?.productionTotal),
         effectiveness: Number(entry?.effectiveness),
-        qualityScore: Number(entry?.qualityScore)
+        qualityScore: Number(entry?.qualityScore),
+        approvedCount: Number(entry?.approvedCount),
+        reprovedCount: Number(entry?.reprovedCount),
+        pendingCount: Number(entry?.pendingCount),
+        noActionCount: Number(entry?.noActionCount)
       });
     });
   });
@@ -1217,6 +1352,7 @@ function renderDashboardAnalytics() {
     elements.analyticsConsistency.innerHTML = "";
     elements.analyticsPerformanceBands.innerHTML = "";
     elements.analyticsDailyBars.innerHTML = "";
+    if (elements.analyticsLanes) elements.analyticsLanes.innerHTML = "";
     elements.analyticsTagsBars.innerHTML = "";
     elements.analyticsDepartments.innerHTML = "";
     elements.analyticsTopDays.innerHTML = "";
@@ -1249,9 +1385,11 @@ function renderDashboardAnalytics() {
   elements.analyticsConsistency.innerHTML = buildAnalyticsConsistencyCards(filtered);
   elements.analyticsPerformanceBands.innerHTML = buildAnalyticsPerformanceBands(filtered);
   elements.analyticsDailyBars.innerHTML = buildAnalyticsDailyBars(filtered);
+  if (elements.analyticsLanes) elements.analyticsLanes.innerHTML = buildAnalyticsLanesCards(filtered);
   elements.analyticsTagsBars.innerHTML = buildAnalyticsThreeBars(totalProposals, avgEffectiveness, avgQuality, latest);
   elements.analyticsDepartments.innerHTML = buildAnalyticsTrendPanel(filtered, filtered.length);
   elements.analyticsTopDays.innerHTML = buildAnalyticsTopDays(filtered);
+  if (elements.analyticsR2Views) elements.analyticsR2Views.innerHTML = buildAnalyticsR2Views(state.r2Insights);
   elements.analyticsWorkdays.innerHTML = "";
 }
 
@@ -1341,6 +1479,7 @@ function getAnalyticsSourceEntries() {
   if (!canManage()) {
     return (state.myRecord?.entries || []).map((entry) => ({
       ...entry,
+      operationType: normalizeOperationType(entry?.operationType || "", ""),
       userId: state.session?.id || "",
       userName: state.session?.name || "",
       username: state.session?.username || ""
@@ -1352,6 +1491,7 @@ function getAnalyticsSourceEntries() {
     for (const entry of record?.entries || []) {
       all.push({
         ...entry,
+        operationType: normalizeOperationType(entry?.operationType || "", ""),
         userId: record.userId || "",
         userName: record.userName || "",
         username: record.username || ""
@@ -1359,6 +1499,149 @@ function getAnalyticsSourceEntries() {
     }
   }
   return all;
+}
+
+function buildAnalyticsLanesCards(entries) {
+  const lanes = [
+    { key: "nuvidio", label: "Nuvidio" },
+    { key: "0800", label: "0800" }
+  ];
+
+  return lanes.map((lane) => {
+    const laneEntries = (entries || []).filter((entry) => normalizeOperationType(entry?.operationType || "", "") === lane.key);
+    const rowsByDate = buildStatusSeriesByDate(laneEntries, lane.key);
+
+    return `
+      <article class="analytics-lane-card">
+        <div class="analytics-lane-head">
+          <p class="chart-title">${escapeHtml(lane.label)}</p>
+          <p class="analytics-lane-subtitle">Status por dia</p>
+        </div>
+        ${laneEntries.length ? `
+          ${buildStatusLegend(lane.key)}
+          ${buildStatusLineChart(rowsByDate, lane.key)}
+        ` : `<p class="analytics-empty">Sem lancamentos nesta esteira.</p>`}
+      </article>
+    `;
+  }).join("");
+}
+
+function buildStatusSeriesByDate(entries, laneKey) {
+  const map = new Map();
+  (entries || []).forEach((entry) => {
+    const date = normalizeDateKey(entry?.date);
+    if (!date) return;
+    if (!map.has(date)) {
+      map.set(date, {
+        date,
+        approved: 0,
+        reproved: 0,
+        pending: 0,
+        noAction: 0
+      });
+    }
+    const row = map.get(date);
+    row.approved += Number(entry?.approvedCount || 0);
+    row.reproved += Number(entry?.reprovedCount || 0);
+    row.noAction += Number(entry?.noActionCount || 0);
+    if (laneKey === "0800") {
+      row.pending += Number(entry?.pendingCount || 0);
+    }
+  });
+  return [...map.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function buildStatusLegend(laneKey) {
+  const items = [
+    { label: "Aprovadas", color: "#24d980" },
+    { label: "Reprovadas", color: "#ff6b6b" },
+    { label: "Sem acao", color: "#ffd166" }
+  ];
+  if (laneKey === "0800") {
+    items.push({ label: "Pendenciadas", color: "#8fa7c3" });
+  }
+
+  return `
+    <div class="status-chart-legend">
+      ${items.map((item) => `
+        <span>
+          <i style="--dot:${item.color};"></i>
+          ${escapeHtml(item.label)}
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function buildStatusLineChart(rows, laneKey) {
+  if (!rows.length) return `<p class="analytics-empty">Sem dados para exibir o grafico.</p>`;
+
+  const series = [
+    { key: "approved", color: "#24d980" },
+    { key: "reproved", color: "#ff6b6b" },
+    { key: "noAction", color: "#ffd166" }
+  ];
+  if (laneKey === "0800") {
+    series.push({ key: "pending", color: "#8fa7c3" });
+  }
+
+  const width = Math.max(620, (Math.max(rows.length, 2) - 1) * 84 + 94);
+  const height = 220;
+  const padLeft = 16;
+  const padRight = 16;
+  const padTop = 18;
+  const padBottom = 34;
+  const innerW = width - padLeft - padRight;
+  const innerH = height - padTop - padBottom;
+  const denom = Math.max(rows.length - 1, 1);
+  const maxValue = Math.max(
+    1,
+    ...rows.flatMap((row) => series.map((item) => Number(row?.[item.key] || 0)))
+  );
+  const isScrollable = rows.length > 9;
+  const xLabelStep = rows.length > 18 ? 3 : rows.length > 10 ? 2 : 1;
+
+  const seriesPaths = series.map((item) => {
+    const points = rows.map((row, index) => {
+      const value = Number(row?.[item.key] || 0);
+      const x = padLeft + (innerW * index) / denom;
+      const ratio = value / maxValue;
+      const y = padTop + innerH - (ratio * innerH);
+      return { x, y, value };
+    });
+    return {
+      color: item.color,
+      points,
+      polyline: points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ")
+    };
+  });
+
+  return `
+    <div class="status-line-chart-scroll${isScrollable ? " is-scrollable" : ""}">
+      <svg
+        class="status-line-chart-svg"
+        viewBox="0 0 ${width} ${height}"
+        style="${isScrollable ? `width:${width}px;height:${height}px;` : `width:100%;height:${height}px;`}"
+        preserveAspectRatio="xMinYMin meet"
+        role="img"
+        aria-label="Grafico de status por dia"
+      >
+        <path d="M ${padLeft} ${height - padBottom} L ${width - padRight} ${height - padBottom}" class="trend-axis"></path>
+        ${seriesPaths.map((item) => `
+          <polyline points="${item.polyline}" fill="none" stroke="${item.color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        `).join("")}
+        ${seriesPaths.map((item) => item.points.map((point) => `
+          <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.1" fill="${item.color}"></circle>
+        `).join("")).join("")}
+        ${rows.map((row, index) => {
+          const showXLabel = index === 0 || index === rows.length - 1 || index % xLabelStep === 0;
+          if (!showXLabel) return "";
+          const x = padLeft + (innerW * index) / denom;
+          return `<text x="${x.toFixed(2)}" y="${(height - 10).toFixed(2)}" class="trend-x-label" text-anchor="middle">${escapeHtml(shortDate(row.date))}</text>`;
+        }).join("")}
+      </svg>
+    </div>
+  `;
 }
 
 function buildAnalyticsKpi(label, value) {
@@ -1798,6 +2081,84 @@ function buildAnalyticsTopDays(entries) {
           <div class="analytics-top-day-score">${escapeHtml(formatMetric(entry.score, "%"))}</div>
         </article>
       `).join("")}
+    </div>
+  `;
+}
+
+function buildAnalyticsR2Views(views) {
+  if (!views || (typeof views !== "object")) {
+    return `<p class="analytics-empty">Nao foi possivel carregar as visoes da base R2 no momento.</p>`;
+  }
+
+  const nuvidio = views?.nuvidio || {};
+  const line0800 = views?.line0800 || views?.["0800"] || {};
+
+  return `
+    <div class="r2-views-grid">
+      <article class="r2-view-card">
+        <div class="r2-view-head">
+          <p class="chart-title">Nuvidio</p>
+          <strong>${escapeHtml(formatMetric(nuvidio.totalAtendimentos || 0))}</strong>
+          <span>Total de atendimentos</span>
+        </div>
+        <div class="r2-kpi-row">
+          ${buildR2Kpi("Aprovadas", nuvidio?.statuses?.aprovadas || 0)}
+          ${buildR2Kpi("Reprovadas", nuvidio?.statuses?.reprovadas || 0)}
+          ${buildR2Kpi("Sem acao", nuvidio?.statuses?.semAcao || 0)}
+          ${buildR2Kpi("TMA medio", formatMetric(nuvidio.avgTmaSeconds || 0, "s"))}
+        </div>
+        ${buildR2TopList("Top subtags", nuvidio.topSubtags)}
+        ${buildR2TopList("Top atendentes", nuvidio.topAtendentes, {
+    formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`
+  })}
+      </article>
+
+      <article class="r2-view-card">
+        <div class="r2-view-head">
+          <p class="chart-title">0800</p>
+          <strong>${escapeHtml(formatMetric(line0800.totalOcorrencias || 0))}</strong>
+          <span>Total de ocorrencias</span>
+        </div>
+        <div class="r2-kpi-row">
+          ${buildR2Kpi("Aprovadas", line0800?.statuses?.aprovadas || 0)}
+          ${buildR2Kpi("Reprovadas", line0800?.statuses?.reprovadas || 0)}
+          ${buildR2Kpi("Pendenciadas", line0800?.statuses?.pendenciadas || 0)}
+          ${buildR2Kpi("Sem acao", line0800?.statuses?.semAcao || 0)}
+          ${buildR2Kpi("FCR (Sim)", formatMetric(line0800?.fcrSimRate || 0, "%"))}
+          ${buildR2Kpi("Dias resolucao", formatMetric(line0800?.avgResolutionDays || 0))}
+        </div>
+        ${buildR2TopList("Top sub-motivos", line0800.topSubMotivos)}
+        ${buildR2TopList("Top analistas", line0800.topAnalistas, {
+    formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`
+  })}
+      </article>
+    </div>
+  `;
+}
+
+function buildR2Kpi(label, value) {
+  return `
+    <div class="r2-kpi-pill">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </div>
+  `;
+}
+
+function buildR2TopList(title, items, options = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const formatter = typeof options.formatter === "function"
+    ? options.formatter
+    : ((item) => `${item?.label || "-"} (${formatMetric(item?.count || 0)})`);
+
+  return `
+    <div class="r2-top-block">
+      <p>${escapeHtml(title)}</p>
+      ${list.length ? `
+        <ul>
+          ${list.slice(0, 5).map((item) => `<li>${escapeHtml(formatter(item))}</li>`).join("")}
+        </ul>
+      ` : `<span class="analytics-empty">Sem dados</span>`}
     </div>
   `;
 }
@@ -2490,7 +2851,7 @@ async function fetchJson(url, options = {}) {
     const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
     const payload = await response.json().catch(() => null);
     if (!response.ok || payload?.ok === false) {
-      throw new Error(payload?.error || "Falha na comunicacao com a API.");
+      throw new Error(payload?.error || `Falha na comunicacao com a API (${response.status}).`);
     }
     return payload;
   } catch (error) {
@@ -2515,6 +2876,11 @@ function normalizeRecord(record) {
     }
     return {
       date,
+      operationType: normalizeOperationType(entry?.operationType || "", ""),
+      approvedCount: Number.isFinite(Number(entry?.approvedCount)) ? Number(entry?.approvedCount) : 0,
+      reprovedCount: Number.isFinite(Number(entry?.reprovedCount)) ? Number(entry?.reprovedCount) : 0,
+      pendingCount: Number.isFinite(Number(entry?.pendingCount)) ? Number(entry?.pendingCount) : 0,
+      noActionCount: Number.isFinite(Number(entry?.noActionCount)) ? Number(entry?.noActionCount) : 0,
       productionTotal,
       effectiveness,
       qualityScore,
@@ -2993,11 +3359,11 @@ function parseMetricInput(value, options = {}) {
   return numeric;
 }
 
-function normalizeOperationType(value) {
+function normalizeOperationType(value, fallback = "nuvidio") {
   const text = normalizeLooseText(value);
   if (text.includes("0800")) return "0800";
   if (text.includes("nuvidio")) return "nuvidio";
-  return "nuvidio";
+  return fallback;
 }
 
 function calculateDailyTotalsByOperation({ operation, approved, reproved, pending, noAction }) {
@@ -3165,6 +3531,19 @@ function formatMetric(value, suffix = "") {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2
   }).format(value)}${suffix}`;
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(size)} ${units[unitIndex]}`;
 }
 
 function formatDuration(totalSeconds) {

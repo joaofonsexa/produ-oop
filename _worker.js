@@ -27,6 +27,10 @@ function safeFileName(name) {
   return String(name || "import.xlsx").replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function sanitizeOperationType(value) {
+  return String(value || "").trim().toLowerCase() === "0800" ? "0800" : "nuvidio";
+}
+
 function getAuthBase(env) {
   return String(env.AUTH_API_BASE || env.CENTRAL_AUTH_BASE || "").trim().replace(/\/+$/, "");
 }
@@ -121,6 +125,77 @@ function normalizeDateKey(value) {
   return "";
 }
 
+function normalizeOperationType(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "0800") return "0800";
+  if (raw === "nuvidio") return "nuvidio";
+  return "nuvidio";
+}
+
+async function migrateResultsTableToOperationGranularity(db) {
+  const schema = await db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operator_results_daily' LIMIT 1")
+    .first();
+  const tableSql = String(schema?.sql || "");
+  const usesOldUnique = tableSql.includes("UNIQUE(user_id, result_date)") && !tableSql.includes("UNIQUE(user_id, result_date, operation_type)");
+  if (!usesOldUnique) return;
+
+  await db.prepare("DROP TABLE IF EXISTS operator_results_daily_v2").run();
+  await db.prepare(
+    `CREATE TABLE operator_results_daily_v2 (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      user_name TEXT NOT NULL DEFAULT '',
+      username TEXT NOT NULL DEFAULT '',
+      result_date TEXT NOT NULL,
+      operation_type TEXT NOT NULL DEFAULT '',
+      approved_count REAL NOT NULL DEFAULT 0,
+      reproved_count REAL NOT NULL DEFAULT 0,
+      pending_count REAL NOT NULL DEFAULT 0,
+      no_action_count REAL NOT NULL DEFAULT 0,
+      production_total REAL NOT NULL DEFAULT 0,
+      effectiveness REAL NOT NULL DEFAULT 0,
+      quality_score REAL NOT NULL DEFAULT 0,
+      updated_by_id TEXT NOT NULL DEFAULT '',
+      updated_by_name TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, result_date, operation_type)
+    )`
+  ).run();
+
+  await db.prepare(
+    `INSERT INTO operator_results_daily_v2 (
+      id, user_id, user_name, username, result_date, operation_type,
+      approved_count, reproved_count, pending_count, no_action_count,
+      production_total, effectiveness, quality_score,
+      updated_by_id, updated_by_name, updated_at, created_at
+    )
+    SELECT
+      (user_id || '__' || result_date || '__' || lower(CASE WHEN trim(operation_type) = '' THEN 'nuvidio' ELSE operation_type END)) AS id,
+      user_id,
+      user_name,
+      username,
+      result_date,
+      lower(CASE WHEN trim(operation_type) = '' THEN 'nuvidio' ELSE operation_type END) AS operation_type,
+      COALESCE(approved_count, 0),
+      COALESCE(reproved_count, 0),
+      COALESCE(pending_count, 0),
+      COALESCE(no_action_count, 0),
+      COALESCE(production_total, 0),
+      COALESCE(effectiveness, 0),
+      COALESCE(quality_score, 0),
+      COALESCE(updated_by_id, ''),
+      COALESCE(updated_by_name, ''),
+      COALESCE(updated_at, datetime('now')),
+      COALESCE(created_at, datetime('now'))
+    FROM operator_results_daily`
+  ).run();
+
+  await db.prepare("DROP TABLE operator_results_daily").run();
+  await db.prepare("ALTER TABLE operator_results_daily_v2 RENAME TO operator_results_daily").run();
+}
+
 async function ensureResultsTable(db) {
   await db.prepare(
     `CREATE TABLE IF NOT EXISTS operator_results_daily (
@@ -129,6 +204,11 @@ async function ensureResultsTable(db) {
       user_name TEXT NOT NULL DEFAULT '',
       username TEXT NOT NULL DEFAULT '',
       result_date TEXT NOT NULL,
+      operation_type TEXT NOT NULL DEFAULT '',
+      approved_count REAL NOT NULL DEFAULT 0,
+      reproved_count REAL NOT NULL DEFAULT 0,
+      pending_count REAL NOT NULL DEFAULT 0,
+      no_action_count REAL NOT NULL DEFAULT 0,
       production_total REAL NOT NULL DEFAULT 0,
       effectiveness REAL NOT NULL DEFAULT 0,
       quality_score REAL NOT NULL DEFAULT 0,
@@ -136,9 +216,25 @@ async function ensureResultsTable(db) {
       updated_by_name TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(user_id, result_date)
+      UNIQUE(user_id, result_date, operation_type)
     )`
   ).run();
+  try {
+    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN operation_type TEXT NOT NULL DEFAULT ''").run();
+  } catch {}
+  try {
+    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN approved_count REAL NOT NULL DEFAULT 0").run();
+  } catch {}
+  try {
+    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN reproved_count REAL NOT NULL DEFAULT 0").run();
+  } catch {}
+  try {
+    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN pending_count REAL NOT NULL DEFAULT 0").run();
+  } catch {}
+  try {
+    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN no_action_count REAL NOT NULL DEFAULT 0").run();
+  } catch {}
+  await migrateResultsTableToOperationGranularity(db);
 }
 
 async function ensureSsoReplayTable(db) {
@@ -236,6 +332,11 @@ async function markSsoTokenAsConsumed(db, jti, expSeconds) {
 function buildRecord(userId, rows) {
   const entries = (rows || []).map((row) => ({
     date: row.result_date,
+    operationType: String(row.operation_type || ""),
+    approvedCount: Number(row.approved_count || 0),
+    reprovedCount: Number(row.reproved_count || 0),
+    pendingCount: Number(row.pending_count || 0),
+    noActionCount: Number(row.no_action_count || 0),
     productionTotal: Number(row.production_total || 0),
     effectiveness: Number(row.effectiveness || 0),
     qualityScore: Number(row.quality_score || 0),
@@ -345,25 +446,46 @@ async function upsertOperatorResult(db, payload) {
   const userName = String(payload?.userName || "").trim();
   const username = String(payload?.username || "").trim();
   const date = normalizeDateKey(payload?.date);
+  const operationType = normalizeOperationType(payload?.operationType);
+  const approvedCount = Number(payload?.approvedCount ?? 0);
+  const reprovedCount = Number(payload?.reprovedCount ?? 0);
+  const pendingCount = Number(payload?.pendingCount ?? 0);
+  const noActionCount = Number(payload?.noActionCount ?? 0);
   const productionTotal = Number(payload?.productionTotal);
   const effectiveness = Number(payload?.effectiveness);
   const qualityScore = Number(payload?.qualityScore);
   const updatedById = String(payload?.updatedById || "").trim();
   const updatedByName = String(payload?.updatedByName || "").trim();
 
-  if (!userId || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
+  if (
+    !userId ||
+    !date ||
+    !Number.isFinite(productionTotal) ||
+    !Number.isFinite(effectiveness) ||
+    !Number.isFinite(qualityScore) ||
+    !Number.isFinite(approvedCount) ||
+    !Number.isFinite(reprovedCount) ||
+    !Number.isFinite(pendingCount) ||
+    !Number.isFinite(noActionCount)
+  ) {
     return { ok: false, error: "Payload invalido para resultado do operador." };
   }
 
   await ensureResultsTable(db);
   await db.prepare(
     `INSERT INTO operator_results_daily (
-      id, user_id, user_name, username, result_date, production_total, effectiveness, quality_score,
+      id, user_id, user_name, username, result_date, operation_type,
+      approved_count, reproved_count, pending_count, no_action_count,
+      production_total, effectiveness, quality_score,
       updated_by_id, updated_by_name, updated_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(user_id, result_date) DO UPDATE SET
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(user_id, result_date, operation_type) DO UPDATE SET
       user_name = excluded.user_name,
       username = excluded.username,
+      approved_count = excluded.approved_count,
+      reproved_count = excluded.reproved_count,
+      pending_count = excluded.pending_count,
+      no_action_count = excluded.no_action_count,
       production_total = excluded.production_total,
       effectiveness = excluded.effectiveness,
       quality_score = excluded.quality_score,
@@ -372,11 +494,16 @@ async function upsertOperatorResult(db, payload) {
       updated_at = excluded.updated_at`
   )
     .bind(
-      `${userId}__${date}`,
+      `${userId}__${date}__${operationType}`,
       userId,
       userName,
       username,
       date,
+      operationType,
+      approvedCount,
+      reprovedCount,
+      pendingCount,
+      noActionCount,
       productionTotal,
       effectiveness,
       qualityScore,
@@ -392,15 +519,22 @@ async function upsertOperatorResult(db, payload) {
 async function deleteOperatorResult(db, payload) {
   const userId = String(payload?.userId || "").trim();
   const date = normalizeDateKey(payload?.date);
+  const operationTypeRaw = String(payload?.operationType || "").trim();
+  const operationType = operationTypeRaw ? normalizeOperationType(operationTypeRaw) : "";
   if (!userId || !date) {
     return { ok: false, error: "Informe userId e date para excluir o lancamento." };
   }
 
   await ensureResultsTable(db);
-  const result = await db
-    .prepare("DELETE FROM operator_results_daily WHERE user_id = ? AND result_date = ?")
-    .bind(userId, date)
-    .run();
+  const result = operationType
+    ? await db
+      .prepare("DELETE FROM operator_results_daily WHERE user_id = ? AND result_date = ? AND operation_type = ?")
+      .bind(userId, date, operationType)
+      .run()
+    : await db
+      .prepare("DELETE FROM operator_results_daily WHERE user_id = ? AND result_date = ?")
+      .bind(userId, date)
+      .run();
 
   const deleted = Number(result?.meta?.changes || 0);
   if (!deleted) {
@@ -438,6 +572,273 @@ async function readAllRecords(db) {
     if (record) records.push(record);
   }
   return records;
+}
+
+function normalizeCsvText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function parseCsvSemicolon(content) {
+  const source = String(content || "").replace(/^\uFEFF/, "");
+  const lines = source.split(/\r?\n/).filter((line) => line.trim().length);
+  if (!lines.length) return [];
+
+  const parseLine = (line) => {
+    const out = [];
+    let current = "";
+    let quoted = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === "\"") {
+        const next = line[i + 1];
+        if (quoted && next === "\"") {
+          current += "\"";
+          i += 1;
+          continue;
+        }
+        quoted = !quoted;
+        continue;
+      }
+      if (char === ";" && !quoted) {
+        out.push(current);
+        current = "";
+        continue;
+      }
+      current += char;
+    }
+    out.push(current);
+    return out.map((part) => String(part || "").trim());
+  };
+
+  const header = parseLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const cells = parseLine(lines[i]);
+    if (!cells.length) continue;
+    const row = {};
+    for (let col = 0; col < header.length; col += 1) {
+      row[header[col]] = String(cells[col] || "").trim();
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function getRowValueByHeader(row, aliases = []) {
+  const keys = Object.keys(row || {});
+  for (const alias of aliases) {
+    const normAlias = normalizeCsvText(alias);
+    const found = keys.find((key) => normalizeCsvText(key) === normAlias);
+    if (found) return String(row[found] || "").trim();
+  }
+  return "";
+}
+
+function parseNumberLoose(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return NaN;
+  const normalized = raw.replace(/\./g, "").replace(",", ".");
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : NaN;
+}
+
+function parseDurationSeconds(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return NaN;
+  if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  const match = raw.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!match) return NaN;
+  const [, h, m, s] = match;
+  return (Number(h) * 3600) + (Number(m) * 60) + Number(s);
+}
+
+function normalizeStatusBucket(value) {
+  const text = normalizeCsvText(value);
+  if (!text) return "semAcao";
+  if (text.includes("aprovad")) return "aprovadas";
+  if (text.includes("reprovad")) return "reprovadas";
+  if (text.includes("pendenc")) return "pendenciadas";
+  if (text.includes("sem acao") || text.includes("semacao")) return "semAcao";
+  return "semAcao";
+}
+
+function pushTopCounter(map, key) {
+  const normalized = String(key || "").trim();
+  if (!normalized) return;
+  map.set(normalized, Number(map.get(normalized) || 0) + 1);
+}
+
+function mapToTopList(counterMap, maxItems = 5) {
+  return [...counterMap.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, maxItems);
+}
+
+function aggregateNuvidio(rows) {
+  const statuses = { aprovadas: 0, reprovadas: 0, semAcao: 0 };
+  const subtags = new Map();
+  const atendentes = new Map();
+  let total = 0;
+  let waitSum = 0;
+  let waitCount = 0;
+  let tmaSum = 0;
+  let tmaCount = 0;
+
+  for (const row of rows) {
+    total += 1;
+    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Tag", "Motivo"]));
+    if (status === "aprovadas") statuses.aprovadas += 1;
+    else if (status === "reprovadas") statuses.reprovadas += 1;
+    else statuses.semAcao += 1;
+
+    const wait = parseNumberLoose(getRowValueByHeader(row, ["Espera em segundos"]));
+    if (Number.isFinite(wait)) {
+      waitSum += wait;
+      waitCount += 1;
+    }
+
+    const tmaRaw = getRowValueByHeader(row, ["Duracao em segundos", "TMA"]);
+    const tma = parseDurationSeconds(tmaRaw);
+    if (Number.isFinite(tma)) {
+      tmaSum += tma;
+      tmaCount += 1;
+    }
+
+    pushTopCounter(subtags, getRowValueByHeader(row, ["Subtag"]));
+    const atendente = getRowValueByHeader(row, ["Atendente"]);
+    if (atendente) {
+      atendentes.set(atendente, Number(atendentes.get(atendente) || 0) + 1);
+    }
+  }
+
+  return {
+    totalAtendimentos: total,
+    statuses,
+    avgWaitSeconds: waitCount ? (waitSum / waitCount) : 0,
+    avgTmaSeconds: tmaCount ? (tmaSum / tmaCount) : 0,
+    topSubtags: mapToTopList(subtags, 5),
+    topAtendentes: [...atendentes.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+  };
+}
+
+function aggregate0800(rows) {
+  const statuses = { aprovadas: 0, reprovadas: 0, pendenciadas: 0, semAcao: 0 };
+  const subMotivos = new Map();
+  const analistas = new Map();
+  let total = 0;
+  let daysSum = 0;
+  let daysCount = 0;
+  let fcrYes = 0;
+  let fcrTotal = 0;
+
+  for (const row of rows) {
+    total += 1;
+    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Motivo", "Tag"]));
+    if (status === "aprovadas") statuses.aprovadas += 1;
+    else if (status === "reprovadas") statuses.reprovadas += 1;
+    else if (status === "pendenciadas") statuses.pendenciadas += 1;
+    else statuses.semAcao += 1;
+
+    const days = parseNumberLoose(getRowValueByHeader(row, ["Dias Para Resolucao", "Dias Para Resolução"]));
+    if (Number.isFinite(days)) {
+      daysSum += days;
+      daysCount += 1;
+    }
+
+    const fcr = normalizeCsvText(getRowValueByHeader(row, ["FCR (Sim / Nao)", "FCR (Sim / Não)", "FCR"]));
+    if (fcr) {
+      fcrTotal += 1;
+      if (fcr.startsWith("sim")) fcrYes += 1;
+    }
+
+    pushTopCounter(subMotivos, getRowValueByHeader(row, ["Sub-Motivo", "Sub Motivo"]));
+    pushTopCounter(analistas, getRowValueByHeader(row, ["Analista", "Usuario de Abertura da Ocorrencia", "Usuário de Abertura da Ocorrência"]));
+  }
+
+  return {
+    totalOcorrencias: total,
+    statuses,
+    avgResolutionDays: daysCount ? (daysSum / daysCount) : 0,
+    fcrSimRate: fcrTotal ? ((fcrYes * 100) / fcrTotal) : 0,
+    topSubMotivos: mapToTopList(subMotivos, 5),
+    topAnalistas: [...analistas.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+  };
+}
+
+async function listAllR2Objects(bucket) {
+  const files = [];
+  let cursor = undefined;
+  let truncated = true;
+  while (truncated) {
+    const page = await bucket.list({ limit: 1000, cursor });
+    files.push(...(page.objects || []));
+    truncated = Boolean(page.truncated);
+    cursor = page.cursor;
+  }
+  return files;
+}
+
+async function resolveR2SourceFiles(bucket) {
+  const objects = await listAllR2Objects(bucket);
+  const pickLatest = (matcher) => {
+    return objects
+      .filter((obj) => matcher(normalizeCsvText(obj.key || "")))
+      .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
+  };
+
+  const line0800 = pickLatest((key) => (
+    key.includes("bases/0800/") ||
+    key.includes("detalhes do protocolo com ocorrencias") ||
+    key.includes("detalhesdoprotocolo")
+  ));
+  const nuvidio = pickLatest((key) => (
+    key.includes("bases/nuvidio/") ||
+    key.includes("todos-atendimentos") ||
+    key.includes("todos atendimentos")
+  ));
+  return { line0800, nuvidio };
+}
+
+async function readCsvFromR2Object(bucket, objectMeta) {
+  if (!objectMeta?.key) return [];
+  const object = await bucket.get(objectMeta.key);
+  if (!object) return [];
+  const content = await object.text();
+  return parseCsvSemicolon(content);
+}
+
+async function buildR2Insights(env) {
+  const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+  if (!bucket) {
+    return { views: null, sources: null };
+  }
+
+  const files = await resolveR2SourceFiles(bucket);
+  const nuvidioRows = await readCsvFromR2Object(bucket, files.nuvidio);
+  const line0800Rows = await readCsvFromR2Object(bucket, files.line0800);
+
+  return {
+    views: {
+      nuvidio: aggregateNuvidio(nuvidioRows),
+      line0800: aggregate0800(line0800Rows)
+    },
+    sources: {
+      nuvidio: files.nuvidio?.key || "",
+      line0800: files.line0800?.key || ""
+    }
+  };
 }
 
 async function verifySsoTokenAndBuildUser(env, requestUrl, token, db) {
@@ -595,6 +996,44 @@ export default {
       if (url.pathname === "/api/results/all" && request.method === "GET") {
         const records = await readAllRecords(env.DB);
         return jsonResponse({ ok: true, records });
+      }
+
+      if (url.pathname === "/api/r2-base-upload" && request.method === "POST") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+
+        const operationType = sanitizeOperationType(
+          request.headers.get("x-operation-type") || url.searchParams.get("operationType") || "nuvidio"
+        );
+        const fileNameRaw = request.headers.get("x-file-name") || url.searchParams.get("fileName") || "base.csv";
+        const fileName = safeFileName(fileNameRaw || "base.csv");
+        const contentType = String(request.headers.get("content-type") || "text/csv").trim() || "text/csv";
+        const key = `bases/${operationType}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+
+        if (!request.body) {
+          return jsonResponse({ ok: false, error: "Arquivo nao enviado no corpo da requisicao." }, 400);
+        }
+
+        await bucket.put(key, request.body, {
+          httpMetadata: { contentType },
+          customMetadata: {
+            source: "portal",
+            operationType
+          }
+        });
+
+        return jsonResponse({
+          ok: true,
+          key,
+          operationType
+        });
+      }
+
+      if (url.pathname === "/api/r2-insights" && request.method === "GET") {
+        const payload = await buildR2Insights(env);
+        return jsonResponse({ ok: true, views: payload.views, sources: payload.sources });
       }
 
       if (url.pathname === "/api/operator-results" && request.method === "POST") {
