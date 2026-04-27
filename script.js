@@ -742,9 +742,14 @@ async function handleR2BaseUpload() {
     return;
   }
 
-  const isCsv = String(file.name || "").toLowerCase().endsWith(".csv") || String(file.type || "").toLowerCase().includes("csv");
-  if (!isCsv) {
-    window.alert("Para base do R2, envie um arquivo .csv.");
+  const lowerName = String(file.name || "").toLowerCase();
+  const isXlsx = lowerName.endsWith(".xlsx");
+  if (!isXlsx) {
+    window.alert("Para base do R2, envie somente arquivo .xlsx.");
+    return;
+  }
+  if (!window.XLSX) {
+    window.alert("Biblioteca de planilha indisponivel no momento.");
     return;
   }
 
@@ -765,25 +770,47 @@ async function handleR2BaseUpload() {
   setUploadStatus(`Enviando base ${operationLabel} para o R2...`, "loading");
 
   try {
-    const payload = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload`, {
+    const sourcePayload = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload`, {
       method: "POST",
       headers: {
-        "content-type": file.type || "text/csv",
-        "x-file-name": file.name || "base.csv",
-        "x-operation-type": operation
+        "content-type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "x-file-name": file.name || "base.xlsx",
+        "x-operation-type": operation,
+        "x-r2-kind": "source"
       },
       body: file,
       timeoutMs: 60 * 60 * 1000
     });
 
-    const key = String(payload?.key || "");
+    const workbookBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(workbookBuffer, { type: "array" });
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    const csvRaw = XLSX.utils.sheet_to_csv(firstSheet, { FS: ";", RS: "\n", blankrows: false });
+    const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
+    const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
+
+    const parsedPayload = await fetchJson(`${REMOTE_API_BASE}/r2-base-upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "text/csv;charset=utf-8",
+        "x-file-name": parsedFileName,
+        "x-operation-type": operation,
+        "x-r2-kind": "parsed"
+      },
+      body: csvBlob,
+      timeoutMs: 60 * 60 * 1000
+    });
+
+    const sourceKey = String(sourcePayload?.key || "");
+    const parsedKey = String(parsedPayload?.key || "");
     setUploadStatus(`Base ${operationLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
     window.alert(
       `Upload para R2 concluido.\n` +
       `- Operacao: ${operationLabel}\n` +
       `- Arquivo: ${file.name}\n` +
       `- Tamanho: ${formatFileSize(file.size)}\n` +
-      `- Chave R2: ${key || "n/d"}`
+      `- Chave R2 (xlsx): ${sourceKey || "n/d"}\n` +
+      `- Chave R2 (parseada): ${parsedKey || "n/d"}`
     );
     await loadR2Insights();
     renderDashboardAnalytics();

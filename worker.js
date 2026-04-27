@@ -31,6 +31,12 @@ function sanitizeOperationType(value) {
   return String(value || "").trim().toLowerCase() === "0800" ? "0800" : "nuvidio";
 }
 
+function sanitizeR2Kind(value) {
+  const kind = String(value || "").trim().toLowerCase();
+  if (kind === "parsed") return "parsed";
+  return "source";
+}
+
 function getAuthBase(env) {
   return String(env.AUTH_API_BASE || env.CENTRAL_AUTH_BASE || "").trim().replace(/\/+$/, "");
 }
@@ -799,11 +805,13 @@ async function resolveR2SourceFiles(bucket) {
   };
 
   const line0800 = pickLatest((key) => (
+    key.includes("bases/0800/parsed/") ||
     key.includes("bases/0800/") ||
     key.includes("detalhes do protocolo com ocorrencias") ||
     key.includes("detalhesdoprotocolo")
   ));
   const nuvidio = pickLatest((key) => (
+    key.includes("bases/nuvidio/parsed/") ||
     key.includes("bases/nuvidio/") ||
     key.includes("todos-atendimentos") ||
     key.includes("todos atendimentos")
@@ -1007,10 +1015,15 @@ export default {
         const operationType = sanitizeOperationType(
           request.headers.get("x-operation-type") || url.searchParams.get("operationType") || "nuvidio"
         );
+        const r2Kind = sanitizeR2Kind(
+          request.headers.get("x-r2-kind") || url.searchParams.get("kind") || "source"
+        );
         const fileNameRaw = request.headers.get("x-file-name") || url.searchParams.get("fileName") || "base.csv";
         const fileName = safeFileName(fileNameRaw || "base.csv");
         const contentType = String(request.headers.get("content-type") || "text/csv").trim() || "text/csv";
-        const key = `bases/${operationType}/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
+        const key = r2Kind === "parsed"
+          ? `bases/${operationType}/parsed/${Date.now()}-${crypto.randomUUID()}-${fileName}`
+          : `bases/${operationType}/source/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
 
         if (!request.body) {
           return jsonResponse({ ok: false, error: "Arquivo nao enviado no corpo da requisicao." }, 400);
@@ -1020,14 +1033,16 @@ export default {
           httpMetadata: { contentType },
           customMetadata: {
             source: "portal",
-            operationType
+            operationType,
+            kind: r2Kind
           }
         });
 
         return jsonResponse({
           ok: true,
           key,
-          operationType
+          operationType,
+          kind: r2Kind
         });
       }
 
