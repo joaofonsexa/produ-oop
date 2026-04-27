@@ -257,6 +257,8 @@ function sanitizeUser(user) {
     user?.usuarioNuvidio ??
     user?.usernameNuvidio ??
     user?.nuvidio_user ??
+    user?.nuvidio_login ??
+    user?.usuario_nuvidio ??
     ""
   ).trim();
   const line0800Username = String(
@@ -265,6 +267,8 @@ function sanitizeUser(user) {
     user?.username0800 ??
     user?.["0800Username"] ??
     user?.["0800_user"] ??
+    user?.["0800_login"] ??
+    user?.usuario_0800 ??
     ""
   ).trim();
   return {

@@ -438,7 +438,7 @@
               </div>
 
               <div class="form-grid">
-                <label>
+                <label id="admin-pending-wrap">
                   <span>Pendenciadas (0800)</span>
                   <input id="admin-pending" type="number" min="0" step="1" placeholder="Ex.: 8">
                 </label>
@@ -483,6 +483,13 @@
             </div>
 
             <form id="admin-upload-form" class="admin-form">
+              <label>
+                <span>Operacao da planilha</span>
+                <select id="upload-operation">
+                  <option value="nuvidio">Nuvidio</option>
+                  <option value="0800">0800</option>
+                </select>
+              </label>
               <fieldset class="upload-mode-fieldset">
                 <legend>Modelo de importacao</legend>
                 <div id="upload-mode-options" class="upload-mode-options">
@@ -545,7 +552,7 @@
     </main>
   </div>
 
-  <script src="script.js?v=20260427-portal-05"></script>
+  <script src="script.js?v=20260427-portal-07"></script>
 </body>
 </html>
 
