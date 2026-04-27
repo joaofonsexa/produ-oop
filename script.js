@@ -771,20 +771,25 @@ async function handleR2BaseUpload() {
   setUploadStatus(`Enviando base ${operationLabel} para o R2...`, "loading");
 
   try {
+    const workbookBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(workbookBuffer, { type: "array" });
+    const bestSheetName = selectBestSheetForR2Base(workbook);
+    const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
+    const normalizedSheetData = extractNormalizedSheetData(bestSheet);
+    const detectedOperation = normalizedSheetData.detectedOperation || operation;
+    const operationUsed = detectedOperation;
+    const operationUsedLabel = operationUsed === "0800" ? "0800" : "Nuvidio";
+    setUploadStatus(`Enviando base ${operationUsedLabel} para o R2...`, "loading");
+
     const sourcePayload = await uploadBlobToR2Multipart({
       blob: file,
       fileName: file.name || "base.xlsx",
-      operationType: operation,
+      operationType: operationUsed,
       kind: "source",
       contentType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      label: `${operationLabel} (xlsx)`
+      label: `${operationUsedLabel} (xlsx)`
     });
 
-    const workbookBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(workbookBuffer, { type: "array" });
-    const bestSheetName = selectBestSheetForR2Base(workbook, operation);
-    const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
-    const normalizedSheetData = extractNormalizedSheetData(bestSheet, operation);
     const csvRaw = buildCsvFromNormalizedRows(normalizedSheetData.headers, normalizedSheetData.rows);
     const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
     const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
@@ -792,32 +797,47 @@ async function handleR2BaseUpload() {
     const parsedPayload = await uploadBlobToR2Multipart({
       blob: csvBlob,
       fileName: parsedFileName,
-      operationType: operation,
+      operationType: operationUsed,
       kind: "parsed",
       contentType: "text/csv;charset=utf-8",
-      label: `${operationLabel} (parseada)`
+      label: `${operationUsedLabel} (parseada)`
     });
 
     const sourceKey = String(sourcePayload?.key || "");
     const parsedKey = String(parsedPayload?.key || "");
-    const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
+    const laneSummary = buildR2LaneSummaryFromRows(normalizedSheetData.rows, operationUsed);
+    const mergedViews = mergeR2ViewsWithLane(state.r2Insights, operationUsed, laneSummary);
+    state.r2Insights = mergedViews;
+
+    await fetchJson(`${REMOTE_API_BASE}/r2-insights/snapshot`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operationType: operation }),
-      timeoutMs: 180000
+      body: JSON.stringify({ views: mergedViews }),
+      timeoutMs: 120000
     });
-    state.r2Insights = rebuilt?.views || state.r2Insights;
-    setUploadStatus(`Base ${operationLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
+
+    try {
+      const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operationType: operationUsed }),
+        timeoutMs: 180000
+      });
+      state.r2Insights = rebuilt?.views || state.r2Insights;
+    } catch {
+      // Mantem o snapshot local se o rebuild remoto falhar.
+    }
+    setUploadStatus(`Base ${operationUsedLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
     window.alert(
       `Upload para R2 concluido.\n` +
-      `- Operacao: ${operationLabel}\n` +
+      `- Operacao: ${operationUsedLabel}\n` +
       `- Arquivo: ${file.name}\n` +
       `- Tamanho: ${formatFileSize(file.size)}\n` +
       `- Chave R2 (xlsx): ${sourceKey || "n/d"}\n` +
       `- Chave R2 (parseada): ${parsedKey || "n/d"}`
     );
 
-    const lane = operation === "0800"
+    const lane = operationUsed === "0800"
       ? state.r2Insights?.line0800
       : state.r2Insights?.nuvidio;
     const hasProductionByOperator = Array.isArray(lane?.producaoPorOperador) && lane.producaoPorOperador.length > 0;
@@ -850,22 +870,25 @@ async function handleR2BaseUpload() {
   }
 }
 
-function selectBestSheetForR2Base(workbook, operationType) {
+function selectBestSheetForR2Base(workbook) {
   const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
   if (!names.length) return "";
-  const expected = operationType === "0800"
-    ? ["motivo", "sub-motivo", "analista", "usuario de abertura", "data recebimento"]
-    : ["atendente", "tag", "subtag", "data abreviada", "duracao em segundos"];
+  const expected0800 = ["data abertura ocorrencia", "motivo", "usuario de abertura da ocorrencia"];
+  const expectedNuvidio = ["email do atendente", "data abreviada", "tag"];
 
   let bestName = names[0];
   let bestScore = -1;
   names.forEach((name) => {
     const sheet = workbook.Sheets[name];
     if (!sheet) return;
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, range: 0 });
-    const header = Array.isArray(rows?.[0]) ? rows[0] : [];
-    const normalizedHeader = header.map((cell) => normalizeLooseText(cell));
-    const score = expected.reduce((acc, key) => acc + (normalizedHeader.some((col) => col.includes(normalizeLooseText(key))) ? 1 : 0), 0);
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
+    const probe = rows.slice(0, 40);
+    const score = probe.reduce((acc, line) => {
+      const headers = (Array.isArray(line) ? line : []).map((cell) => String(cell || ""));
+      const score0800 = scoreHeadersByAliases(headers, expected0800);
+      const scoreNuvidio = scoreHeadersByAliases(headers, expectedNuvidio);
+      return Math.max(acc, score0800, scoreNuvidio);
+    }, 0);
     if (score > bestScore) {
       bestScore = score;
       bestName = name;
@@ -918,19 +941,18 @@ function buildR2LaneSummaryFromRows(rows, operationType) {
     : summarizeNuvidioRowsClient(rows);
 }
 
-function extractNormalizedSheetData(sheet, operationType) {
+function extractNormalizedSheetData(sheet) {
   const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, defval: "" });
   if (!Array.isArray(matrix) || !matrix.length) {
-    return { headers: [], rows: [] };
+    return { headers: [], rows: [], detectedOperation: "" };
   }
 
-  const expected = operationType === "0800"
-    ? ["motivo", "sub-motivo", "analista", "usuario de abertura", "data recebimento"]
-    : ["atendente", "tag", "subtag", "data abreviada", "duracao em segundos"];
-  const normalizedExpected = expected.map((item) => normalizeR2Key(item));
+  const expected0800 = ["data abertura ocorrencia", "motivo", "usuario de abertura da ocorrencia"];
+  const expectedNuvidio = ["email do atendente", "data abreviada", "tag"];
 
   let headerIndex = 0;
   let bestScore = -1;
+  let detectedOperation = "";
   const maxProbe = Math.min(matrix.length, 30);
   for (let i = 0; i < maxProbe; i += 1) {
     const row = Array.isArray(matrix[i]) ? matrix[i] : [];
@@ -938,11 +960,13 @@ function extractNormalizedSheetData(sheet, operationType) {
       .map((cell) => String(cell || "").trim())
       .filter(Boolean);
     if (headerCells.length < 4) continue;
-    const normalizedCells = headerCells.map((cell) => normalizeR2Key(cell));
-    const score = normalizedExpected.reduce((acc, key) => acc + (normalizedCells.some((col) => col.includes(key)) ? 1 : 0), 0);
+    const score0800 = scoreHeadersByAliases(headerCells, expected0800);
+    const scoreNuvidio = scoreHeadersByAliases(headerCells, expectedNuvidio);
+    const score = Math.max(score0800, scoreNuvidio);
     if (score > bestScore) {
       bestScore = score;
       headerIndex = i;
+      detectedOperation = score0800 >= scoreNuvidio ? "0800" : "nuvidio";
     }
   }
 
@@ -952,7 +976,7 @@ function extractNormalizedSheetData(sheet, operationType) {
     return text || `coluna_${index + 1}`;
   });
   const width = headers.length;
-  if (!width) return { headers: [], rows: [] };
+  if (!width) return { headers: [], rows: [], detectedOperation };
 
   const rows = [];
   for (let i = headerIndex + 1; i < matrix.length; i += 1) {
@@ -967,7 +991,15 @@ function extractNormalizedSheetData(sheet, operationType) {
     if (hasValue) rows.push(row);
   }
 
-  return { headers, rows };
+  return { headers, rows, detectedOperation };
+}
+
+function scoreHeadersByAliases(headers, aliases) {
+  const normalizedHeaders = (headers || []).map((cell) => normalizeR2Key(cell));
+  const normalizedAliases = (aliases || []).map((alias) => normalizeR2Key(alias));
+  return normalizedAliases.reduce((acc, alias) => (
+    acc + (normalizedHeaders.some((header) => header && (header.includes(alias) || alias.includes(header))) ? 1 : 0)
+  ), 0);
 }
 
 function buildCsvFromNormalizedRows(headers, rows) {
