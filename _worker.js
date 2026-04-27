@@ -645,46 +645,69 @@ function normalizeCsvText(value) {
 
 function parseCsvSemicolon(content) {
   const source = String(content || "").replace(/^\uFEFF/, "");
-  const lines = source.split(/\r?\n/).filter((line) => line.trim().length);
-  if (!lines.length) return [];
+  if (!source.trim()) return [];
 
-  const parseLine = (line) => {
-    const out = [];
-    let current = "";
-    let quoted = false;
-    for (let i = 0; i < line.length; i += 1) {
-      const char = line[i];
-      if (char === "\"") {
-        const next = line[i + 1];
-        if (quoted && next === "\"") {
-          current += "\"";
-          i += 1;
-          continue;
-        }
-        quoted = !quoted;
-        continue;
-      }
-      if (char === ";" && !quoted) {
-        out.push(current);
-        current = "";
-        continue;
-      }
-      current += char;
-    }
-    out.push(current);
-    return out.map((part) => String(part || "").trim());
+  const matrix = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+
+  const pushCell = () => {
+    row.push(cell);
+    cell = "";
+  };
+  const pushRow = () => {
+    // ignora linha 100% vazia
+    const hasValue = row.some((item) => String(item || "").trim().length > 0);
+    if (hasValue) matrix.push(row);
+    row = [];
   };
 
-  const header = parseLine(lines[0]);
-  const rows = [];
-  for (let i = 1; i < lines.length; i += 1) {
-    const cells = parseLine(lines[i]);
-    if (!cells.length) continue;
-    const row = {};
-    for (let col = 0; col < header.length; col += 1) {
-      row[header[col]] = String(cells[col] || "").trim();
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (ch === "\"") {
+      if (quoted && next === "\"") {
+        cell += "\"";
+        i += 1;
+        continue;
+      }
+      quoted = !quoted;
+      continue;
     }
-    rows.push(row);
+
+    if (!quoted && ch === ";") {
+      pushCell();
+      continue;
+    }
+
+    if (!quoted && (ch === "\n" || ch === "\r")) {
+      if (ch === "\r" && next === "\n") i += 1;
+      pushCell();
+      pushRow();
+      continue;
+    }
+
+    cell += ch;
+  }
+  pushCell();
+  pushRow();
+
+  if (!matrix.length) return [];
+  const header = (matrix[0] || []).map((item, idx) => {
+    const text = String(item || "").trim();
+    return text || `coluna_${idx + 1}`;
+  });
+
+  const rows = [];
+  for (let i = 1; i < matrix.length; i += 1) {
+    const line = matrix[i] || [];
+    const obj = {};
+    for (let col = 0; col < header.length; col += 1) {
+      obj[header[col]] = String(line[col] ?? "").trim();
+    }
+    rows.push(obj);
   }
   return rows;
 }
@@ -751,6 +774,7 @@ function normalizeStatusBucket(value) {
   const text = normalizeCsvText(value);
   if (!text) return "semAcao";
   if (text.includes("aprovad")) return "aprovadas";
+  if (text.includes("cancelad")) return "reprovadas";
   if (text.includes("reprovad")) return "reprovadas";
   if (text.includes("pendenc")) return "pendenciadas";
   if (text.includes("sem acao") || text.includes("semacao")) return "semAcao";
@@ -774,6 +798,7 @@ function aggregateNuvidio(rows) {
   const statuses = { aprovadas: 0, reprovadas: 0, semAcao: 0 };
   const subtags = new Map();
   const atendentes = new Map();
+  const tmaByOperator = new Map();
   let total = 0;
   let waitSum = 0;
   let waitCount = 0;
@@ -782,7 +807,7 @@ function aggregateNuvidio(rows) {
 
   for (const row of rows) {
     total += 1;
-    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Tag", "Motivo"]));
+    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Tag"]));
     if (status === "aprovadas") statuses.aprovadas += 1;
     else if (status === "reprovadas") statuses.reprovadas += 1;
     else statuses.semAcao += 1;
@@ -793,7 +818,7 @@ function aggregateNuvidio(rows) {
       waitCount += 1;
     }
 
-    const tmaRaw = getRowValueByHeader(row, ["Duracao em segundos", "TMA"]);
+    const tmaRaw = getRowValueByHeader(row, ["TMA", "Duracao em segundos"]);
     const tma = parseDurationSeconds(tmaRaw);
     if (Number.isFinite(tma)) {
       tmaSum += tma;
@@ -802,6 +827,7 @@ function aggregateNuvidio(rows) {
 
     pushTopCounter(subtags, getRowValueByHeader(row, ["Subtag"]));
     const atendente = resolveOperatorNameFromRow(row, [
+      "Email do atendente",
       "Atendente",
       "Analista",
       "Usuario de Abertura da Ocorrencia",
@@ -814,12 +840,26 @@ function aggregateNuvidio(rows) {
     ]);
     if (atendente) {
       atendentes.set(atendente, Number(atendentes.get(atendente) || 0) + 1);
+      if (Number.isFinite(tma)) {
+        const current = tmaByOperator.get(atendente) || { sum: 0, count: 0 };
+        current.sum += tma;
+        current.count += 1;
+        tmaByOperator.set(atendente, current);
+      }
     }
   }
 
   const producaoPorOperador = [...atendentes.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const tmaMedioPorAnalista = [...tmaByOperator.entries()]
+    .map(([name, stats]) => ({
+      name,
+      avgTmaSeconds: Number(stats?.count || 0) > 0 ? Number(stats.sum || 0) / Number(stats.count || 1) : 0
+    }))
+    .sort((a, b) => b.avgTmaSeconds - a.avgTmaSeconds)
     .slice(0, 10);
 
   return {
@@ -829,7 +869,8 @@ function aggregateNuvidio(rows) {
     avgTmaSeconds: tmaCount ? (tmaSum / tmaCount) : 0,
     topSubtags: mapToTopList(subtags, 5),
     topAtendentes: producaoPorOperador.slice(0, 5),
-    producaoPorOperador
+    producaoPorOperador,
+    tmaMedioPorAnalista
   };
 }
 
@@ -845,7 +886,7 @@ function aggregate0800(rows) {
 
   for (const row of rows) {
     total += 1;
-    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Motivo", "Tag"]));
+    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Motivo"]));
     if (status === "aprovadas") statuses.aprovadas += 1;
     else if (status === "reprovadas") statuses.reprovadas += 1;
     else if (status === "pendenciadas") statuses.pendenciadas += 1;
@@ -865,9 +906,9 @@ function aggregate0800(rows) {
 
     pushTopCounter(subMotivos, getRowValueByHeader(row, ["Sub-Motivo", "Sub Motivo"]));
     pushTopCounter(analistas, resolveOperatorNameFromRow(row, [
-      "Analista",
       "Usuario de Abertura da Ocorrencia",
       "Usuário de Abertura da Ocorrência",
+      "Analista",
       "Funcionario",
       "Funcionário",
       "Operador",
@@ -1237,13 +1278,18 @@ export default {
       if (url.pathname === "/api/r2-insights" && request.method === "GET") {
         const snapshot = await readR2InsightsSnapshot(env.DB);
         if (snapshot?.views) {
-          return jsonResponse({
-            ok: true,
-            views: snapshot.views,
-            sources: { mode: "snapshot" },
-            updatedAt: snapshot.updatedAt
-          });
+          const nuvProd = Number(snapshot?.views?.nuvidio?.producaoPorOperador?.length || 0);
+          const lineProd = Number(snapshot?.views?.line0800?.producaoPorOperador?.length || 0);
+          if (nuvProd > 0 || lineProd > 0) {
+            return jsonResponse({
+              ok: true,
+              views: snapshot.views,
+              sources: { mode: "snapshot" },
+              updatedAt: snapshot.updatedAt
+            });
+          }
         }
+
         const payload = await buildR2Insights(env);
         if (payload?.views) {
           await writeR2InsightsSnapshot(env.DB, payload.views);

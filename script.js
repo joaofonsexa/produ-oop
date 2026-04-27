@@ -1054,6 +1054,7 @@ function normalizeStatusBucketClient(value) {
   const text = normalizeR2Key(value);
   if (!text) return "semAcao";
   if (text.includes("aprovad")) return "aprovadas";
+  if (text.includes("cancelad")) return "reprovadas";
   if (text.includes("reprovad")) return "reprovadas";
   if (text.includes("pendenc")) return "pendenciadas";
   if (text.includes("sem acao") || text.includes("semacao")) return "semAcao";
@@ -1071,6 +1072,7 @@ function summarizeNuvidioRowsClient(rows) {
   const statuses = { aprovadas: 0, reprovadas: 0, semAcao: 0 };
   const subtags = new Map();
   const operators = new Map();
+  const tmaByOperator = new Map();
   let total = 0;
   let waitSum = 0;
   let waitCount = 0;
@@ -1079,7 +1081,7 @@ function summarizeNuvidioRowsClient(rows) {
 
   (rows || []).forEach((row) => {
     total += 1;
-    const status = normalizeStatusBucketClient(getRowValueByAliasesClient(row, ["Tag", "Motivo"]));
+    const status = normalizeStatusBucketClient(getRowValueByAliasesClient(row, ["Tag"]));
     if (status === "aprovadas") statuses.aprovadas += 1;
     else if (status === "reprovadas") statuses.reprovadas += 1;
     else statuses.semAcao += 1;
@@ -1090,7 +1092,7 @@ function summarizeNuvidioRowsClient(rows) {
       waitCount += 1;
     }
 
-    const tma = parseDurationSecondsClient(getRowValueByAliasesClient(row, ["Duracao em segundos", "TMA"]));
+    const tma = parseDurationSecondsClient(getRowValueByAliasesClient(row, ["TMA", "Duracao em segundos"]));
     if (Number.isFinite(tma)) {
       tmaSum += tma;
       tmaCount += 1;
@@ -1100,6 +1102,7 @@ function summarizeNuvidioRowsClient(rows) {
     if (subtag) subtags.set(subtag, Number(subtags.get(subtag) || 0) + 1);
 
     const operator = resolveOperatorNameFromRowClient(row, [
+      "Email do atendente",
       "Atendente",
       "Analista",
       "Usuario de Abertura da Ocorrencia",
@@ -1110,12 +1113,28 @@ function summarizeNuvidioRowsClient(rows) {
       "Usuario",
       "Usuário"
     ]);
-    if (operator) operators.set(operator, Number(operators.get(operator) || 0) + 1);
+    if (operator) {
+      operators.set(operator, Number(operators.get(operator) || 0) + 1);
+      if (Number.isFinite(tma)) {
+        const current = tmaByOperator.get(operator) || { sum: 0, count: 0 };
+        current.sum += tma;
+        current.count += 1;
+        tmaByOperator.set(operator, current);
+      }
+    }
   });
 
   const producaoPorOperador = [...operators.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const tmaMedioPorAnalista = [...tmaByOperator.entries()]
+    .map(([name, stats]) => ({
+      name,
+      avgTmaSeconds: Number(stats?.count || 0) > 0 ? Number(stats.sum || 0) / Number(stats.count || 1) : 0
+    }))
+    .sort((a, b) => b.avgTmaSeconds - a.avgTmaSeconds)
     .slice(0, 10);
 
   return {
@@ -1125,7 +1144,8 @@ function summarizeNuvidioRowsClient(rows) {
     avgTmaSeconds: tmaCount ? (tmaSum / tmaCount) : 0,
     topSubtags: buildTopListFromMapClient(subtags, 5),
     topAtendentes: producaoPorOperador.slice(0, 5),
-    producaoPorOperador
+    producaoPorOperador,
+    tmaMedioPorAnalista
   };
 }
 
@@ -1141,7 +1161,7 @@ function summarize0800RowsClient(rows) {
 
   (rows || []).forEach((row) => {
     total += 1;
-    const status = normalizeStatusBucketClient(getRowValueByAliasesClient(row, ["Motivo", "Tag"]));
+    const status = normalizeStatusBucketClient(getRowValueByAliasesClient(row, ["Motivo"]));
     if (status === "aprovadas") statuses.aprovadas += 1;
     else if (status === "reprovadas") statuses.reprovadas += 1;
     else if (status === "pendenciadas") statuses.pendenciadas += 1;
@@ -1163,9 +1183,9 @@ function summarize0800RowsClient(rows) {
     if (subMotivo) subMotivos.set(subMotivo, Number(subMotivos.get(subMotivo) || 0) + 1);
 
     const operator = resolveOperatorNameFromRowClient(row, [
-      "Analista",
       "Usuario de Abertura da Ocorrencia",
       "Usuário de Abertura da Ocorrência",
+      "Analista",
       "Funcionario",
       "Funcionário",
       "Operador",
@@ -2546,6 +2566,9 @@ function buildAnalyticsR2Views(views) {
           ${buildR2Kpi("Sem acao", nuvidio?.statuses?.semAcao || 0)}
           ${buildR2Kpi("TMA medio", formatMetric(nuvidio.avgTmaSeconds || 0, "s"))}
         </div>
+        ${buildR2TopList("TMA medio por analista", nuvidio.tmaMedioPorAnalista, {
+    formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.avgTmaSeconds || 0, "s")})`
+  })}
         ${buildR2TopList("Producao por operador", nuvidio.producaoPorOperador, {
     formatter: (item) => `${item?.name || "-"} (${formatMetric(item?.count || 0)})`
   })}
