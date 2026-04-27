@@ -1170,65 +1170,62 @@ function extractNormalizedSheetData(sheet) {
     "sem acao"
   ];
 
-  let headerIndex = 0;
-  let bestScore = -1;
-  let detectedOperation = "";
-  const maxProbe = Math.min(matrix.length, 30);
+  const maxProbe = Math.min(matrix.length, 140);
+  let bestCandidate = {
+    headerIndex: 0,
+    headers: [],
+    rows: [],
+    detectedOperation: "",
+    rank: -1
+  };
+
+  const buildRowsFromHeaderIndex = (headerIndex) => {
+    const rawHeader = Array.isArray(matrix[headerIndex]) ? matrix[headerIndex] : [];
+    const headers = rawHeader.map((cell, index) => String(cell || "").trim() || `coluna_${index + 1}`);
+    const width = headers.length;
+    if (!width) return { headers: [], rows: [] };
+    const rows = [];
+    for (let i = headerIndex + 1; i < matrix.length; i += 1) {
+      const line = Array.isArray(matrix[i]) ? matrix[i] : [];
+      const row = {};
+      let hasValue = false;
+      for (let col = 0; col < width; col += 1) {
+        const value = String(line[col] ?? "").trim();
+        row[headers[col]] = value;
+        if (value) hasValue = true;
+      }
+      if (hasValue) rows.push(row);
+    }
+    return { headers, rows };
+  };
+
   for (let i = 0; i < maxProbe; i += 1) {
-    const row = Array.isArray(matrix[i]) ? matrix[i] : [];
-    const headerCells = row
-      .map((cell) => String(cell || "").trim())
-      .filter(Boolean);
+    const line = Array.isArray(matrix[i]) ? matrix[i] : [];
+    const headerCells = line.map((cell) => String(cell || "").trim()).filter(Boolean);
     if (headerCells.length < 2) continue;
+
     const score0800 = scoreHeadersByAliases(headerCells, expected0800);
     const scoreNuvidio = scoreHeadersByAliases(headerCells, expectedNuvidio);
-    const score = Math.max(score0800, scoreNuvidio);
-    if (score > bestScore) {
-      bestScore = score;
-      headerIndex = i;
-      detectedOperation = score0800 >= scoreNuvidio ? "0800" : "nuvidio";
+    const aliasScore = Math.max(score0800, scoreNuvidio);
+    const detectedOperation = score0800 >= scoreNuvidio ? "0800" : "nuvidio";
+    const built = buildRowsFromHeaderIndex(i);
+    const dataRows = built.rows.length;
+    const filledHeaders = headerCells.length;
+    const rank = (aliasScore * 100000) + (dataRows * 100) + filledHeaders;
+
+    if (rank > bestCandidate.rank) {
+      bestCandidate = {
+        headerIndex: i,
+        headers: built.headers,
+        rows: built.rows,
+        detectedOperation,
+        rank
+      };
     }
   }
 
-  // Fallback: se nao detectou cabecalho por alias, usa a linha mais "cheia".
-  if (bestScore < 0) {
-    let fallbackIndex = 0;
-    let fallbackCount = 0;
-    const maxFallbackProbe = Math.min(matrix.length, 120);
-    for (let i = 0; i < maxFallbackProbe; i += 1) {
-      const row = Array.isArray(matrix[i]) ? matrix[i] : [];
-      const count = row.map((cell) => String(cell || "").trim()).filter(Boolean).length;
-      if (count > fallbackCount) {
-        fallbackCount = count;
-        fallbackIndex = i;
-      }
-    }
-    headerIndex = fallbackIndex;
-  }
-
-  const rawHeader = Array.isArray(matrix[headerIndex]) ? matrix[headerIndex] : [];
-  const headers = rawHeader.map((cell, index) => {
-    const text = String(cell || "").trim();
-    return text || `coluna_${index + 1}`;
-  });
-  const width = headers.length;
-  if (!width) return { headers: [], rows: [], detectedOperation };
-
-  const rows = [];
-  for (let i = headerIndex + 1; i < matrix.length; i += 1) {
-    const line = Array.isArray(matrix[i]) ? matrix[i] : [];
-    const row = {};
-    let hasValue = false;
-    for (let col = 0; col < width; col += 1) {
-      const value = String(line[col] ?? "").trim();
-      row[headers[col]] = value;
-      if (value) hasValue = true;
-    }
-    if (hasValue) rows.push(row);
-  }
-
-  // Segundo fallback: se nao encontrou linhas abaixo, tenta usar a primeira linha com dados como cabecalho.
-  if (!rows.length && matrix.length > 1) {
+  // Fallback final: primeira linha com dado
+  if (!bestCandidate.rows.length) {
     let firstDataRow = -1;
     for (let i = 0; i < matrix.length; i += 1) {
       const line = Array.isArray(matrix[i]) ? matrix[i] : [];
@@ -1238,28 +1235,21 @@ function extractNormalizedSheetData(sheet) {
         break;
       }
     }
-    if (firstDataRow >= 0 && firstDataRow !== headerIndex) {
-      const fallbackHeader = Array.isArray(matrix[firstDataRow]) ? matrix[firstDataRow] : [];
-      const fallbackHeaders = fallbackHeader.map((cell, index) => String(cell || "").trim() || `coluna_${index + 1}`);
-      const fallbackRows = [];
-      for (let i = firstDataRow + 1; i < matrix.length; i += 1) {
-        const line = Array.isArray(matrix[i]) ? matrix[i] : [];
-        const row = {};
-        let hasValue = false;
-        for (let col = 0; col < fallbackHeaders.length; col += 1) {
-          const value = String(line[col] ?? "").trim();
-          row[fallbackHeaders[col]] = value;
-          if (value) hasValue = true;
-        }
-        if (hasValue) fallbackRows.push(row);
-      }
-      if (fallbackRows.length) {
-        return { headers: fallbackHeaders, rows: fallbackRows, detectedOperation };
-      }
+    if (firstDataRow >= 0) {
+      const built = buildRowsFromHeaderIndex(firstDataRow);
+      return {
+        headers: built.headers,
+        rows: built.rows,
+        detectedOperation: bestCandidate.detectedOperation
+      };
     }
   }
 
-  return { headers, rows, detectedOperation };
+  return {
+    headers: bestCandidate.headers,
+    rows: bestCandidate.rows,
+    detectedOperation: bestCandidate.detectedOperation
+  };
 }
 
 function scoreHeadersByAliases(headers, aliases) {
