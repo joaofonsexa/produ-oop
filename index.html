@@ -417,17 +417,51 @@
                 </label>
 
                 <label>
-                  <span>Produção</span>
-                  <input id="admin-production" type="number" min="0" step="0.01" required placeholder="Ex.: 52">
+                  <span>Operacao</span>
+                  <select id="admin-operation" required>
+                    <option value="nuvidio">Nuvidio</option>
+                    <option value="0800">0800</option>
+                  </select>
                 </label>
               </div>
 
               <div class="form-grid">
                 <label>
-                  <span>Efetividade (%)</span>
-                  <input id="admin-effectiveness" type="number" min="0" step="0.01" required placeholder="Ex.: 37.5">
+                  <span>Aprovadas</span>
+                  <input id="admin-approved" type="number" min="0" step="1" required placeholder="Ex.: 52">
                 </label>
 
+                <label>
+                  <span>Reprovadas</span>
+                  <input id="admin-reproved" type="number" min="0" step="1" required placeholder="Ex.: 10">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Pendenciadas (0800)</span>
+                  <input id="admin-pending" type="number" min="0" step="1" placeholder="Ex.: 8">
+                </label>
+
+                <label>
+                  <span>Sem acao</span>
+                  <input id="admin-no-action" type="number" min="0" step="1" required placeholder="Ex.: 15">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Total atendido (calculado)</span>
+                  <input id="admin-production" type="number" min="0" step="0.01" readonly>
+                </label>
+
+                <label>
+                  <span>Efetividade (%) calculada</span>
+                  <input id="admin-effectiveness" type="number" min="0" step="0.01" readonly>
+                </label>
+              </div>
+
+              <div class="form-grid">
                 <label>
                   <span>Qualidade (%)</span>
                   <input id="admin-quality" type="number" min="0" step="0.01" required placeholder="Ex.: 93">
@@ -458,7 +492,7 @@
                   </label>
                   <label class="upload-mode-option">
                     <input type="checkbox" name="upload-mode" value="effectiveness" checked>
-                    <span>Efetividade</span>
+                    <span>Efetividade (calculada)</span>
                   </label>
                   <label class="upload-mode-option">
                     <input type="checkbox" name="upload-mode" value="quality" checked>
@@ -511,7 +545,7 @@
     </main>
   </div>
 
-  <script src="script.js?v=20260423-portal-03"></script>
+  <script src="script.js?v=20260427-portal-05"></script>
 </body>
 </html>
 

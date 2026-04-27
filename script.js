@@ -10,9 +10,12 @@ const ACCESS_LEVELS = {
 };
 
 const IMPORT_METRICS = {
-  production: { label: "Producao", templateColumn: "Producao" },
-  effectiveness: { label: "Efetividade", templateColumn: "Efetividade" },
-  quality: { label: "Qualidade", templateColumn: "Qualidade" }
+  production: { label: "Producao", templateColumns: ["Producao"] },
+  effectiveness: {
+    label: "Efetividade",
+    templateColumns: ["Operacao", "Aprovadas", "Reprovadas", "Pendenciadas", "Sem Acao"]
+  },
+  quality: { label: "Qualidade", templateColumns: ["Qualidade"] }
 };
 
 const IMPORT_METRIC_ORDER = ["production", "effectiveness", "quality"];
@@ -104,6 +107,11 @@ const elements = {
   adminForm: document.querySelector("#admin-form"),
   adminUser: document.querySelector("#admin-user"),
   adminDate: document.querySelector("#admin-date"),
+  adminOperation: document.querySelector("#admin-operation"),
+  adminApproved: document.querySelector("#admin-approved"),
+  adminReproved: document.querySelector("#admin-reproved"),
+  adminPending: document.querySelector("#admin-pending"),
+  adminNoAction: document.querySelector("#admin-no-action"),
   adminProduction: document.querySelector("#admin-production"),
   adminEffectiveness: document.querySelector("#admin-effectiveness"),
   adminQuality: document.querySelector("#admin-quality"),
@@ -131,6 +139,7 @@ async function init() {
   state.session = loadSession();
   bindEvents();
   updateUploadModeHelp();
+  syncAdminCalculatedMetrics();
   syncAuthView();
 
   if (hasSsoTokenInUrl()) {
@@ -163,6 +172,11 @@ function bindEvents() {
     button.addEventListener("click", () => setSection(button.dataset.section || "dashboard"));
   });
   elements.adminForm?.addEventListener("submit", handleAdminSave);
+  elements.adminOperation?.addEventListener("change", syncAdminCalculatedMetrics);
+  elements.adminApproved?.addEventListener("input", syncAdminCalculatedMetrics);
+  elements.adminReproved?.addEventListener("input", syncAdminCalculatedMetrics);
+  elements.adminPending?.addEventListener("input", syncAdminCalculatedMetrics);
+  elements.adminNoAction?.addEventListener("input", syncAdminCalculatedMetrics);
   elements.adminUser?.addEventListener("change", () => {
     state.adminSelectedUserId = String(elements.adminUser.value || "");
     if (state.overviewSelectedUserId !== "all") {
@@ -415,12 +429,32 @@ async function handleAdminSave(event) {
   const userId = String(elements.adminUser.value || "").trim();
   const selectedUser = state.operators.find((user) => user.id === userId);
   const date = normalizeDateKey(elements.adminDate.value);
-  const productionTotal = parseMetricInput(elements.adminProduction.value);
-  const effectiveness = parseMetricInput(elements.adminEffectiveness.value);
+  const operation = normalizeOperationType(elements.adminOperation?.value || "nuvidio");
+  const approved = parseMetricInput(elements.adminApproved?.value);
+  const reproved = parseMetricInput(elements.adminReproved?.value);
+  const pending = parseMetricInput(elements.adminPending?.value);
+  const noAction = parseMetricInput(elements.adminNoAction?.value);
   const qualityScore = parseMetricInput(elements.adminQuality.value);
+  const hasRequiredCounts =
+    Number.isFinite(approved) &&
+    Number.isFinite(reproved) &&
+    Number.isFinite(noAction) &&
+    (operation === "0800" ? Number.isFinite(pending) : true);
+
+  const calculated = hasRequiredCounts
+    ? calculateDailyTotalsByOperation({
+      operation,
+      approved,
+      reproved,
+      pending: Number.isFinite(pending) ? pending : 0,
+      noAction
+    })
+    : null;
+  const productionTotal = calculated?.total ?? null;
+  const effectiveness = calculated?.effectiveness ?? null;
 
   if (!selectedUser || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
-    window.alert("Preencha operador, data, producao, efetividade e qualidade com valores validos.");
+    window.alert("Preencha operador, data, aprovadas, reprovadas, sem acao (e pendenciadas para 0800) e qualidade com valores validos.");
     return;
   }
 
@@ -640,14 +674,21 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const header = rows[0].map((item) => normalizeLooseText(item));
   const idxName = findColumnIndex(header, ["nome do operador", "nome operador", "nome"]);
   const idxUsername = findColumnIndex(header, ["usuario", "login", "username", "matricula"]);
+  const idxNuvidioUsername = findColumnIndex(header, ["usuario nuvidio", "username nuvidio", "login nuvidio", "nuvidio"]);
+  const idx0800Username = findColumnIndex(header, ["usuario 0800", "username 0800", "login 0800", "0800"]);
   const idxDate = findColumnIndex(header, ["data", "dia", "resultado", "data resultado", "dt"]);
+  const idxOperation = findColumnIndex(header, ["operacao", "operacao/canal", "canal", "fila"]);
+  const idxApproved = findColumnIndex(header, ["aprovadas", "aprovado", "aprovados"]);
+  const idxReproved = findColumnIndex(header, ["reprovadas", "reprovado", "reprovados"]);
+  const idxPending = findColumnIndex(header, ["pendenciadas", "pendenciados", "pendencias", "pendente"]);
+  const idxNoAction = findColumnIndex(header, ["sem acao", "sem ação", "sem_acao", "semacao"]);
   const idxEffectiveness = findColumnIndex(header, ["efetividade", "conversao", "tx efetividade"]);
   const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
   const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
   const selectedMetrics = getSelectedImportMetrics(options.importMetrics);
 
-  if (idxName < 0 && idxUsername < 0) {
-    throw new Error("A planilha precisa ter Nome do Operador ou Usuario/Login.");
+  if (idxName < 0 && idxUsername < 0 && idxNuvidioUsername < 0 && idx0800Username < 0) {
+    throw new Error("A planilha precisa ter Nome do Operador, Usuario/Login, Usuario Nuvidio ou Usuario 0800.");
   }
   if (idxDate < 0) {
     throw new Error("A planilha precisa ter a coluna Data para importar intervalo de dias.");
@@ -657,10 +698,12 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       throw new Error("Selecione pelo menos uma metrica para importar.");
     }
     if (selectedMetrics.has("production") && idxProduction < 0) {
-      throw new Error("Voce marcou Producao, entao a planilha precisa ter a coluna Producao.");
+      if (idxApproved < 0 || idxReproved < 0 || idxNoAction < 0) {
+        throw new Error("Voce marcou Producao. Envie Producao ou as colunas Aprovadas, Reprovadas e Sem Acao.");
+      }
     }
-    if (selectedMetrics.has("effectiveness") && idxEffectiveness < 0) {
-      throw new Error("Voce marcou Efetividade, entao a planilha precisa ter a coluna Efetividade.");
+    if (selectedMetrics.has("effectiveness") && idxEffectiveness < 0 && (idxApproved < 0 || idxReproved < 0 || idxNoAction < 0)) {
+      throw new Error("Voce marcou Efetividade. Envie Efetividade ou Operacao + Aprovadas + Reprovadas + Sem Acao.");
     }
     if (selectedMetrics.has("quality") && idxQuality < 0) {
       throw new Error("Voce marcou Qualidade, entao a planilha precisa ter a coluna Qualidade.");
@@ -668,7 +711,19 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   }
 
   const operatorByName = new Map(state.operators.map((operator) => [normalizeLooseText(operator.name), operator]));
-  const operatorByUsername = new Map(state.operators.map((operator) => [normalizeLooseText(operator.username), operator]));
+  const operatorByAnyUsername = new Map();
+  state.operators.forEach((operator) => {
+    const candidates = [
+      operator?.username,
+      operator?.nuvidioUsername,
+      operator?.line0800Username
+    ];
+    candidates.forEach((candidate) => {
+      const key = normalizeLooseText(candidate);
+      if (!key || operatorByAnyUsername.has(key)) return;
+      operatorByAnyUsername.set(key, operator);
+    });
+  });
   const existingEntries = buildExistingEntriesLookup();
   const importItems = [];
   const uniqueKeys = new Set();
@@ -683,8 +738,13 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     if (!row.length) continue;
     totalRows += 1;
 
+    const usernameKeys = [
+      idxUsername >= 0 ? normalizeLooseText(row[idxUsername]) : "",
+      idxNuvidioUsername >= 0 ? normalizeLooseText(row[idxNuvidioUsername]) : "",
+      idx0800Username >= 0 ? normalizeLooseText(row[idx0800Username]) : ""
+    ].filter(Boolean);
     const operator =
-      operatorByUsername.get(normalizeLooseText(idxUsername >= 0 ? row[idxUsername] : "")) ||
+      usernameKeys.map((key) => operatorByAnyUsername.get(key)).find(Boolean) ||
       operatorByName.get(normalizeLooseText(idxName >= 0 ? row[idxName] : ""));
     if (!operator) {
       unmatchedOperatorCount += 1;
@@ -713,14 +773,35 @@ async function parseSpreadsheetImportFile(file, options = {}) {
     }
 
     const existing = existingEntries.get(uniqueKey) || null;
+    const operationFromSheet = idxOperation >= 0 ? String(row[idxOperation] || "") : "nuvidio";
+    const approvedFromSheet = idxApproved >= 0 ? parseMetricInput(row[idxApproved]) : NaN;
+    const reprovedFromSheet = idxReproved >= 0 ? parseMetricInput(row[idxReproved]) : NaN;
+    const pendingFromSheet = idxPending >= 0 ? parseMetricInput(row[idxPending]) : NaN;
+    const noActionFromSheet = idxNoAction >= 0 ? parseMetricInput(row[idxNoAction]) : NaN;
+    const computedFromCounts = calculateDailyTotalsByOperation({
+      operation: operationFromSheet,
+      approved: approvedFromSheet,
+      reproved: reprovedFromSheet,
+      pending: Number.isFinite(pendingFromSheet) ? pendingFromSheet : 0,
+      noAction: noActionFromSheet
+    });
+    const hasCountsForCalculation =
+      Number.isFinite(approvedFromSheet) &&
+      Number.isFinite(reprovedFromSheet) &&
+      Number.isFinite(noActionFromSheet) &&
+      (computedFromCounts.operation === "0800" ? Number.isFinite(pendingFromSheet) : true);
+
     const productionFromSheet = idxProduction >= 0 ? parseMetricInput(row[idxProduction]) : NaN;
-    const effectivenessFromSheet = idxEffectiveness >= 0 ? parseMetricInput(row[idxEffectiveness], { percent: true }) : NaN;
+    const productionFromComputed = hasCountsForCalculation ? computedFromCounts.total : NaN;
+    const effectivenessFromSheet = idxEffectiveness >= 0
+      ? parseMetricInput(row[idxEffectiveness], { percent: true })
+      : (hasCountsForCalculation ? computedFromCounts.effectiveness : NaN);
     const qualityFromSheet = idxQuality >= 0 ? parseMetricInput(row[idxQuality], { percent: true }) : NaN;
 
     const productionTotal = resolveMetricBySelection({
       selectedMetrics,
       metric: "production",
-      parsedValue: productionFromSheet,
+      parsedValue: Number.isFinite(productionFromSheet) ? productionFromSheet : productionFromComputed,
       existingValue: Number(existing?.productionTotal)
     });
     const effectiveness = resolveMetricBySelection({
@@ -801,9 +882,15 @@ function handleDownloadTemplate() {
     return;
   }
   const templateColumns = getTemplateColumnsFromSelection(selectedMetrics);
-  const rows = [["Nome do Operador", "Usuario", "Data", ...templateColumns]];
+  const rows = [["Nome do Operador", "Usuario", "Usuario Nuvidio", "Usuario 0800", "Data", ...templateColumns]];
   state.operators.forEach((operator) => {
-    const base = [operator.name || "", operator.username || "", ""];
+    const base = [
+      operator.name || "",
+      operator.username || "",
+      operator.nuvidioUsername || "",
+      operator.line0800Username || "",
+      ""
+    ];
     rows.push([...base, ...templateColumns.map(() => "")]);
   });
 
@@ -836,9 +923,17 @@ function getSelectedImportMetrics(initialMetrics = null) {
 
 function getTemplateColumnsFromSelection(selectedMetrics) {
   const list = [];
+  const seen = new Set();
   IMPORT_METRIC_ORDER.forEach((metric) => {
     if (!selectedMetrics.has(metric)) return;
-    list.push(IMPORT_METRICS[metric].templateColumn);
+    const cols = Array.isArray(IMPORT_METRICS[metric].templateColumns)
+      ? IMPORT_METRICS[metric].templateColumns
+      : [];
+    cols.forEach((column) => {
+      if (seen.has(column)) return;
+      seen.add(column);
+      list.push(column);
+    });
   });
   return list;
 }
@@ -861,12 +956,12 @@ function updateUploadModeHelp() {
   }
 
   const templateColumns = getTemplateColumnsFromSelection(selectedMetrics);
-  if (templateColumns.length === IMPORT_METRIC_ORDER.length) {
-    elements.uploadHelpText.textContent = "Colunas aceitas: Nome do Operador (ou Usuario), Data, Producao, Efetividade e Qualidade.";
+  if (selectedMetrics.has("effectiveness")) {
+    elements.uploadHelpText.textContent = "Identificacao do operador por Nome, Usuario, Usuario Nuvidio ou Usuario 0800. Efetividade e calculada automaticamente: Nuvidio usa (Aprovadas + Reprovadas) / Total, e 0800 usa (Aprovadas + Reprovadas + Pendenciadas) / Total. Total inclui Sem Acao.";
     return;
   }
 
-  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador (ou Usuario), Data e ${templateColumns.join(", ")}. As metricas nao marcadas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
+  elements.uploadHelpText.textContent = `Colunas aceitas: Nome do Operador, Usuario, Usuario Nuvidio ou Usuario 0800, Data e ${templateColumns.join(", ")}. As metricas nao marcadas sao mantidas do registro existente; se nao houver, iniciam em zero.`;
 }
 
 function buildExistingEntriesLookup() {
@@ -2095,7 +2190,7 @@ async function handleHistoryActionButton(button) {
     const productionTotal = parseMetricInput(button.getAttribute("data-production"));
     const effectiveness = parseMetricInput(button.getAttribute("data-effectiveness"));
     const qualityScore = parseMetricInput(button.getAttribute("data-quality"));
-    if (!userId || !date || !Number.isFinite(productionTotal) || !Number.isFinite(effectiveness) || !Number.isFinite(qualityScore)) {
+    if (!userId || !date || !Number.isFinite(productionTotal) || !Number.isFinite(qualityScore)) {
       window.alert("Nao foi possivel carregar os dados do registro para edicao.");
       return;
     }
@@ -2105,8 +2200,13 @@ async function handleHistoryActionButton(button) {
     syncGlobalOperatorSelect();
     hydrateAdminFormFromRecord();
     if (elements.adminDate) elements.adminDate.value = date;
-    if (elements.adminProduction) elements.adminProduction.value = String(productionTotal);
-    if (elements.adminEffectiveness) elements.adminEffectiveness.value = String(effectiveness);
+    if (elements.adminOperation) elements.adminOperation.value = "nuvidio";
+    if (elements.adminApproved) elements.adminApproved.value = "";
+    if (elements.adminReproved) elements.adminReproved.value = "";
+    if (elements.adminPending) elements.adminPending.value = "";
+    if (elements.adminNoAction) elements.adminNoAction.value = "";
+    if (elements.adminProduction) elements.adminProduction.value = String(productionTotal || 0);
+    if (elements.adminEffectiveness) elements.adminEffectiveness.value = Number.isFinite(effectiveness) ? String(effectiveness) : "";
     if (elements.adminQuality) elements.adminQuality.value = String(qualityScore);
     setSection("admin");
     window.alert("Registro carregado no formulario de Gestao. Ajuste os campos e clique em Salvar resultado.");
@@ -2184,9 +2284,15 @@ function hydrateAdminFormFromRecord() {
   const latest = getLatestEntry(state.adminSelectedRecord);
   const fallbackDate = getDefaultResultDate();
   elements.adminDate.value = latest?.date || fallbackDate;
+  if (elements.adminOperation) elements.adminOperation.value = "nuvidio";
+  if (elements.adminApproved) elements.adminApproved.value = "";
+  if (elements.adminReproved) elements.adminReproved.value = "";
+  if (elements.adminPending) elements.adminPending.value = "";
+  if (elements.adminNoAction) elements.adminNoAction.value = "";
   elements.adminProduction.value = Number.isFinite(latest?.productionTotal) ? String(latest.productionTotal) : "";
   elements.adminEffectiveness.value = Number.isFinite(latest?.effectiveness) ? String(latest.effectiveness) : "";
   elements.adminQuality.value = Number.isFinite(latest?.qualityScore) ? String(latest.qualityScore) : "";
+  syncAdminCalculatedMetrics();
 }
 
 function setSection(sectionId) {
@@ -2750,6 +2856,58 @@ function parseMetricInput(value, options = {}) {
   }
 
   return numeric;
+}
+
+function normalizeOperationType(value) {
+  const text = normalizeLooseText(value);
+  if (text.includes("0800")) return "0800";
+  if (text.includes("nuvidio")) return "nuvidio";
+  return "nuvidio";
+}
+
+function calculateDailyTotalsByOperation({ operation, approved, reproved, pending, noAction }) {
+  const approvedSafe = Number.isFinite(approved) ? Math.max(0, approved) : 0;
+  const reprovedSafe = Number.isFinite(reproved) ? Math.max(0, reproved) : 0;
+  const pendingSafe = Number.isFinite(pending) ? Math.max(0, pending) : 0;
+  const noActionSafe = Number.isFinite(noAction) ? Math.max(0, noAction) : 0;
+  const operationNormalized = normalizeOperationType(operation);
+  const effectiveTotal = operationNormalized === "0800"
+    ? approvedSafe + reprovedSafe + pendingSafe
+    : approvedSafe + reprovedSafe;
+  const total = effectiveTotal + noActionSafe;
+  const effectiveness = total > 0 ? (effectiveTotal / total) * 100 : 0;
+  return { operation: operationNormalized, total, effectiveness };
+}
+
+function syncAdminCalculatedMetrics() {
+  const operation = normalizeOperationType(elements.adminOperation?.value || "nuvidio");
+  const approved = parseMetricInput(elements.adminApproved?.value);
+  const reproved = parseMetricInput(elements.adminReproved?.value);
+  const pending = parseMetricInput(elements.adminPending?.value);
+  const noAction = parseMetricInput(elements.adminNoAction?.value);
+
+  const hasRequired =
+    Number.isFinite(approved) &&
+    Number.isFinite(reproved) &&
+    Number.isFinite(noAction) &&
+    (operation === "0800" ? Number.isFinite(pending) : true);
+
+  if (!hasRequired) {
+    if (elements.adminProduction) elements.adminProduction.value = "";
+    if (elements.adminEffectiveness) elements.adminEffectiveness.value = "";
+    return;
+  }
+
+  const { total, effectiveness } = calculateDailyTotalsByOperation({
+    operation,
+    approved,
+    reproved,
+    pending: Number.isFinite(pending) ? pending : 0,
+    noAction
+  });
+
+  if (elements.adminProduction) elements.adminProduction.value = String(total);
+  if (elements.adminEffectiveness) elements.adminEffectiveness.value = String(Number(effectiveness.toFixed(2)));
 }
 function normalizeDateKey(value) {
   const raw = String(value || "").trim();

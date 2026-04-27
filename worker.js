@@ -252,10 +252,27 @@ async function fetchCentral(env, pathname, options = {}) {
 }
 
 function sanitizeUser(user) {
+  const nuvidioUsername = String(
+    user?.nuvidioUsername ??
+    user?.usuarioNuvidio ??
+    user?.usernameNuvidio ??
+    user?.nuvidio_user ??
+    ""
+  ).trim();
+  const line0800Username = String(
+    user?.line0800Username ??
+    user?.usuario0800 ??
+    user?.username0800 ??
+    user?.["0800Username"] ??
+    user?.["0800_user"] ??
+    ""
+  ).trim();
   return {
     id: String(user?.id || ""),
     name: String(user?.name || ""),
     username: String(user?.username || ""),
+    nuvidioUsername,
+    line0800Username,
     role: String(user?.role || "operador"),
     accessLevel: String(user?.accessLevel || "")
   };
