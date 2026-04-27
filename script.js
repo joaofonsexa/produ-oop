@@ -827,6 +827,29 @@ async function handleR2BaseUpload() {
     } catch {
       // Mantem o snapshot local se o rebuild remoto falhar.
     }
+
+    setUploadStatus(`Sincronizando resultados dos operadores (${operationUsedLabel})...`, "loading");
+    const syncPayload = await fetchJson(`${REMOTE_API_BASE}/r2-sync-results`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationType: operationUsed,
+        fullSync: true
+      }),
+      timeoutMs: 10 * 60 * 1000
+    });
+    const syncResult = syncPayload?.result || {};
+    const importedCount = Number(syncResult?.totalImported || 0);
+    const laneResult = Array.isArray(syncResult?.items)
+      ? syncResult.items.find((item) => normalizeOperationType(item?.operationType || "") === operationUsed)
+      : null;
+    const syncedSource = String(laneResult?.sourceKey || "");
+
+    await loadOperationRecords();
+    await loadAdminSelectedRecord();
+    if (state.session?.id) await loadMyResults();
+    renderAll();
+
     setUploadStatus(`Base ${operationUsedLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
     window.alert(
       `Upload para R2 concluido.\n` +
@@ -834,7 +857,9 @@ async function handleR2BaseUpload() {
       `- Arquivo: ${file.name}\n` +
       `- Tamanho: ${formatFileSize(file.size)}\n` +
       `- Chave R2 (xlsx): ${sourceKey || "n/d"}\n` +
-      `- Chave R2 (parseada): ${parsedKey || "n/d"}`
+      `- Chave R2 (parseada): ${parsedKey || "n/d"}\n` +
+      `- Registros sincronizados: ${importedCount}\n` +
+      `- Fonte usada no sync: ${syncedSource || "n/d"}`
     );
 
     const lane = operationUsed === "0800"
@@ -1023,6 +1048,61 @@ function normalizeR2Key(value) {
   return normalizeLooseText(value).replace(/\s+/g, " ");
 }
 
+function normalizeOperatorToken(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9@]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function buildRegisteredOperatorAliasMap(operationType) {
+  const byAlias = new Map();
+  (state.operators || []).forEach((operator) => {
+    const primary = operationType === "0800"
+      ? String(operator?.line0800Username || "")
+      : String(operator?.nuvidioUsername || "");
+    const aliases = [
+      primary,
+      String(operator?.username || ""),
+      String(operator?.name || "")
+    ].filter(Boolean);
+    aliases.forEach((alias) => {
+      const normalized = normalizeOperatorToken(alias);
+      if (!normalized) return;
+      if (!byAlias.has(normalized)) {
+        byAlias.set(normalized, {
+          id: String(operator?.id || ""),
+          name: String(operator?.name || operator?.username || alias || "Operador"),
+          username: String(operator?.username || "")
+        });
+      }
+      if (normalized.includes("@")) {
+        const local = normalized.split("@")[0];
+        if (local && !byAlias.has(local)) {
+          byAlias.set(local, {
+            id: String(operator?.id || ""),
+            name: String(operator?.name || operator?.username || alias || "Operador"),
+            username: String(operator?.username || "")
+          });
+        }
+      }
+    });
+  });
+  return byAlias;
+}
+
+function resolveOperatorFromRegistryClient(rawValue, aliasMap) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  const normalized = normalizeOperatorToken(raw);
+  if (!normalized) return raw;
+  const mapped = aliasMap.get(normalized) || aliasMap.get(normalized.split("@")[0]);
+  if (mapped?.name) return mapped.name;
+  return raw;
+}
+
 function getRowValueByAliasesClient(row, aliases) {
   const entries = Object.entries(row || {});
   for (const alias of aliases || []) {
@@ -1105,6 +1185,7 @@ function summarizeNuvidioRowsClient(rows) {
   const subtags = new Map();
   const operators = new Map();
   const tmaByOperator = new Map();
+  const aliasMap = buildRegisteredOperatorAliasMap("nuvidio");
   let total = 0;
   let waitSum = 0;
   let waitCount = 0;
@@ -1145,13 +1226,14 @@ function summarizeNuvidioRowsClient(rows) {
       "Usuario",
       "Usuário"
     ]);
-    if (operator) {
-      operators.set(operator, Number(operators.get(operator) || 0) + 1);
+    const operatorResolved = resolveOperatorFromRegistryClient(operator, aliasMap);
+    if (operatorResolved) {
+      operators.set(operatorResolved, Number(operators.get(operatorResolved) || 0) + 1);
       if (Number.isFinite(tma)) {
-        const current = tmaByOperator.get(operator) || { sum: 0, count: 0 };
+        const current = tmaByOperator.get(operatorResolved) || { sum: 0, count: 0 };
         current.sum += tma;
         current.count += 1;
-        tmaByOperator.set(operator, current);
+        tmaByOperator.set(operatorResolved, current);
       }
     }
   });
@@ -1190,6 +1272,7 @@ function summarize0800RowsClient(rows) {
   let daysCount = 0;
   let fcrYes = 0;
   let fcrTotal = 0;
+  const aliasMap = buildRegisteredOperatorAliasMap("0800");
 
   (rows || []).forEach((row) => {
     total += 1;
@@ -1224,7 +1307,8 @@ function summarize0800RowsClient(rows) {
       "Usuario",
       "Usuário"
     ]);
-    if (operator) operators.set(operator, Number(operators.get(operator) || 0) + 1);
+    const operatorResolved = resolveOperatorFromRegistryClient(operator, aliasMap);
+    if (operatorResolved) operators.set(operatorResolved, Number(operators.get(operatorResolved) || 0) + 1);
   });
 
   const producaoPorOperador = [...operators.entries()]

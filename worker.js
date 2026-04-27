@@ -1,4 +1,4 @@
-const CORS_HEADERS = {
+﻿const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-headers": "content-type"
@@ -29,6 +29,14 @@ function safeFileName(name) {
 
 function sanitizeOperationType(value) {
   return String(value || "").trim().toLowerCase() === "0800" ? "0800" : "nuvidio";
+}
+
+function sanitizeSyncOperationType(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "0800") return "0800";
+  if (raw === "nuvidio") return "nuvidio";
+  if (raw === "all" || raw === "ambos" || raw === "todas") return "all";
+  return "all";
 }
 
 function sanitizeR2Kind(value) {
@@ -643,6 +651,15 @@ function normalizeCsvText(value) {
     .toLowerCase();
 }
 
+function normalizeOperatorToken(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9@]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function parseCsvSemicolon(content) {
   const source = String(content || "").replace(/^\uFEFF/, "");
   if (!source.trim()) return [];
@@ -752,6 +769,43 @@ function resolveOperatorNameFromRow(row, aliases = []) {
   return raw;
 }
 
+function buildOperatorAliasMap(operators = [], operationType = "nuvidio") {
+  const map = new Map();
+  (operators || []).forEach((operator) => {
+    const laneAlias = operationType === "0800"
+      ? String(operator?.line0800Username || "")
+      : String(operator?.nuvidioUsername || "");
+    const aliases = [
+      laneAlias,
+      String(operator?.username || ""),
+      String(operator?.name || "")
+    ].filter(Boolean);
+    aliases.forEach((alias) => {
+      const normalized = normalizeOperatorToken(alias);
+      if (!normalized) return;
+      if (!map.has(normalized)) {
+        map.set(normalized, String(operator?.name || operator?.username || alias || "Operador"));
+      }
+      if (normalized.includes("@")) {
+        const local = normalized.split("@")[0];
+        if (local && !map.has(local)) {
+          map.set(local, String(operator?.name || operator?.username || alias || "Operador"));
+        }
+      }
+    });
+  });
+  return map;
+}
+
+function resolveOperatorFromAliasMap(rawValue, aliasMap = new Map()) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  const normalized = normalizeOperatorToken(raw);
+  if (!normalized) return raw;
+  const mapped = aliasMap.get(normalized) || aliasMap.get(normalized.split("@")[0]);
+  return mapped || raw;
+}
+
 function parseNumberLoose(value) {
   const raw = String(value || "").trim();
   if (!raw) return NaN;
@@ -768,6 +822,28 @@ function parseDurationSeconds(value) {
   if (!match) return NaN;
   const [, h, m, s] = match;
   return (Number(h) * 3600) + (Number(m) * 60) + Number(s);
+}
+
+function parseDateToIso(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const ddmmyyyy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ddmmyyyy) {
+    const day = String(ddmmyyyy[1]).padStart(2, "0");
+    const month = String(ddmmyyyy[2]).padStart(2, "0");
+    const year = String(ddmmyyyy[3]);
+    return `${year}-${month}-${day}`;
+  }
+  const short = raw.split(/[ T]/)[0];
+  const shortMatch = short.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (shortMatch) {
+    const day = String(shortMatch[1]).padStart(2, "0");
+    const month = String(shortMatch[2]).padStart(2, "0");
+    const year = String(shortMatch[3]);
+    return `${year}-${month}-${day}`;
+  }
+  return "";
 }
 
 function normalizeStatusBucket(value) {
@@ -794,11 +870,12 @@ function mapToTopList(counterMap, maxItems = 5) {
     .slice(0, maxItems);
 }
 
-function aggregateNuvidio(rows) {
+function aggregateNuvidio(rows, options = {}) {
   const statuses = { aprovadas: 0, reprovadas: 0, semAcao: 0 };
   const subtags = new Map();
   const atendentes = new Map();
   const tmaByOperator = new Map();
+  const aliasMap = options?.aliasMap instanceof Map ? options.aliasMap : new Map();
   let total = 0;
   let waitSum = 0;
   let waitCount = 0;
@@ -826,18 +903,18 @@ function aggregateNuvidio(rows) {
     }
 
     pushTopCounter(subtags, getRowValueByHeader(row, ["Subtag"]));
-    const atendente = resolveOperatorNameFromRow(row, [
+    const atendente = resolveOperatorFromAliasMap(resolveOperatorNameFromRow(row, [
       "Email do atendente",
       "Atendente",
       "Analista",
       "Usuario de Abertura da Ocorrencia",
-      "Usuário de Abertura da Ocorrência",
+      "UsuÃ¡rio de Abertura da OcorrÃªncia",
       "Funcionario",
-      "Funcionário",
+      "FuncionÃ¡rio",
       "Operador",
       "Usuario",
-      "Usuário"
-    ]);
+      "UsuÃ¡rio"
+    ]), aliasMap);
     if (atendente) {
       atendentes.set(atendente, Number(atendentes.get(atendente) || 0) + 1);
       if (Number.isFinite(tma)) {
@@ -874,10 +951,11 @@ function aggregateNuvidio(rows) {
   };
 }
 
-function aggregate0800(rows) {
+function aggregate0800(rows, options = {}) {
   const statuses = { aprovadas: 0, reprovadas: 0, pendenciadas: 0, semAcao: 0 };
   const subMotivos = new Map();
   const analistas = new Map();
+  const aliasMap = options?.aliasMap instanceof Map ? options.aliasMap : new Map();
   let total = 0;
   let daysSum = 0;
   let daysCount = 0;
@@ -892,29 +970,29 @@ function aggregate0800(rows) {
     else if (status === "pendenciadas") statuses.pendenciadas += 1;
     else statuses.semAcao += 1;
 
-    const days = parseNumberLoose(getRowValueByHeader(row, ["Dias Para Resolucao", "Dias Para Resolução"]));
+    const days = parseNumberLoose(getRowValueByHeader(row, ["Dias Para Resolucao", "Dias Para ResoluÃ§Ã£o"]));
     if (Number.isFinite(days)) {
       daysSum += days;
       daysCount += 1;
     }
 
-    const fcr = normalizeCsvText(getRowValueByHeader(row, ["FCR (Sim / Nao)", "FCR (Sim / Não)", "FCR"]));
+    const fcr = normalizeCsvText(getRowValueByHeader(row, ["FCR (Sim / Nao)", "FCR (Sim / NÃ£o)", "FCR"]));
     if (fcr) {
       fcrTotal += 1;
       if (fcr.startsWith("sim")) fcrYes += 1;
     }
 
     pushTopCounter(subMotivos, getRowValueByHeader(row, ["Sub-Motivo", "Sub Motivo"]));
-    pushTopCounter(analistas, resolveOperatorNameFromRow(row, [
+    pushTopCounter(analistas, resolveOperatorFromAliasMap(resolveOperatorNameFromRow(row, [
       "Usuario de Abertura da Ocorrencia",
-      "Usuário de Abertura da Ocorrência",
+      "UsuÃ¡rio de Abertura da OcorrÃªncia",
       "Analista",
       "Funcionario",
-      "Funcionário",
+      "FuncionÃ¡rio",
       "Operador",
       "Usuario",
-      "Usuário"
-    ]));
+      "UsuÃ¡rio"
+    ]), aliasMap));
   }
 
   const producaoPorOperador = [...analistas.entries()]
@@ -987,15 +1065,227 @@ async function buildR2Insights(env) {
   const nuvidioRows = await readCsvFromR2Object(bucket, files.nuvidio);
   const line0800Rows = await readCsvFromR2Object(bucket, files.line0800);
 
+  let operators = [];
+  try {
+    operators = await resolveOperators(env);
+  } catch {
+    operators = [];
+  }
+  const nuvidioAliasMap = buildOperatorAliasMap(operators, "nuvidio");
+  const line0800AliasMap = buildOperatorAliasMap(operators, "0800");
+
   return {
     views: {
-      nuvidio: aggregateNuvidio(nuvidioRows),
-      line0800: aggregate0800(line0800Rows)
+      nuvidio: aggregateNuvidio(nuvidioRows, { aliasMap: nuvidioAliasMap }),
+      line0800: aggregate0800(line0800Rows, { aliasMap: line0800AliasMap })
     },
     sources: {
       nuvidio: files.nuvidio?.key || "",
       line0800: files.line0800?.key || ""
     }
+  };
+}
+
+function computeEffectiveness(operationType, counts) {
+  const approved = Number(counts?.approved || 0);
+  const reproved = Number(counts?.reproved || 0);
+  const pending = Number(counts?.pending || 0);
+  const noAction = Number(counts?.noAction || 0);
+  const total = approved + reproved + pending + noAction;
+  if (total <= 0) {
+    return { total: 0, effectiveness: 0 };
+  }
+  const effective = operationType === "0800"
+    ? (approved + reproved + pending)
+    : (approved + reproved);
+  return {
+    total,
+    effectiveness: (effective / total) * 100
+  };
+}
+
+async function syncOperatorResultsFromR2(env, operationTypeInput, options = {}) {
+  const operationType = sanitizeOperationType(operationTypeInput);
+  const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+  if (!bucket) return { ok: false, error: "R2 nao configurado." };
+
+  const files = await resolveR2SourceFiles(bucket);
+  const targetFile = operationType === "0800" ? files.line0800 : files.nuvidio;
+  if (!targetFile?.key) {
+    return { ok: false, error: `Nao achei arquivo ${operationType} no R2.` };
+  }
+
+  const rows = await readCsvFromR2Object(bucket, targetFile);
+  if (!rows.length) {
+    return { ok: false, error: "Arquivo parseado vazio." };
+  }
+
+  const operators = await resolveOperators(env);
+  const aliasMap = buildOperatorAliasMap(operators, operationType);
+  const aggregates = new Map();
+  const dateSet = new Set();
+
+  for (const row of rows) {
+    const dateRaw = operationType === "0800"
+      ? getRowValueByHeader(row, [
+        "Data Abertura Ocorrencia",
+        "Data Abertura Ocorrência",
+        "Data Abertura OcorrÃªncia",
+        "Data Abertura",
+        "Data"
+      ])
+      : getRowValueByHeader(row, [
+        "Data Abreviada",
+        "Data",
+        "Data de Abertura"
+      ]);
+    const date = parseDateToIso(dateRaw);
+    if (!date) continue;
+
+    const userRaw = operationType === "0800"
+      ? getRowValueByHeader(row, [
+        "Usuario de Abertura da Ocorrencia",
+        "Usuário de Abertura da Ocorrência",
+        "UsuÃ¡rio de Abertura da OcorrÃªncia",
+        "Usuario 0800",
+        "Usuário 0800",
+        "Usuario",
+        "Operador"
+      ])
+      : getRowValueByHeader(row, [
+        "Email do atendente",
+        "Usuario Nuvidio",
+        "Usuário Nuvidio",
+        "Atendente",
+        "Usuario",
+        "Operador"
+      ]);
+    const userName = resolveOperatorFromAliasMap(userRaw, aliasMap);
+    const userToken = normalizeOperatorToken(userRaw);
+    const mappedOperator = operators.find((operator) => (
+      String(operator?.name || "").trim().toLowerCase() === String(userName || "").trim().toLowerCase() ||
+      normalizeOperatorToken(operationType === "0800" ? operator?.line0800Username : operator?.nuvidioUsername) === userToken ||
+      normalizeOperatorToken(operator?.username) === userToken
+    ));
+    if (!mappedOperator?.id) continue;
+
+    const statusRaw = operationType === "0800"
+      ? getRowValueByHeader(row, ["Motivo", "Tag", "Status"])
+      : getRowValueByHeader(row, ["Tag", "Motivo", "Status"]);
+    const bucketStatus = normalizeStatusBucket(statusRaw);
+    const key = `${mappedOperator.id}__${date}__${operationType}`;
+    if (!aggregates.has(key)) {
+      aggregates.set(key, {
+        userId: String(mappedOperator.id || ""),
+        userName: String(mappedOperator.name || ""),
+        username: String(mappedOperator.username || ""),
+        date,
+        operationType,
+        approved: 0,
+        reproved: 0,
+        pending: 0,
+        noAction: 0
+      });
+    }
+    const current = aggregates.get(key);
+    if (bucketStatus === "aprovadas") current.approved += 1;
+    else if (bucketStatus === "reprovadas") current.reproved += 1;
+    else if (bucketStatus === "pendenciadas") current.pending += 1;
+    else current.noAction += 1;
+    dateSet.add(date);
+  }
+
+  if (!aggregates.size) {
+    return { ok: false, error: "Nenhum registro com usuario mapeado foi encontrado na base." };
+  }
+
+  const allDates = [...dateSet].sort((a, b) => a.localeCompare(b));
+  const latestDate = allDates[allDates.length - 1] || "";
+  const fullSync = Boolean(options?.fullSync);
+  const selectedDate = String(options?.date || "").trim();
+  const targetDate = selectedDate || latestDate;
+  const items = [...aggregates.values()].filter((entry) => fullSync || entry.date === targetDate);
+  if (!items.length) {
+    return { ok: false, error: "Nenhum registro elegivel para sincronizacao (data alvo vazia)." };
+  }
+
+  const existingRows = await env.DB
+    .prepare("SELECT user_id, result_date, operation_type, quality_score FROM operator_results_daily")
+    .all();
+  const qualityMap = new Map();
+  for (const row of existingRows.results || []) {
+    const k = `${String(row.user_id || "")}__${String(row.result_date || "")}__${sanitizeOperationType(row.operation_type || "")}`;
+    qualityMap.set(k, Number(row.quality_score || 0));
+  }
+
+  let imported = 0;
+  for (const item of items) {
+    const metrics = computeEffectiveness(item.operationType, item);
+    const qualityKey = `${item.userId}__${item.date}__${item.operationType}`;
+    const qualityScore = Number(qualityMap.get(qualityKey) || 0);
+    const result = await upsertOperatorResult(env.DB, {
+      userId: item.userId,
+      userName: item.userName,
+      username: item.username,
+      date: item.date,
+      operationType: item.operationType,
+      approvedCount: item.approved,
+      reprovedCount: item.reproved,
+      pendingCount: item.operationType === "0800" ? item.pending : 0,
+      noActionCount: item.noAction,
+      productionTotal: metrics.total,
+      effectiveness: metrics.effectiveness,
+      qualityScore,
+      updatedById: "r2-sync",
+      updatedByName: "R2 Sync"
+    });
+    if (result.ok) imported += 1;
+  }
+
+  return {
+    ok: true,
+    imported,
+    totalMapped: aggregates.size,
+    operationType,
+    targetDate,
+    sourceKey: targetFile.key
+  };
+}
+
+async function syncOperatorResultsFromR2All(env, operationTypeInput, options = {}) {
+  const operationType = sanitizeSyncOperationType(operationTypeInput);
+  if (operationType === "0800" || operationType === "nuvidio") {
+    const single = await syncOperatorResultsFromR2(env, operationType, options);
+    return {
+      ok: Boolean(single?.ok),
+      operationType,
+      totalImported: Number(single?.imported || 0),
+      items: [single]
+    };
+  }
+
+  const ops = ["0800", "nuvidio"];
+  const items = [];
+  for (const op of ops) {
+    try {
+      const result = await syncOperatorResultsFromR2(env, op, options);
+      items.push(result);
+    } catch (error) {
+      items.push({
+        ok: false,
+        operationType: op,
+        error: String(error?.message || "Falha ao sincronizar operacao.")
+      });
+    }
+  }
+
+  const totalImported = items.reduce((sum, item) => sum + Number(item?.imported || 0), 0);
+  const successCount = items.filter((item) => item?.ok).length;
+  return {
+    ok: successCount > 0,
+    operationType: "all",
+    totalImported,
+    items
   };
 }
 
@@ -1315,6 +1605,28 @@ export default {
         return jsonResponse({ ok: true, updatedAt: result.updatedAt });
       }
 
+      if (url.pathname === "/api/r2-sync-results" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const operationType = sanitizeSyncOperationType(body?.operationType || "all");
+        const fullSync = body?.fullSync === undefined ? true : Boolean(body?.fullSync);
+        const date = parseDateToIso(body?.date);
+
+        const result = await syncOperatorResultsFromR2All(env, operationType, {
+          fullSync,
+          date
+        });
+
+        if (!result?.ok) {
+          const firstError = result?.items?.find((item) => !item?.ok)?.error || "Nenhum registro sincronizado.";
+          return jsonResponse({
+            ok: false,
+            error: firstError,
+            result
+          }, 400);
+        }
+        return jsonResponse({ ok: true, result });
+      }
+
       if (url.pathname === "/api/operator-results" && request.method === "POST") {
         const body = await request.json();
         const result = await upsertOperatorResult(env.DB, body || {});
@@ -1460,3 +1772,4 @@ export default {
     }
   }
 };
+
