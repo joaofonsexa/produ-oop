@@ -784,8 +784,9 @@ async function handleR2BaseUpload() {
     const workbook = XLSX.read(workbookBuffer, { type: "array" });
     const bestSheetName = selectBestSheetForR2Base(workbook, operation);
     const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
-    const laneSummary = buildR2LaneSummaryFromSheet(bestSheet, operation);
-    const csvRaw = XLSX.utils.sheet_to_csv(bestSheet, { FS: ";", RS: "\n", blankrows: false });
+    const normalizedSheetData = extractNormalizedSheetData(bestSheet, operation);
+    const laneSummary = buildR2LaneSummaryFromRows(normalizedSheetData.rows, operation);
+    const csvRaw = buildCsvFromNormalizedRows(normalizedSheetData.headers, normalizedSheetData.rows);
     const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
     const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
 
@@ -901,11 +902,79 @@ function buildEmpty0800Lane() {
   };
 }
 
-function buildR2LaneSummaryFromSheet(sheet, operationType) {
-  const rows = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: "", blankrows: false });
+function buildR2LaneSummaryFromRows(rows, operationType) {
   return operationType === "0800"
     ? summarize0800RowsClient(rows)
     : summarizeNuvidioRowsClient(rows);
+}
+
+function extractNormalizedSheetData(sheet, operationType) {
+  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, defval: "" });
+  if (!Array.isArray(matrix) || !matrix.length) {
+    return { headers: [], rows: [] };
+  }
+
+  const expected = operationType === "0800"
+    ? ["motivo", "sub-motivo", "analista", "usuario de abertura", "data recebimento"]
+    : ["atendente", "tag", "subtag", "data abreviada", "duracao em segundos"];
+  const normalizedExpected = expected.map((item) => normalizeR2Key(item));
+
+  let headerIndex = 0;
+  let bestScore = -1;
+  const maxProbe = Math.min(matrix.length, 30);
+  for (let i = 0; i < maxProbe; i += 1) {
+    const row = Array.isArray(matrix[i]) ? matrix[i] : [];
+    const headerCells = row
+      .map((cell) => String(cell || "").trim())
+      .filter(Boolean);
+    if (headerCells.length < 4) continue;
+    const normalizedCells = headerCells.map((cell) => normalizeR2Key(cell));
+    const score = normalizedExpected.reduce((acc, key) => acc + (normalizedCells.some((col) => col.includes(key)) ? 1 : 0), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      headerIndex = i;
+    }
+  }
+
+  const rawHeader = Array.isArray(matrix[headerIndex]) ? matrix[headerIndex] : [];
+  const headers = rawHeader.map((cell, index) => {
+    const text = String(cell || "").trim();
+    return text || `coluna_${index + 1}`;
+  });
+  const width = headers.length;
+  if (!width) return { headers: [], rows: [] };
+
+  const rows = [];
+  for (let i = headerIndex + 1; i < matrix.length; i += 1) {
+    const line = Array.isArray(matrix[i]) ? matrix[i] : [];
+    const row = {};
+    let hasValue = false;
+    for (let col = 0; col < width; col += 1) {
+      const value = String(line[col] ?? "").trim();
+      row[headers[col]] = value;
+      if (value) hasValue = true;
+    }
+    if (hasValue) rows.push(row);
+  }
+
+  return { headers, rows };
+}
+
+function buildCsvFromNormalizedRows(headers, rows) {
+  const cols = Array.isArray(headers) ? headers : [];
+  const list = Array.isArray(rows) ? rows : [];
+  if (!cols.length) return "";
+  const escapeCell = (value) => {
+    const text = String(value ?? "");
+    const escaped = text.replace(/"/g, "\"\"");
+    return `"${escaped}"`;
+  };
+  const lines = [];
+  lines.push(cols.map((h) => escapeCell(h)).join(";"));
+  list.forEach((row) => {
+    lines.push(cols.map((h) => escapeCell(row?.[h] || "")).join(";"));
+  });
+  return lines.join("\n");
 }
 
 function normalizeR2Key(value) {
