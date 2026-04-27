@@ -785,7 +785,6 @@ async function handleR2BaseUpload() {
     const bestSheetName = selectBestSheetForR2Base(workbook, operation);
     const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
     const normalizedSheetData = extractNormalizedSheetData(bestSheet, operation);
-    const laneSummary = buildR2LaneSummaryFromRows(normalizedSheetData.rows, operation);
     const csvRaw = buildCsvFromNormalizedRows(normalizedSheetData.headers, normalizedSheetData.rows);
     const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
     const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
@@ -801,14 +800,13 @@ async function handleR2BaseUpload() {
 
     const sourceKey = String(sourcePayload?.key || "");
     const parsedKey = String(parsedPayload?.key || "");
-    const mergedViews = mergeR2ViewsWithLane(state.r2Insights, operation, laneSummary);
-    state.r2Insights = mergedViews;
-    await fetchJson(`${REMOTE_API_BASE}/r2-insights/snapshot`, {
+    const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ views: mergedViews }),
-      timeoutMs: 120000
+      body: JSON.stringify({ operationType: operation }),
+      timeoutMs: 180000
     });
+    state.r2Insights = rebuilt?.views || state.r2Insights;
     setUploadStatus(`Base ${operationLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
     window.alert(
       `Upload para R2 concluido.\n` +
@@ -818,6 +816,18 @@ async function handleR2BaseUpload() {
       `- Chave R2 (xlsx): ${sourceKey || "n/d"}\n` +
       `- Chave R2 (parseada): ${parsedKey || "n/d"}`
     );
+
+    const lane = operation === "0800"
+      ? state.r2Insights?.line0800
+      : state.r2Insights?.nuvidio;
+    const hasProductionByOperator = Array.isArray(lane?.producaoPorOperador) && lane.producaoPorOperador.length > 0;
+    if (!hasProductionByOperator) {
+      const headersPreview = (normalizedSheetData.headers || []).slice(0, 18).join(" | ");
+      window.alert(
+        `Atencao: base enviada, mas sem producao por operador detectada.\n` +
+        `Colunas lidas na aba usada:\n${headersPreview || "Nenhuma coluna detectada"}`
+      );
+    }
     renderDashboardAnalytics();
   } catch (error) {
     const message = String(error?.message || "Falha ao enviar base para o R2.");
@@ -985,10 +995,41 @@ function getRowValueByAliasesClient(row, aliases) {
   const entries = Object.entries(row || {});
   for (const alias of aliases || []) {
     const normalizedAlias = normalizeR2Key(alias);
-    const found = entries.find(([key]) => normalizeR2Key(key) === normalizedAlias);
+    const found = entries.find(([key]) => {
+      const normalizedKey = normalizeR2Key(key);
+      if (!normalizedAlias || !normalizedKey) return false;
+      if (normalizedKey === normalizedAlias) return true;
+      if (normalizedKey.includes(normalizedAlias) || normalizedAlias.includes(normalizedKey)) return true;
+      return false;
+    });
     if (found) return String(found[1] || "").trim();
   }
   return "";
+}
+
+function resolveOperatorNameFromRowClient(row, aliases) {
+  const explicit = getRowValueByAliasesClient(row, aliases);
+  if (explicit) return explicit;
+  const entries = Object.entries(row || {});
+  const found = entries.find(([key]) => {
+    const normalized = normalizeR2Key(key);
+    return (
+      normalized.includes("atendente") ||
+      normalized.includes("analista") ||
+      normalized.includes("operador") ||
+      normalized.includes("funcionario") ||
+      normalized.includes("usuario") ||
+      normalized.includes("login") ||
+      normalized.includes("emaildoatendente")
+    );
+  });
+  if (!found) return "";
+  const raw = String(found[1] || "").trim();
+  if (!raw) return "";
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(raw)) {
+    return raw.split("@")[0];
+  }
+  return raw;
 }
 
 function parseNumberLooseClient(value) {
@@ -1058,7 +1099,7 @@ function summarizeNuvidioRowsClient(rows) {
     const subtag = getRowValueByAliasesClient(row, ["Subtag"]);
     if (subtag) subtags.set(subtag, Number(subtags.get(subtag) || 0) + 1);
 
-    const operator = getRowValueByAliasesClient(row, [
+    const operator = resolveOperatorNameFromRowClient(row, [
       "Atendente",
       "Analista",
       "Usuario de Abertura da Ocorrencia",
@@ -1121,7 +1162,7 @@ function summarize0800RowsClient(rows) {
     const subMotivo = getRowValueByAliasesClient(row, ["Sub-Motivo", "Sub Motivo"]);
     if (subMotivo) subMotivos.set(subMotivo, Number(subMotivos.get(subMotivo) || 0) + 1);
 
-    const operator = getRowValueByAliasesClient(row, [
+    const operator = resolveOperatorNameFromRowClient(row, [
       "Analista",
       "Usuario de Abertura da Ocorrencia",
       "Usuário de Abertura da Ocorrência",

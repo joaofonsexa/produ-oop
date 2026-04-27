@@ -693,10 +693,40 @@ function getRowValueByHeader(row, aliases = []) {
   const keys = Object.keys(row || {});
   for (const alias of aliases) {
     const normAlias = normalizeCsvText(alias);
-    const found = keys.find((key) => normalizeCsvText(key) === normAlias);
+    const found = keys.find((key) => {
+      const normKey = normalizeCsvText(key);
+      if (!normKey || !normAlias) return false;
+      if (normKey === normAlias) return true;
+      if (normKey.includes(normAlias) || normAlias.includes(normKey)) return true;
+      return false;
+    });
     if (found) return String(row[found] || "").trim();
   }
   return "";
+}
+
+function resolveOperatorNameFromRow(row, aliases = []) {
+  const explicit = getRowValueByHeader(row, aliases);
+  if (explicit) return explicit;
+  const keys = Object.keys(row || {});
+  const guessedKey = keys.find((key) => {
+    const norm = normalizeCsvText(key);
+    return (
+      norm.includes("atendente") ||
+      norm.includes("analista") ||
+      norm.includes("operador") ||
+      norm.includes("funcionario") ||
+      norm.includes("usuario") ||
+      norm.includes("login") ||
+      norm.includes("emaildoatendente")
+    );
+  });
+  if (!guessedKey) return "";
+  const raw = String(row[guessedKey] || "").trim();
+  if (!raw) return "";
+  const emailMatch = raw.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/);
+  if (emailMatch) return raw.split("@")[0];
+  return raw;
 }
 
 function parseNumberLoose(value) {
@@ -771,7 +801,7 @@ function aggregateNuvidio(rows) {
     }
 
     pushTopCounter(subtags, getRowValueByHeader(row, ["Subtag"]));
-    const atendente = getRowValueByHeader(row, [
+    const atendente = resolveOperatorNameFromRow(row, [
       "Atendente",
       "Analista",
       "Usuario de Abertura da Ocorrencia",
@@ -834,7 +864,7 @@ function aggregate0800(rows) {
     }
 
     pushTopCounter(subMotivos, getRowValueByHeader(row, ["Sub-Motivo", "Sub Motivo"]));
-    pushTopCounter(analistas, getRowValueByHeader(row, [
+    pushTopCounter(analistas, resolveOperatorNameFromRow(row, [
       "Analista",
       "Usuario de Abertura da Ocorrencia",
       "Usuário de Abertura da Ocorrência",
@@ -1214,6 +1244,14 @@ export default {
             updatedAt: snapshot.updatedAt
           });
         }
+        const payload = await buildR2Insights(env);
+        if (payload?.views) {
+          await writeR2InsightsSnapshot(env.DB, payload.views);
+        }
+        return jsonResponse({ ok: true, views: payload.views, sources: payload.sources });
+      }
+
+      if (url.pathname === "/api/r2-insights/rebuild" && request.method === "POST") {
         const payload = await buildR2Insights(env);
         if (payload?.views) {
           await writeR2InsightsSnapshot(env.DB, payload.views);
