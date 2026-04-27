@@ -1075,6 +1075,20 @@ async function resolveR2LatestXlsxSources(bucket) {
   return { line0800, nuvidio };
 }
 
+async function ensureR2BaseFolders(bucket) {
+  const keys = [
+    "bases/nuvidio/base/.keep",
+    "bases/0800/base/.keep"
+  ];
+  for (const key of keys) {
+    await bucket.put(key, "keep", {
+      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+      customMetadata: { source: "portal", kind: "folder-marker" }
+    });
+  }
+  return { ok: true, keys };
+}
+
 async function readCsvFromR2Object(bucket, objectMeta) {
   if (!objectMeta?.key) return [];
   const key = String(objectMeta.key || "").trim().toLowerCase();
@@ -1668,6 +1682,15 @@ export default {
               : null
           }
         });
+      }
+
+      if (url.pathname === "/api/r2-base-folders/ensure" && request.method === "POST") {
+        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
+        if (!bucket) {
+          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
+        }
+        const result = await ensureR2BaseFolders(bucket);
+        return jsonResponse(result);
       }
 
       if (url.pathname === "/api/r2-source/download" && request.method === "GET") {

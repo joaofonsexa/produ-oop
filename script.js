@@ -921,6 +921,13 @@ async function handleR2RefreshData() {
   setUploadStatus(`Atualizando dados do R2 (${selectedOperationLabel})...`, "loading");
 
   try {
+    await fetchJson(`${REMOTE_API_BASE}/r2-base-folders/ensure`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+      timeoutMs: 60000
+    });
+
     const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
       method: "POST",
       headers: { "content-type": "application/json" },
