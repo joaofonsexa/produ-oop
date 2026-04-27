@@ -1026,33 +1026,50 @@ async function listAllR2Objects(bucket) {
 
 async function resolveR2SourceFiles(bucket) {
   const objects = await listAllR2Objects(bucket);
-  const pickLatest = (matcher) => {
-    return objects
-      .filter((obj) => matcher(normalizeCsvText(obj.key || "")))
+  const keyRaw = (obj) => String(obj?.key || "").trim().toLowerCase();
+  const isCsvLike = (obj) => {
+    const key = keyRaw(obj);
+    return key.endsWith(".csv") || key.endsWith(".txt");
+  };
+  const pickLatest = (pool, matcher) => {
+    return pool
+      .filter((obj) => matcher(keyRaw(obj), normalizeCsvText(obj.key || "")))
       .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
   };
+  const csvObjects = objects.filter(isCsvLike);
 
-  const line0800 = pickLatest((key) => (
-    key.includes("bases/0800/parsed/") ||
-    key.includes("bases/0800/") ||
-    key.includes("detalhes do protocolo com ocorrencias") ||
-    key.includes("detalhesdoprotocolo")
-  ));
-  const nuvidio = pickLatest((key) => (
-    key.includes("bases/nuvidio/parsed/") ||
-    key.includes("bases/nuvidio/") ||
-    key.includes("todos-atendimentos") ||
-    key.includes("todos atendimentos")
-  ));
+  const line0800 =
+    pickLatest(csvObjects, (key) => key.includes("bases/0800/parsed/")) ||
+    pickLatest(csvObjects, (key) => key.includes("bases/0800/")) ||
+    pickLatest(csvObjects, (keyRawValue, keyNorm) => (
+      keyNorm.includes("detalhes do protocolo com ocorrencias") ||
+      keyNorm.includes("detalhesdoprotocolo")
+    )) ||
+    null;
+  const nuvidio =
+    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/parsed/")) ||
+    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/")) ||
+    pickLatest(csvObjects, (keyRawValue, keyNorm) => (
+      keyNorm.includes("todos-atendimentos") ||
+      keyNorm.includes("todos atendimentos")
+    )) ||
+    null;
   return { line0800, nuvidio };
 }
 
 async function readCsvFromR2Object(bucket, objectMeta) {
   if (!objectMeta?.key) return [];
+  const key = String(objectMeta.key || "").trim().toLowerCase();
+  if (!(key.endsWith(".csv") || key.endsWith(".txt"))) return [];
   const object = await bucket.get(objectMeta.key);
   if (!object) return [];
   const content = await object.text();
-  return parseCsvSemicolon(content);
+  const semicolonRows = parseCsvSemicolon(content);
+  if (semicolonRows.length > 0) return semicolonRows;
+
+  // fallback para arquivos csv em virgula
+  const commaRows = parseCsvSemicolon(String(content || "").replace(/,/g, ";"));
+  return commaRows;
 }
 
 async function buildR2Insights(env) {
@@ -1117,7 +1134,10 @@ async function syncOperatorResultsFromR2(env, operationTypeInput, options = {}) 
 
   const rows = await readCsvFromR2Object(bucket, targetFile);
   if (!rows.length) {
-    return { ok: false, error: "Arquivo parseado vazio." };
+    return {
+      ok: false,
+      error: `Arquivo parseado vazio (${targetFile.key}). Use CSV em bases/${operationType}/parsed/ ou bases/${operationType}/.`
+    };
   }
 
   const operators = await resolveOperators(env);

@@ -416,8 +416,7 @@
 
       <section id="admin" class="content-section">
         <div class="admin-grid portal-admin-grid">
-          <section class="panel">
-            <div class="section-head">
+          <section id="manual-entry-panel" class="panel hidden"> <div class="section-head">
               <div>
                 <p class="eyebrow">Lançamento manual</p>
                 <h3>Cadastrar resultado do operador</h3>
@@ -515,11 +514,7 @@
                 <div id="upload-mode-options" class="upload-mode-options">
                   <label class="upload-mode-option">
                     <input type="checkbox" name="upload-mode" value="production" checked>
-                    <span>Producao</span>
-                  </label>
-                  <label class="upload-mode-option">
-                    <input type="checkbox" name="upload-mode" value="effectiveness" checked>
-                    <span>Efetividade (calculada)</span>
+                    <span>Base (calcula producao + efetividade)</span>
                   </label>
                   <label class="upload-mode-option">
                     <input type="checkbox" name="upload-mode" value="quality" checked>
@@ -532,12 +527,13 @@
                 <input id="upload-file" type="file" accept=".xlsx,.xls,.csv">
               </label>
 
-              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Producao e Qualidade. A data e lida da propria planilha, linha a linha.</p>
+              <p id="upload-help-text" class="field-help">Colunas aceitas: Usuario Nuvidio ou Usuario 0800, Data e colunas da Base (Aprovadas/Reprovadas/Sem Acao, e Pendenciadas para 0800). Qualidade e opcional conforme selecao.</p>
               <p id="upload-status" class="upload-status hidden" role="status" aria-live="polite"></p>
 
               <div class="form-actions">
                 <button id="import-upload" class="primary-button" type="button">Importar planilha</button>
                 <button id="r2-base-upload" class="ghost-button" type="button">Salvar base no R2</button>
+                <button id="r2-refresh-data" class="ghost-button" type="button">Atualizar dados (R2)</button>
                 <button id="download-template" class="ghost-button" type="button">Baixar modelo</button>
                 <button id="remove-upload" class="ghost-button danger" type="button">Remover carga por planilha</button>
               </div>
@@ -573,9 +569,16 @@
     </main>
   </div>
 
-  <script src="script.js?v=20260427-portal-30"></script>
+  <script src="script.js?v=20260427-portal-32"></script>
 </body>
 </html>
+
+
+
+
+
+
+
 
 
 

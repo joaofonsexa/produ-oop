@@ -10,7 +10,7 @@ const ACCESS_LEVELS = {
 };
 
 const IMPORT_METRICS = {
-  production: { label: "Producao", templateColumns: ["Producao"] },
+  production: { label: "Base", templateColumns: [] },
   effectiveness: {
     label: "Efetividade",
     templateColumns: ["Aprovadas", "Reprovadas", "Sem Acao"]
@@ -18,7 +18,7 @@ const IMPORT_METRICS = {
   quality: { label: "Qualidade", templateColumns: ["Qualidade"] }
 };
 
-const IMPORT_METRIC_ORDER = ["production", "effectiveness", "quality"];
+const IMPORT_METRIC_ORDER = ["production", "quality"];
 
 const state = {
   section: "dashboard",
@@ -131,6 +131,7 @@ const elements = {
   downloadTemplate: document.querySelector("#download-template"),
   removeUpload: document.querySelector("#remove-upload"),
   r2BaseUpload: document.querySelector("#r2-base-upload"),
+  r2RefreshData: document.querySelector("#r2-refresh-data"),
   systemMaintenancePanel: document.querySelector("#system-maintenance-panel"),
   maintenanceStatusText: document.querySelector("#maintenance-status-text"),
   maintenanceToggleButton: document.querySelector("#maintenance-toggle-button"),
@@ -213,6 +214,7 @@ function bindEvents() {
   elements.downloadTemplate?.addEventListener("click", handleDownloadTemplate);
   elements.removeUpload?.addEventListener("click", () => void handleSpreadsheetRemoval());
   elements.r2BaseUpload?.addEventListener("click", () => void handleR2BaseUpload());
+  elements.r2RefreshData?.addEventListener("click", () => void handleR2RefreshData());
   elements.analyticsClearFilters?.addEventListener("click", handleAnalyticsClearFilters);
   elements.analyticsAttendantSearch?.addEventListener("input", handleAnalyticsAttendantSearchInput);
   elements.analyticsDateList?.addEventListener("change", handleAnalyticsDateChange);
@@ -566,6 +568,7 @@ async function handleSpreadsheetUpload() {
   if (elements.importUpload) elements.importUpload.disabled = true;
   if (elements.removeUpload) elements.removeUpload.disabled = true;
   if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
+  if (elements.r2RefreshData) elements.r2RefreshData.disabled = true;
   setUploadStatus("Importando planilha em segundo plano. Voce pode continuar navegando no portal.", "loading");
 
   try {
@@ -637,6 +640,7 @@ async function handleSpreadsheetUpload() {
     if (elements.importUpload) elements.importUpload.disabled = false;
     if (elements.removeUpload) elements.removeUpload.disabled = false;
     if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
+    if (elements.r2RefreshData) elements.r2RefreshData.disabled = false;
     window.setTimeout(() => {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
@@ -668,6 +672,7 @@ async function handleSpreadsheetRemoval() {
   if (elements.importUpload) elements.importUpload.disabled = true;
   if (elements.removeUpload) elements.removeUpload.disabled = true;
   if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
+  if (elements.r2RefreshData) elements.r2RefreshData.disabled = true;
   setUploadStatus("Removendo carga da planilha. Voce pode continuar navegando.", "loading");
 
   try {
@@ -724,6 +729,7 @@ async function handleSpreadsheetRemoval() {
     if (elements.importUpload) elements.importUpload.disabled = false;
     if (elements.removeUpload) elements.removeUpload.disabled = false;
     if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
+    if (elements.r2RefreshData) elements.r2RefreshData.disabled = false;
     window.setTimeout(() => {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
@@ -768,6 +774,7 @@ async function handleR2BaseUpload() {
   if (elements.importUpload) elements.importUpload.disabled = true;
   if (elements.removeUpload) elements.removeUpload.disabled = true;
   if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
+  if (elements.r2RefreshData) elements.r2RefreshData.disabled = true;
   setUploadStatus(`Enviando base ${operationLabel} para o R2...`, "loading");
 
   try {
@@ -889,6 +896,81 @@ async function handleR2BaseUpload() {
     if (elements.importUpload) elements.importUpload.disabled = false;
     if (elements.removeUpload) elements.removeUpload.disabled = false;
     if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
+    if (elements.r2RefreshData) elements.r2RefreshData.disabled = false;
+    window.setTimeout(() => {
+      if (!state.importInProgress) setUploadStatus("");
+    }, 8000);
+  }
+}
+
+async function handleR2RefreshData() {
+  if (!canManage()) return;
+  if (state.importInProgress) {
+    window.alert("Ja existe uma operacao em andamento. Aguarde para atualizar os dados do R2.");
+    return;
+  }
+
+  state.importInProgress = true;
+  if (elements.uploadFile) elements.uploadFile.disabled = true;
+  if (elements.importUpload) elements.importUpload.disabled = true;
+  if (elements.removeUpload) elements.removeUpload.disabled = true;
+  if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = true;
+  if (elements.r2RefreshData) elements.r2RefreshData.disabled = true;
+  setUploadStatus("Atualizando dados direto do R2 (Nuvidio + 0800)...", "loading");
+
+  try {
+    const rebuilt = await fetchJson(`${REMOTE_API_BASE}/r2-insights/rebuild`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operationType: "all" }),
+      timeoutMs: 180000
+    });
+    state.r2Insights = rebuilt?.views || state.r2Insights;
+
+    const syncPayload = await fetchJson(`${REMOTE_API_BASE}/r2-sync-results`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationType: "all",
+        fullSync: true
+      }),
+      timeoutMs: 10 * 60 * 1000
+    });
+
+    const syncResult = syncPayload?.result || {};
+    const items = Array.isArray(syncResult?.items) ? syncResult.items : [];
+    const totalImported = Number(syncResult?.totalImported || 0);
+    const nuvidioItem = items.find((item) => normalizeOperationType(item?.operationType || "") === "nuvidio") || null;
+    const line0800Item = items.find((item) => normalizeOperationType(item?.operationType || "") === "0800") || null;
+
+    await loadR2Insights();
+    await loadOperationRecords();
+    await loadAdminSelectedRecord();
+    if (state.session?.id) await loadMyResults();
+    renderAll();
+
+    setUploadStatus(`Atualizacao R2 concluida: ${totalImported} registro(s) sincronizado(s).`, "success");
+    window.alert(
+      `Atualizacao concluida.\n` +
+      `- Registros sincronizados: ${totalImported}\n` +
+      `- Fonte Nuvidio: ${String(nuvidioItem?.sourceKey || rebuilt?.sources?.nuvidio || "n/d")}\n` +
+      `- Fonte 0800: ${String(line0800Item?.sourceKey || rebuilt?.sources?.line0800 || "n/d")}\n\n` +
+      `Pastas esperadas no R2:\n` +
+      `- bases/nuvidio/parsed/ (preferencial)\n` +
+      `- bases/0800/parsed/ (preferencial)\n` +
+      `Tambem aceita CSV em bases/nuvidio/ e bases/0800/.`
+    );
+  } catch (error) {
+    const message = String(error?.message || "Falha ao atualizar dados direto do R2.");
+    setUploadStatus(message, "error");
+    window.alert(message);
+  } finally {
+    state.importInProgress = false;
+    if (elements.uploadFile) elements.uploadFile.disabled = false;
+    if (elements.importUpload) elements.importUpload.disabled = false;
+    if (elements.removeUpload) elements.removeUpload.disabled = false;
+    if (elements.r2BaseUpload) elements.r2BaseUpload.disabled = false;
+    if (elements.r2RefreshData) elements.r2RefreshData.disabled = false;
     window.setTimeout(() => {
       if (!state.importInProgress) setUploadStatus("");
     }, 8000);
@@ -1424,6 +1506,10 @@ async function parseSpreadsheetImportFile(file, options = {}) {
   const idxProduction = findColumnIndex(header, ["producao", "producao total", "volume", "qtde"]);
   const idxQuality = findColumnIndex(header, ["qualidade", "nota de qualidade", "nota qualidade", "quality"]);
   const selectedMetrics = getSelectedImportMetrics(options.importMetrics);
+  const selectedVisibleMetricsCount = IMPORT_METRIC_ORDER.reduce(
+    (sum, metric) => sum + (selectedMetrics.has(metric) ? 1 : 0),
+    0
+  );
   const selectedOperation = normalizeOperationType(options.importOperation || getSelectedImportOperation());
 
   if (idxName < 0 && idxUsername < 0 && idxNuvidioUsername < 0 && idx0800Username < 0) {
@@ -1584,7 +1670,7 @@ async function parseSpreadsheetImportFile(file, options = {}) {
       invalidMetricCount += 1;
       continue;
     }
-    if (!existing && selectedMetrics.size < IMPORT_METRIC_ORDER.length) {
+    if (!existing && selectedVisibleMetricsCount < IMPORT_METRIC_ORDER.length) {
       complementedRowsCount += 1;
     }
 
@@ -1668,8 +1754,8 @@ function handleDownloadTemplate() {
 
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  const selectedList = [...selectedMetrics];
-  const shortNameMap = { production: "Prod", effectiveness: "Efet", quality: "Qual" };
+  const selectedList = IMPORT_METRIC_ORDER.filter((metric) => selectedMetrics.has(metric));
+  const shortNameMap = { production: "Base", quality: "Qual" };
   const sheetName = `Modelo-${selectedList.map((metric) => shortNameMap[metric] || metric).join("-")}`.slice(0, 31);
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
   const suffix = selectedList.join("-");
@@ -1677,20 +1763,29 @@ function handleDownloadTemplate() {
 }
 
 function getSelectedImportMetrics(initialMetrics = null) {
+  const normalizeSelectedMetrics = (source) => {
+    const selected = new Set(source);
+    if (selected.has("production")) {
+      selected.add("effectiveness");
+    }
+    return selected;
+  };
   if (initialMetrics instanceof Set) {
-    return new Set([...initialMetrics].filter((metric) => Boolean(IMPORT_METRICS[metric])));
+    return normalizeSelectedMetrics([...initialMetrics].filter((metric) => Boolean(IMPORT_METRICS[metric])));
   }
   if (Array.isArray(initialMetrics)) {
-    return new Set(initialMetrics.map((item) => String(item || "").trim()).filter((metric) => Boolean(IMPORT_METRICS[metric])));
+    return normalizeSelectedMetrics(
+      initialMetrics.map((item) => String(item || "").trim()).filter((metric) => Boolean(IMPORT_METRICS[metric]))
+    );
   }
 
-  const selected = new Set();
+  const selected = [];
   elements.uploadModeInputs.forEach((input) => {
     if (!input?.checked) return;
     const metric = String(input.value || "").trim();
-    if (IMPORT_METRICS[metric]) selected.add(metric);
+    if (IMPORT_METRICS[metric]) selected.push(metric);
   });
-  return selected;
+  return normalizeSelectedMetrics(selected);
 }
 
 function getSelectedImportOperation() {
@@ -1706,7 +1801,7 @@ function getTemplateColumnsFromSelection(selectedMetrics, operation = "nuvidio")
     let cols = Array.isArray(IMPORT_METRICS[metric].templateColumns)
       ? IMPORT_METRICS[metric].templateColumns
       : [];
-    if (metric === "effectiveness") {
+    if (metric === "production") {
       cols = normalizedOperation === "0800"
         ? ["Aprovadas", "Reprovadas", "Pendenciadas", "Sem Acao"]
         : ["Aprovadas", "Reprovadas", "Sem Acao"];
@@ -1734,12 +1829,12 @@ function updateUploadModeHelp() {
   const selectedMetrics = getSelectedImportMetrics();
   const selectedOperation = getSelectedImportOperation();
   if (!selectedMetrics.size) {
-    elements.uploadHelpText.textContent = "Marque pelo menos uma metrica (Producao, Efetividade ou Qualidade) para importar.";
+    elements.uploadHelpText.textContent = "Marque pelo menos uma metrica (Base ou Qualidade) para importar.";
     return;
   }
 
   const templateColumns = getTemplateColumnsFromSelection(selectedMetrics, selectedOperation);
-  if (selectedMetrics.has("effectiveness")) {
+  if (selectedMetrics.has("production")) {
     const operationLabel = selectedOperation === "0800" ? "0800" : "Nuvidio";
     elements.uploadHelpText.textContent = `Operacao selecionada: ${operationLabel}. Pode identificar o operador somente por Usuario Nuvidio ou Usuario 0800 (nome/login sao opcionais). Efetividade e calculada automaticamente (efetivos/total), e total inclui Sem Acao.`;
     return;
