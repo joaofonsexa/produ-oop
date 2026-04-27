@@ -1202,7 +1202,7 @@ function renderDashboardAnalytics() {
   }
 
   const totalProposals = filtered.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0);
-  const avgEffectiveness = filtered.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0) / filtered.length;
+  const avgEffectiveness = calculateEffectivenessAverage(filtered);
   const monthlyQualityValues = getMonthlyQualityValues(filtered);
   const avgQuality = monthlyQualityValues.length
     ? monthlyQualityValues.reduce((sum, value) => sum + Number(value || 0), 0) / monthlyQualityValues.length
@@ -1880,8 +1880,9 @@ function renderHero() {
 function renderDashboard() {
   const viewRecord = getOverviewViewRecord();
   const latest = getLatestEntry(viewRecord);
-  const averages = getRecordAverages(viewRecord);
-  const totalProduced = (viewRecord?.entries || []).reduce((sum, entry) => sum + Number(entry?.productionTotal || 0), 0);
+  const baseEntries = getOverviewEntriesForMetrics(viewRecord);
+  const averages = getRecordAveragesFromEntries(baseEntries);
+  const totalProduced = baseEntries.reduce((sum, entry) => sum + Number(entry?.productionTotal || 0), 0);
   const metrics = [
     { label: "Total atendido", value: totalProduced, suffix: "" },
     { label: "Media de producao", value: averages.production, suffix: "" },
@@ -2525,20 +2526,60 @@ function getLatestEntry(record) {
 
 function getRecordAverages(record) {
   const entries = Array.isArray(record?.entries) ? record.entries : [];
+  return getRecordAveragesFromEntries(entries);
+}
+
+function getRecordAveragesFromEntries(entriesInput) {
+  const entries = Array.isArray(entriesInput) ? entriesInput : [];
   const count = entries.length;
   if (!count) {
     return { production: null, effectiveness: null, quality: null };
   }
 
   const productionSum = entries.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0);
-  const effectivenessSum = entries.reduce((sum, entry) => sum + Number(entry.effectiveness || 0), 0);
   const qualitySum = entries.reduce((sum, entry) => sum + Number(entry.qualityScore || 0), 0);
+  const avgEffectiveness = calculateEffectivenessAverage(entries);
 
   return {
     production: productionSum / count,
-    effectiveness: effectivenessSum / count,
+    effectiveness: avgEffectiveness,
     quality: qualitySum / count
   };
+}
+
+function getOverviewEntriesForMetrics(viewRecord) {
+  if (!(canManage() && state.overviewSelectedUserId === "all")) {
+    return Array.isArray(viewRecord?.entries) ? viewRecord.entries : [];
+  }
+
+  const merged = [];
+  for (const record of state.operationRecords || []) {
+    for (const entry of record?.entries || []) {
+      merged.push(entry);
+    }
+  }
+  return merged;
+}
+
+function calculateEffectivenessAverage(entriesInput) {
+  const entries = Array.isArray(entriesInput) ? entriesInput : [];
+  const valid = entries.filter((entry) => (
+    Number(entry?.productionTotal || 0) > 0 &&
+    Number(entry?.effectiveness || 0) > 0
+  ));
+  if (!valid.length) return 0;
+
+  const weighted = valid.reduce((acc, entry) => {
+    const production = Number(entry?.productionTotal || 0);
+    const effectiveness = Number(entry?.effectiveness || 0);
+    return {
+      prodSum: acc.prodSum + production,
+      weightedSum: acc.weightedSum + (effectiveness * production)
+    };
+  }, { prodSum: 0, weightedSum: 0 });
+
+  if (weighted.prodSum <= 0) return 0;
+  return weighted.weightedSum / weighted.prodSum;
 }
 
 function getRecentEntries(record, maxItems = 10) {
