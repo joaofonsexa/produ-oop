@@ -780,9 +780,7 @@ async function handleR2BaseUpload() {
   try {
     const workbookBuffer = await file.arrayBuffer();
     const workbook = XLSX.read(workbookBuffer, { type: "array" });
-    const bestSheetName = selectBestSheetForR2Base(workbook);
-    const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
-    const normalizedSheetData = extractNormalizedSheetData(bestSheet);
+    const normalizedSheetData = extractBestNormalizedSheetDataFromWorkbook(workbook);
     const detectedOperation = normalizedSheetData.detectedOperation || operation;
     const operationUsed = detectedOperation;
     const operationUsedLabel = operationUsed === "0800" ? "0800" : "Nuvidio";
@@ -945,12 +943,18 @@ async function handleR2RefreshData() {
       const fileBlob = await response.blob();
       const buffer = await fileBlob.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
-      const bestSheetName = selectBestSheetForR2Base(workbook);
-      const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
-      const normalized = extractNormalizedSheetData(bestSheet);
+      const normalizedWorkbook = extractBestNormalizedSheetDataFromWorkbook(workbook);
+      const normalized = {
+        headers: normalizedWorkbook.headers || [],
+        rows: normalizedWorkbook.rows || [],
+        detectedOperation: normalizedWorkbook.detectedOperation || ""
+      };
       const csvRaw = buildCsvFromNormalizedRows(normalized.headers, normalized.rows);
       if (!String(csvRaw || "").trim()) {
-        throw new Error(`Base XLSX (${selectedOperationLabel}) sem linhas validas para processar.`);
+        throw new Error(
+          `Base XLSX (${selectedOperationLabel}) sem linhas validas para processar.` +
+          ` Aba analisada: ${String(normalizedWorkbook.sheetName || "n/d")}.`
+        );
       }
       const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
       const sourceName = baseKey.split("/").pop() || `base-${selectedOperation}.xlsx`;
@@ -1050,6 +1054,7 @@ function selectBestSheetForR2Base(workbook) {
 
   let bestName = names[0];
   let bestScore = -1;
+  let bestDensity = -1;
   names.forEach((name) => {
     const sheet = workbook.Sheets[name];
     if (!sheet) return;
@@ -1061,12 +1066,39 @@ function selectBestSheetForR2Base(workbook) {
       const scoreNuvidio = scoreHeadersByAliases(headers, expectedNuvidio);
       return Math.max(acc, score0800, scoreNuvidio);
     }, 0);
-    if (score > bestScore) {
+    const density = probe.reduce((acc, line) => {
+      const filled = (Array.isArray(line) ? line : []).map((cell) => String(cell || "").trim()).filter(Boolean).length;
+      return acc + filled;
+    }, 0);
+    if (score > bestScore || (score === bestScore && density > bestDensity)) {
       bestScore = score;
+      bestDensity = density;
       bestName = name;
     }
   });
   return bestName;
+}
+
+function extractBestNormalizedSheetDataFromWorkbook(workbook) {
+  const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  if (!names.length) return { sheetName: "", headers: [], rows: [], detectedOperation: "" };
+
+  const preferred = selectBestSheetForR2Base(workbook);
+  const ordered = [preferred, ...names.filter((name) => name !== preferred)];
+  let best = { sheetName: preferred || names[0], headers: [], rows: [], detectedOperation: "" };
+
+  ordered.forEach((name) => {
+    const sheet = workbook.Sheets[name];
+    if (!sheet) return;
+    const normalized = extractNormalizedSheetData(sheet);
+    const rowCount = Array.isArray(normalized?.rows) ? normalized.rows.length : 0;
+    const bestCount = Array.isArray(best?.rows) ? best.rows.length : 0;
+    if (rowCount > bestCount) {
+      best = { sheetName: name, ...normalized };
+    }
+  });
+
+  return best;
 }
 
 function mergeR2ViewsWithLane(currentViews, operationType, laneSummary) {
