@@ -784,6 +784,7 @@ async function handleR2BaseUpload() {
     const workbook = XLSX.read(workbookBuffer, { type: "array" });
     const bestSheetName = selectBestSheetForR2Base(workbook, operation);
     const bestSheet = workbook.Sheets[bestSheetName] || workbook.Sheets[workbook.SheetNames[0]];
+    const laneSummary = buildR2LaneSummaryFromSheet(bestSheet, operation);
     const csvRaw = XLSX.utils.sheet_to_csv(bestSheet, { FS: ";", RS: "\n", blankrows: false });
     const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
     const parsedFileName = `${String(file.name || "base.xlsx").replace(/\.xlsx$/i, "")}.parsed.csv`;
@@ -799,6 +800,14 @@ async function handleR2BaseUpload() {
 
     const sourceKey = String(sourcePayload?.key || "");
     const parsedKey = String(parsedPayload?.key || "");
+    const mergedViews = mergeR2ViewsWithLane(state.r2Insights, operation, laneSummary);
+    state.r2Insights = mergedViews;
+    await fetchJson(`${REMOTE_API_BASE}/r2-insights/snapshot`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ views: mergedViews }),
+      timeoutMs: 120000
+    });
     setUploadStatus(`Base ${operationLabel} enviada com sucesso (${formatFileSize(file.size)}).`, "success");
     window.alert(
       `Upload para R2 concluido.\n` +
@@ -808,7 +817,6 @@ async function handleR2BaseUpload() {
       `- Chave R2 (xlsx): ${sourceKey || "n/d"}\n` +
       `- Chave R2 (parseada): ${parsedKey || "n/d"}`
     );
-    await loadR2Insights();
     renderDashboardAnalytics();
   } catch (error) {
     const message = String(error?.message || "Falha ao enviar base para o R2.");
@@ -853,6 +861,224 @@ function selectBestSheetForR2Base(workbook, operationType) {
     }
   });
   return bestName;
+}
+
+function mergeR2ViewsWithLane(currentViews, operationType, laneSummary) {
+  const base = (currentViews && typeof currentViews === "object") ? currentViews : {};
+  if (operationType === "0800") {
+    return {
+      nuvidio: base.nuvidio || buildEmptyNuvidioLane(),
+      line0800: laneSummary || buildEmpty0800Lane()
+    };
+  }
+  return {
+    nuvidio: laneSummary || buildEmptyNuvidioLane(),
+    line0800: base.line0800 || buildEmpty0800Lane()
+  };
+}
+
+function buildEmptyNuvidioLane() {
+  return {
+    totalAtendimentos: 0,
+    statuses: { aprovadas: 0, reprovadas: 0, semAcao: 0 },
+    avgWaitSeconds: 0,
+    avgTmaSeconds: 0,
+    topSubtags: [],
+    topAtendentes: [],
+    producaoPorOperador: []
+  };
+}
+
+function buildEmpty0800Lane() {
+  return {
+    totalOcorrencias: 0,
+    statuses: { aprovadas: 0, reprovadas: 0, pendenciadas: 0, semAcao: 0 },
+    avgResolutionDays: 0,
+    fcrSimRate: 0,
+    topSubMotivos: [],
+    topAnalistas: [],
+    producaoPorOperador: []
+  };
+}
+
+function buildR2LaneSummaryFromSheet(sheet, operationType) {
+  const rows = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: "", blankrows: false });
+  return operationType === "0800"
+    ? summarize0800RowsClient(rows)
+    : summarizeNuvidioRowsClient(rows);
+}
+
+function normalizeR2Key(value) {
+  return normalizeLooseText(value).replace(/\s+/g, " ");
+}
+
+function getRowValueByAliasesClient(row, aliases) {
+  const entries = Object.entries(row || {});
+  for (const alias of aliases || []) {
+    const normalizedAlias = normalizeR2Key(alias);
+    const found = entries.find(([key]) => normalizeR2Key(key) === normalizedAlias);
+    if (found) return String(found[1] || "").trim();
+  }
+  return "";
+}
+
+function parseNumberLooseClient(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return NaN;
+  const normalized = raw.replace(/\./g, "").replace(",", ".");
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : NaN;
+}
+
+function parseDurationSecondsClient(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return NaN;
+  if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  const match = raw.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!match) return NaN;
+  const [, h, m, s] = match;
+  return (Number(h) * 3600) + (Number(m) * 60) + Number(s);
+}
+
+function normalizeStatusBucketClient(value) {
+  const text = normalizeR2Key(value);
+  if (!text) return "semAcao";
+  if (text.includes("aprovad")) return "aprovadas";
+  if (text.includes("reprovad")) return "reprovadas";
+  if (text.includes("pendenc")) return "pendenciadas";
+  if (text.includes("sem acao") || text.includes("semacao")) return "semAcao";
+  return "semAcao";
+}
+
+function buildTopListFromMapClient(map, maxItems = 5) {
+  return [...map.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, maxItems);
+}
+
+function summarizeNuvidioRowsClient(rows) {
+  const statuses = { aprovadas: 0, reprovadas: 0, semAcao: 0 };
+  const subtags = new Map();
+  const operators = new Map();
+  let total = 0;
+  let waitSum = 0;
+  let waitCount = 0;
+  let tmaSum = 0;
+  let tmaCount = 0;
+
+  (rows || []).forEach((row) => {
+    total += 1;
+    const status = normalizeStatusBucketClient(getRowValueByAliasesClient(row, ["Tag", "Motivo"]));
+    if (status === "aprovadas") statuses.aprovadas += 1;
+    else if (status === "reprovadas") statuses.reprovadas += 1;
+    else statuses.semAcao += 1;
+
+    const wait = parseNumberLooseClient(getRowValueByAliasesClient(row, ["Espera em segundos"]));
+    if (Number.isFinite(wait)) {
+      waitSum += wait;
+      waitCount += 1;
+    }
+
+    const tma = parseDurationSecondsClient(getRowValueByAliasesClient(row, ["Duracao em segundos", "TMA"]));
+    if (Number.isFinite(tma)) {
+      tmaSum += tma;
+      tmaCount += 1;
+    }
+
+    const subtag = getRowValueByAliasesClient(row, ["Subtag"]);
+    if (subtag) subtags.set(subtag, Number(subtags.get(subtag) || 0) + 1);
+
+    const operator = getRowValueByAliasesClient(row, [
+      "Atendente",
+      "Analista",
+      "Usuario de Abertura da Ocorrencia",
+      "Usuário de Abertura da Ocorrência",
+      "Funcionario",
+      "Funcionário",
+      "Operador",
+      "Usuario",
+      "Usuário"
+    ]);
+    if (operator) operators.set(operator, Number(operators.get(operator) || 0) + 1);
+  });
+
+  const producaoPorOperador = [...operators.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  return {
+    totalAtendimentos: total,
+    statuses,
+    avgWaitSeconds: waitCount ? (waitSum / waitCount) : 0,
+    avgTmaSeconds: tmaCount ? (tmaSum / tmaCount) : 0,
+    topSubtags: buildTopListFromMapClient(subtags, 5),
+    topAtendentes: producaoPorOperador.slice(0, 5),
+    producaoPorOperador
+  };
+}
+
+function summarize0800RowsClient(rows) {
+  const statuses = { aprovadas: 0, reprovadas: 0, pendenciadas: 0, semAcao: 0 };
+  const subMotivos = new Map();
+  const operators = new Map();
+  let total = 0;
+  let daysSum = 0;
+  let daysCount = 0;
+  let fcrYes = 0;
+  let fcrTotal = 0;
+
+  (rows || []).forEach((row) => {
+    total += 1;
+    const status = normalizeStatusBucketClient(getRowValueByAliasesClient(row, ["Motivo", "Tag"]));
+    if (status === "aprovadas") statuses.aprovadas += 1;
+    else if (status === "reprovadas") statuses.reprovadas += 1;
+    else if (status === "pendenciadas") statuses.pendenciadas += 1;
+    else statuses.semAcao += 1;
+
+    const days = parseNumberLooseClient(getRowValueByAliasesClient(row, ["Dias Para Resolucao", "Dias Para Resolução"]));
+    if (Number.isFinite(days)) {
+      daysSum += days;
+      daysCount += 1;
+    }
+
+    const fcr = normalizeR2Key(getRowValueByAliasesClient(row, ["FCR (Sim / Nao)", "FCR (Sim / Não)", "FCR"]));
+    if (fcr) {
+      fcrTotal += 1;
+      if (fcr.startsWith("sim")) fcrYes += 1;
+    }
+
+    const subMotivo = getRowValueByAliasesClient(row, ["Sub-Motivo", "Sub Motivo"]);
+    if (subMotivo) subMotivos.set(subMotivo, Number(subMotivos.get(subMotivo) || 0) + 1);
+
+    const operator = getRowValueByAliasesClient(row, [
+      "Analista",
+      "Usuario de Abertura da Ocorrencia",
+      "Usuário de Abertura da Ocorrência",
+      "Funcionario",
+      "Funcionário",
+      "Operador",
+      "Usuario",
+      "Usuário"
+    ]);
+    if (operator) operators.set(operator, Number(operators.get(operator) || 0) + 1);
+  });
+
+  const producaoPorOperador = [...operators.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  return {
+    totalOcorrencias: total,
+    statuses,
+    avgResolutionDays: daysCount ? (daysSum / daysCount) : 0,
+    fcrSimRate: fcrTotal ? ((fcrYes * 100) / fcrTotal) : 0,
+    topSubMotivos: buildTopListFromMapClient(subMotivos, 5),
+    topAnalistas: producaoPorOperador.slice(0, 5),
+    producaoPorOperador
+  };
 }
 
 async function uploadBlobToR2Multipart({ blob, fileName, operationType, kind, contentType, label = "" }) {

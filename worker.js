@@ -273,6 +273,52 @@ async function ensureSystemSettingsTable(db) {
   ).run();
 }
 
+async function ensureR2InsightsSnapshotTable(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS r2_insights_snapshot (
+      snapshot_key TEXT PRIMARY KEY,
+      views_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`
+  ).run();
+}
+
+async function readR2InsightsSnapshot(db) {
+  await ensureR2InsightsSnapshotTable(db);
+  const row = await db
+    .prepare("SELECT views_json, updated_at FROM r2_insights_snapshot WHERE snapshot_key = ? LIMIT 1")
+    .bind("latest")
+    .first();
+  if (!row?.views_json) return null;
+  try {
+    const views = JSON.parse(String(row.views_json || "{}"));
+    if (!views || typeof views !== "object") return null;
+    return {
+      views,
+      updatedAt: String(row.updated_at || "")
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeR2InsightsSnapshot(db, views) {
+  await ensureR2InsightsSnapshotTable(db);
+  const payload = views && typeof views === "object" ? views : {};
+  const now = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT INTO r2_insights_snapshot (snapshot_key, views_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(snapshot_key) DO UPDATE SET
+         views_json = excluded.views_json,
+         updated_at = excluded.updated_at`
+    )
+    .bind("latest", JSON.stringify(payload), now)
+    .run();
+  return { ok: true, updatedAt: now };
+}
+
 function normalizeMaintenanceStatus(raw = {}) {
   return {
     enabled: Boolean(raw?.enabled),
@@ -1159,8 +1205,30 @@ export default {
       }
 
       if (url.pathname === "/api/r2-insights" && request.method === "GET") {
+        const snapshot = await readR2InsightsSnapshot(env.DB);
+        if (snapshot?.views) {
+          return jsonResponse({
+            ok: true,
+            views: snapshot.views,
+            sources: { mode: "snapshot" },
+            updatedAt: snapshot.updatedAt
+          });
+        }
         const payload = await buildR2Insights(env);
+        if (payload?.views) {
+          await writeR2InsightsSnapshot(env.DB, payload.views);
+        }
         return jsonResponse({ ok: true, views: payload.views, sources: payload.sources });
+      }
+
+      if (url.pathname === "/api/r2-insights/snapshot" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const views = body?.views;
+        if (!views || typeof views !== "object") {
+          return jsonResponse({ ok: false, error: "Envie views validas para atualizar o snapshot." }, 400);
+        }
+        const result = await writeR2InsightsSnapshot(env.DB, views);
+        return jsonResponse({ ok: true, updatedAt: result.updatedAt });
       }
 
       if (url.pathname === "/api/operator-results" && request.method === "POST") {
