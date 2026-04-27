@@ -1033,8 +1033,20 @@ async function handleR2RefreshData() {
 function selectBestSheetForR2Base(workbook) {
   const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
   if (!names.length) return "";
-  const expected0800 = ["data abertura ocorrencia", "motivo", "usuario de abertura da ocorrencia"];
-  const expectedNuvidio = ["email do atendente", "data abreviada", "tag"];
+  const expected0800 = [
+    "data abertura ocorrencia",
+    "usuario de abertura da ocorrencia",
+    "motivo",
+    "pendenciadas",
+    "sem acao"
+  ];
+  const expectedNuvidio = [
+    "email do atendente",
+    "usuario nuvidio",
+    "data abreviada",
+    "tag",
+    "sem acao"
+  ];
 
   let bestName = names[0];
   let bestScore = -1;
@@ -1107,8 +1119,24 @@ function extractNormalizedSheetData(sheet) {
     return { headers: [], rows: [], detectedOperation: "" };
   }
 
-  const expected0800 = ["data abertura ocorrencia", "motivo", "usuario de abertura da ocorrencia"];
-  const expectedNuvidio = ["email do atendente", "data abreviada", "tag"];
+  const expected0800 = [
+    "data abertura ocorrencia",
+    "data abertura",
+    "usuario de abertura da ocorrencia",
+    "usuario 0800",
+    "motivo",
+    "pendenciadas",
+    "sem acao"
+  ];
+  const expectedNuvidio = [
+    "email do atendente",
+    "usuario nuvidio",
+    "atendente",
+    "data abreviada",
+    "data",
+    "tag",
+    "sem acao"
+  ];
 
   let headerIndex = 0;
   let bestScore = -1;
@@ -1119,7 +1147,7 @@ function extractNormalizedSheetData(sheet) {
     const headerCells = row
       .map((cell) => String(cell || "").trim())
       .filter(Boolean);
-    if (headerCells.length < 4) continue;
+    if (headerCells.length < 2) continue;
     const score0800 = scoreHeadersByAliases(headerCells, expected0800);
     const scoreNuvidio = scoreHeadersByAliases(headerCells, expectedNuvidio);
     const score = Math.max(score0800, scoreNuvidio);
@@ -1128,6 +1156,22 @@ function extractNormalizedSheetData(sheet) {
       headerIndex = i;
       detectedOperation = score0800 >= scoreNuvidio ? "0800" : "nuvidio";
     }
+  }
+
+  // Fallback: se nao detectou cabecalho por alias, usa a linha mais "cheia".
+  if (bestScore < 0) {
+    let fallbackIndex = 0;
+    let fallbackCount = 0;
+    const maxFallbackProbe = Math.min(matrix.length, 120);
+    for (let i = 0; i < maxFallbackProbe; i += 1) {
+      const row = Array.isArray(matrix[i]) ? matrix[i] : [];
+      const count = row.map((cell) => String(cell || "").trim()).filter(Boolean).length;
+      if (count > fallbackCount) {
+        fallbackCount = count;
+        fallbackIndex = i;
+      }
+    }
+    headerIndex = fallbackIndex;
   }
 
   const rawHeader = Array.isArray(matrix[headerIndex]) ? matrix[headerIndex] : [];
@@ -1149,6 +1193,38 @@ function extractNormalizedSheetData(sheet) {
       if (value) hasValue = true;
     }
     if (hasValue) rows.push(row);
+  }
+
+  // Segundo fallback: se nao encontrou linhas abaixo, tenta usar a primeira linha com dados como cabecalho.
+  if (!rows.length && matrix.length > 1) {
+    let firstDataRow = -1;
+    for (let i = 0; i < matrix.length; i += 1) {
+      const line = Array.isArray(matrix[i]) ? matrix[i] : [];
+      const hasValue = line.some((cell) => String(cell || "").trim());
+      if (hasValue) {
+        firstDataRow = i;
+        break;
+      }
+    }
+    if (firstDataRow >= 0 && firstDataRow !== headerIndex) {
+      const fallbackHeader = Array.isArray(matrix[firstDataRow]) ? matrix[firstDataRow] : [];
+      const fallbackHeaders = fallbackHeader.map((cell, index) => String(cell || "").trim() || `coluna_${index + 1}`);
+      const fallbackRows = [];
+      for (let i = firstDataRow + 1; i < matrix.length; i += 1) {
+        const line = Array.isArray(matrix[i]) ? matrix[i] : [];
+        const row = {};
+        let hasValue = false;
+        for (let col = 0; col < fallbackHeaders.length; col += 1) {
+          const value = String(line[col] ?? "").trim();
+          row[fallbackHeaders[col]] = value;
+          if (value) hasValue = true;
+        }
+        if (hasValue) fallbackRows.push(row);
+      }
+      if (fallbackRows.length) {
+        return { headers: fallbackHeaders, rows: fallbackRows, detectedOperation };
+      }
+    }
   }
 
   return { headers, rows, detectedOperation };
