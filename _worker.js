@@ -31,6 +31,35 @@ function getAuthBase(env) {
   return String(env.AUTH_API_BASE || env.CENTRAL_AUTH_BASE || "").trim().replace(/\/+$/, "");
 }
 
+function normalizeLooseKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function collectStringFields(source, bucket = []) {
+  if (!source || typeof source !== "object") return bucket;
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value === "string" && value.trim()) {
+      bucket.push({ key: normalizeLooseKey(key), value: value.trim() });
+      continue;
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      collectStringFields(value, bucket);
+    }
+  }
+  return bucket;
+}
+
+function findUserFieldByHeuristics(source, matcher) {
+  const entries = collectStringFields(source, []);
+  const found = entries.find((entry) => matcher(entry.key, entry.value));
+  return found?.value || "";
+}
+
 function getSsoConfig(env, requestUrl) {
   const url = new URL(requestUrl);
   const expectedAudience = String(env.SSO_EXPECTED_AUDIENCE || url.origin).trim();
@@ -252,7 +281,7 @@ async function fetchCentral(env, pathname, options = {}) {
 }
 
 function sanitizeUser(user) {
-  const nuvidioUsername = String(
+  let nuvidioUsername = String(
     user?.nuvidioUsername ??
     user?.usuarioNuvidio ??
     user?.usernameNuvidio ??
@@ -261,7 +290,7 @@ function sanitizeUser(user) {
     user?.usuario_nuvidio ??
     ""
   ).trim();
-  const line0800Username = String(
+  let line0800Username = String(
     user?.line0800Username ??
     user?.usuario0800 ??
     user?.username0800 ??
@@ -271,6 +300,17 @@ function sanitizeUser(user) {
     user?.usuario_0800 ??
     ""
   ).trim();
+
+  if (!nuvidioUsername) {
+    nuvidioUsername = findUserFieldByHeuristics(user, (key) => (
+      key.includes("nuvidio") && (key.includes("usuario") || key.includes("username") || key.includes("login") || key.includes("user"))
+    ));
+  }
+  if (!line0800Username) {
+    line0800Username = findUserFieldByHeuristics(user, (key) => (
+      key.includes("0800") && (key.includes("usuario") || key.includes("username") || key.includes("login") || key.includes("user"))
+    ));
+  }
   return {
     id: String(user?.id || ""),
     name: String(user?.name || ""),
