@@ -1559,75 +1559,6 @@ body[data-theme="dark"] .callout.success { color: #b9f0d0; }
 .admin-form, .admin-form label { display: grid; gap: 8px; }
 .admin-form { gap: 16px; }
 .admin-form label span { font-size: 0.85rem; font-weight: 700; }
-.quick-entry-card {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid rgba(78, 161, 255, 0.22);
-  border-radius: 18px;
-  background: rgba(78, 161, 255, 0.06);
-}
-.quick-entry-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-.quick-entry-head p {
-  margin: 0;
-  max-width: 320px;
-  font-size: 0.82rem;
-  line-height: 1.45;
-  color: var(--muted);
-}
-.quick-entry-eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--primary);
-}
-.quick-entry-group {
-  display: grid;
-  gap: 8px;
-}
-.quick-entry-label {
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-.quick-entry-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.quick-entry-option {
-  border: 1px solid var(--line);
-  background: var(--surface-strong);
-  color: var(--text);
-  border-radius: 999px;
-  padding: 10px 16px;
-  font-size: 0.9rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
-}
-.quick-entry-option:hover {
-  transform: translateY(-1px);
-  border-color: rgba(78, 161, 255, 0.35);
-}
-.quick-entry-option.active {
-  border-color: transparent;
-  background: linear-gradient(135deg, #4ea1ff, #7cc4ff);
-  color: #07111f;
-}
-.quick-entry-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: end;
-}
 .field-help {
   display: block;
   margin-top: 6px;
@@ -2097,7 +2028,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
   .main-content, .sidebar { padding: 18px; }
   .login-card { padding: 22px; }
   .hero-header, .panel, .spotlight-card { padding: 18px; }
-  .spotlight-stats, .my-results-cards, .form-grid, .quick-entry-actions { grid-template-columns: 1fr; }
+  .spotlight-stats, .my-results-cards, .form-grid { grid-template-columns: 1fr; }
   .search-box { min-height: 60px; }
   .hero-copy h2 { max-width: none; }
   .top-utility-bar { justify-content: flex-end; }
@@ -2123,7 +2054,7 @@ body[data-theme="dark"] .admin-form input[type="file"]::file-selector-button:hov
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 

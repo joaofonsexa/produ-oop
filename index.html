@@ -375,28 +375,6 @@
               </div>
               <div id="analytics-top-days" class="analytics-top-days"></div>
             </section>
-
-            <div class="analytics-lower-grid analytics-new-views-grid">
-              <section class="panel">
-                <div class="section-head">
-                  <div>
-                    <p class="eyebrow">Planilhas</p>
-                    <h3>Resumo por esteira e prestadora</h3>
-                  </div>
-                </div>
-                <div id="analytics-sheet-summary" class="analytics-departments"></div>
-              </section>
-
-              <section class="panel">
-                <div class="section-head">
-                  <div>
-                    <p class="eyebrow">Motivos</p>
-                    <h3>Subtags e operadores em destaque</h3>
-                  </div>
-                </div>
-                <div id="analytics-sheet-breakdown" class="analytics-top-days"></div>
-              </section>
-            </div>
           </div>
         </div>
       </section>
@@ -439,75 +417,20 @@
                 </label>
 
                 <label>
+                  <span>Produção</span>
+                  <input id="admin-production" type="number" min="0" step="0.01" required placeholder="Ex.: 52">
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Efetividade (%)</span>
+                  <input id="admin-effectiveness" type="number" min="0" step="0.01" required placeholder="Ex.: 37.5">
+                </label>
+
+                <label>
                   <span>Qualidade (%)</span>
                   <input id="admin-quality" type="number" min="0" step="0.01" required placeholder="Ex.: 93">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>Produção 0800</span>
-                  <input id="admin-production-0800" type="number" min="0" step="0.01" placeholder="Ex.: 52">
-                </label>
-
-                <label>
-                  <span>Produção Nuvidio</span>
-                  <input id="admin-production-nuvidio" type="number" min="0" step="0.01" placeholder="Ex.: 48">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>Efetividade 0800 (%)</span>
-                  <input id="admin-effectiveness-0800" type="number" min="0" step="0.01" readonly placeholder="Calculada automaticamente">
-                </label>
-
-                <label>
-                  <span>Efetividade Nuvidio (%)</span>
-                  <input id="admin-effectiveness-nuvidio" type="number" min="0" step="0.01" readonly placeholder="Calculada automaticamente">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>0800 Aprovadas</span>
-                  <input id="admin-0800-approved" type="number" min="0" step="0.01" required placeholder="Ex.: 20">
-                </label>
-
-                <label>
-                  <span>0800 Canceladas</span>
-                  <input id="admin-0800-cancelled" type="number" min="0" step="0.01" required placeholder="Ex.: 8">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>0800 Pendenciadas</span>
-                  <input id="admin-0800-pending" type="number" min="0" step="0.01" required placeholder="Ex.: 6">
-                </label>
-
-                <label>
-                  <span>0800 Sem ação</span>
-                  <input id="admin-0800-no-action" type="number" min="0" step="0.01" required placeholder="Ex.: 18">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>Nuvidio Aprovadas</span>
-                  <input id="admin-nuvidio-approved" type="number" min="0" step="0.01" required placeholder="Ex.: 22">
-                </label>
-
-                <label>
-                  <span>Nuvidio Reprovadas</span>
-                  <input id="admin-nuvidio-reproved" type="number" min="0" step="0.01" required placeholder="Ex.: 11">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>Nuvidio Sem ação</span>
-                  <input id="admin-nuvidio-no-action" type="number" min="0" step="0.01" required placeholder="Ex.: 9">
                 </label>
               </div>
 
@@ -526,29 +449,6 @@
             </div>
 
             <form id="admin-upload-form" class="admin-form">
-              <div class="quick-entry-card">
-                <div class="quick-entry-head">
-                  <div>
-                    <span class="quick-entry-eyebrow">Contexto da planilha</span>
-                    <strong>Informe de qual esteira e status é essa carga</strong>
-                  </div>
-                  <p>Use isso para planilhas consolidadas por operador e data, como a que você enviou.</p>
-                </div>
-
-                <div class="quick-entry-group">
-                  <span class="quick-entry-label">Esteira da carga</span>
-                  <div id="admin-quick-platform" class="quick-entry-options">
-                    <button type="button" class="quick-entry-option active" data-platform="0800">0800</button>
-                    <button type="button" class="quick-entry-option" data-platform="nuvidio">Nuvidio</button>
-                  </div>
-                </div>
-
-                <div class="quick-entry-group">
-                  <span class="quick-entry-label">Status da carga</span>
-                  <div id="admin-quick-status" class="quick-entry-options"></div>
-                </div>
-              </div>
-
               <fieldset class="upload-mode-fieldset">
                 <legend>Modelo de importacao</legend>
                 <div id="upload-mode-options" class="upload-mode-options">
@@ -571,7 +471,7 @@
                 <input id="upload-file" type="file" accept=".xlsx,.xls,.csv">
               </label>
 
-              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador, Usuario, Usuario 0800 ou Usuario Nuvidio, Data, status do 0800, status do Nuvidio e Qualidade. Para planilha consolidada com operador nas linhas e datas nas colunas, selecione acima a esteira e o status da carga.</p>
+              <p id="upload-help-text" class="field-help">Colunas aceitas: Nome do Operador (ou Usuario), Data, Efetividade, Producao e Qualidade. A data e lida da propria planilha, linha a linha.</p>
               <p id="upload-status" class="upload-status hidden" role="status" aria-live="polite"></p>
 
               <div class="form-actions">
@@ -593,63 +493,6 @@
               <p id="maintenance-status-text" class="field-help">Manutencao desativada.</p>
               <button id="maintenance-toggle-button" class="ghost-button danger" type="button">Ativar manutencao</button>
             </div>
-          </section>
-
-          <section id="spreadsheet-sources-panel" class="panel hidden">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Fontes automaticas</p>
-                <h3>Planilhas 0800 e Nuvidio</h3>
-              </div>
-            </div>
-
-            <form id="spreadsheet-sources-form" class="admin-form">
-              <label>
-                <span>URL CSV Nuvidio</span>
-                <input id="sheet-url-nuvidio" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=...">
-              </label>
-
-              <div class="form-grid">
-                <label>
-                  <span>URL geral 0800</span>
-                  <input id="sheet-url-0800-general" type="url" placeholder="Base unica com operador, data, status e quantidade">
-                </label>
-
-                <label>
-                  <span>URL 0800 Aprovadas</span>
-                  <input id="sheet-url-0800-approved" type="url" placeholder="Planilha matriz por data">
-                </label>
-
-                <label>
-                  <span>URL 0800 Canceladas</span>
-                  <input id="sheet-url-0800-cancelled" type="url" placeholder="Planilha matriz por data">
-                </label>
-              </div>
-
-              <div class="form-grid">
-                <label>
-                  <span>URL 0800 Pendenciadas</span>
-                  <input id="sheet-url-0800-pending" type="url" placeholder="Planilha matriz por data">
-                </label>
-
-                <label>
-                  <span>URL 0800 Sem acao</span>
-                  <input id="sheet-url-0800-no-action" type="url" placeholder="Planilha matriz por data">
-                </label>
-              </div>
-
-              <label class="checkbox-row">
-                <input id="sheet-auto-sync" type="checkbox">
-                <span>Sincronizar automaticamente ao abrir o portal</span>
-              </label>
-
-              <p id="sheet-sources-status" class="field-help">Cole as URLs publicas das planilhas e sincronize para atualizar a operacao automaticamente.</p>
-
-              <div class="form-actions">
-                <button id="sheet-sources-save" class="ghost-button" type="button">Salvar URLs</button>
-                <button id="sheet-sources-sync" class="primary-button" type="button">Sincronizar planilhas</button>
-              </div>
-            </form>
           </section>
         </div>
 
