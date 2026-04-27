@@ -1048,24 +1048,8 @@ async function resolveR2SourceFiles(bucket) {
   };
   const csvObjects = objects.filter(isCsvLike);
 
-  const line0800 =
-    pickLatest(csvObjects, (key) => key.includes("bases/0800/base/")) ||
-    pickLatest(csvObjects, (key) => key.includes("bases/0800/parsed/")) ||
-    pickLatest(csvObjects, (key) => key.includes("bases/0800/")) ||
-    pickLatest(csvObjects, (keyRawValue, keyNorm) => (
-      keyNorm.includes("detalhes do protocolo com ocorrencias") ||
-      keyNorm.includes("detalhesdoprotocolo")
-    )) ||
-    null;
-  const nuvidio =
-    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/base/")) ||
-    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/parsed/")) ||
-    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/")) ||
-    pickLatest(csvObjects, (keyRawValue, keyNorm) => (
-      keyNorm.includes("todos-atendimentos") ||
-      keyNorm.includes("todos atendimentos")
-    )) ||
-    null;
+  const line0800 = pickLatest(csvObjects, (key) => key.includes("bases/0800/base/")) || null;
+  const nuvidio = pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/base/")) || null;
   return { line0800, nuvidio };
 }
 
@@ -1163,7 +1147,7 @@ async function syncOperatorResultsFromR2(env, operationTypeInput, options = {}) 
   const files = await resolveR2SourceFiles(bucket);
   const targetFile = operationType === "0800" ? files.line0800 : files.nuvidio;
   if (!targetFile?.key) {
-    return { ok: false, error: `Nao achei arquivo ${operationType} no R2.` };
+    return { ok: false, error: `Nao achei CSV em bases/${operationType}/base/.` };
   }
 
   const rows = await readCsvFromR2Object(bucket, targetFile);
