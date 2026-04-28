@@ -124,6 +124,7 @@ const elements = {
   uploadModeOptions: document.querySelector("#upload-mode-options"),
   uploadModeInputs: Array.from(document.querySelectorAll('input[name="upload-mode"]')),
   uploadOperation: document.querySelector("#upload-operation"),
+  uploadSheetName: document.querySelector("#upload-sheet-name"),
   uploadFile: document.querySelector("#upload-file"),
   uploadHelpText: document.querySelector("#upload-help-text"),
   uploadStatus: document.querySelector("#upload-status"),
@@ -780,7 +781,17 @@ async function handleR2BaseUpload() {
   try {
     const workbookBuffer = await file.arrayBuffer();
     const workbook = XLSX.read(workbookBuffer, { type: "array" });
-    const normalizedSheetData = extractBestNormalizedSheetDataFromWorkbook(workbook);
+    const preferredSheet = getPreferredSheetNameInput();
+    let normalizedSheetData;
+    if (preferredSheet) {
+      const resolved = resolvePreferredSheetFromWorkbook(workbook, preferredSheet);
+      if (!resolved.sheet) {
+        throw new Error(`Aba '${preferredSheet}' nao encontrada. Abas disponiveis: ${workbook.SheetNames.join(", ")}`);
+      }
+      normalizedSheetData = { sheetName: resolved.sheetName, ...extractNormalizedSheetData(resolved.sheet) };
+    } else {
+      normalizedSheetData = extractBestNormalizedSheetDataFromWorkbook(workbook);
+    }
     const detectedOperation = normalizedSheetData.detectedOperation || operation;
     const operationUsed = detectedOperation;
     const operationUsedLabel = operationUsed === "0800" ? "0800" : "Nuvidio";
@@ -943,7 +954,17 @@ async function handleR2RefreshData() {
       const fileBlob = await response.blob();
       const buffer = await fileBlob.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
-      const normalizedWorkbook = extractBestNormalizedSheetDataFromWorkbook(workbook);
+      const preferredSheet = getPreferredSheetNameInput();
+      let normalizedWorkbook;
+      if (preferredSheet) {
+        const resolved = resolvePreferredSheetFromWorkbook(workbook, preferredSheet);
+        if (!resolved.sheet) {
+          throw new Error(`Aba '${preferredSheet}' nao encontrada no XLSX do R2. Abas: ${workbook.SheetNames.join(", ")}`);
+        }
+        normalizedWorkbook = { sheetName: resolved.sheetName, ...extractNormalizedSheetData(resolved.sheet) };
+      } else {
+        normalizedWorkbook = extractBestNormalizedSheetDataFromWorkbook(workbook);
+      }
       const normalized = {
         headers: normalizedWorkbook.headers || [],
         rows: normalizedWorkbook.rows || [],
@@ -952,8 +973,14 @@ async function handleR2RefreshData() {
       const csvRaw = buildCsvFromNormalizedRows(normalized.headers, normalized.rows);
       if (!String(csvRaw || "").trim()) {
         const analyzedSheet = String(normalizedWorkbook.sheetName || "");
-        const sheetObj = workbook.Sheets[analyzedSheet] || workbook.Sheets[workbook.SheetNames?.[0]] || null;
-        const preview = sheetObj ? getSheetDebugPreview(sheetObj) : "Aba nao encontrada para preview.";
+        const sheetObj =
+          workbook.Sheets?.[analyzedSheet] ||
+          findSheetByNameLoose(workbook, analyzedSheet) ||
+          workbook.Sheets?.[workbook.SheetNames?.[0]] ||
+          null;
+        const preview = sheetObj
+          ? getSheetDebugPreview(sheetObj)
+          : `Aba nao encontrada para preview.\n\nPreview workbook:\n${getWorkbookDebugPreview(workbook)}`;
         throw new Error(
           `Base XLSX (${selectedOperationLabel}) sem linhas validas para processar.` +
           ` Aba analisada: ${String(normalizedWorkbook.sheetName || "n/d")}.\n\n` +
@@ -1198,6 +1225,51 @@ function getSheetDebugPreview(sheet, maxRows = 12, maxCols = 14) {
     lines.push(`${r + 1}: ${cols.join(" | ")}`);
   }
   return lines.length ? lines.join("\n") : "Linhas iniciais sem conteudo textual.";
+}
+
+function getWorkbookDebugPreview(workbook, maxSheets = 3) {
+  const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  if (!names.length) return "Workbook sem abas.";
+  const parts = [];
+  for (let i = 0; i < Math.min(names.length, maxSheets); i += 1) {
+    const name = names[i];
+    const sheet = workbook?.Sheets?.[name];
+    const preview = sheet ? getSheetDebugPreview(sheet, 6, 10) : "Aba sem objeto.";
+    parts.push(`[${name}]\n${preview}`);
+  }
+  return parts.join("\n\n");
+}
+
+function findSheetByNameLoose(workbook, targetName) {
+  const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  const clean = (value) => normalizeLooseText(String(value || "")).replace(/\s+/g, " ").trim();
+  const target = clean(targetName);
+  if (!target) return null;
+  const exact = names.find((name) => clean(name) === target);
+  if (exact) return workbook.Sheets?.[exact] || null;
+  const include = names.find((name) => clean(name).includes(target) || target.includes(clean(name)));
+  if (include) return workbook.Sheets?.[include] || null;
+  return null;
+}
+
+function getPreferredSheetNameInput() {
+  return String(elements.uploadSheetName?.value || "").trim();
+}
+
+function resolvePreferredSheetFromWorkbook(workbook, preferredName) {
+  const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  if (!names.length) return { sheet: null, sheetName: "" };
+  const wanted = String(preferredName || "").trim();
+  if (!wanted) {
+    const autoName = selectBestSheetForR2Base(workbook) || names[0];
+    return { sheet: workbook.Sheets?.[autoName] || null, sheetName: autoName };
+  }
+  const byLoose = findSheetByNameLoose(workbook, wanted);
+  if (byLoose) {
+    const matched = names.find((name) => workbook.Sheets?.[name] === byLoose) || wanted;
+    return { sheet: byLoose, sheetName: matched };
+  }
+  return { sheet: null, sheetName: wanted };
 }
 
 function extractNormalizedSheetData(sheet) {
