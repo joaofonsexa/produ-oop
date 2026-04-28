@@ -951,9 +951,13 @@ async function handleR2RefreshData() {
       };
       const csvRaw = buildCsvFromNormalizedRows(normalized.headers, normalized.rows);
       if (!String(csvRaw || "").trim()) {
+        const analyzedSheet = String(normalizedWorkbook.sheetName || "");
+        const sheetObj = workbook.Sheets[analyzedSheet] || workbook.Sheets[workbook.SheetNames?.[0]] || null;
+        const preview = sheetObj ? getSheetDebugPreview(sheetObj) : "Aba nao encontrada para preview.";
         throw new Error(
           `Base XLSX (${selectedOperationLabel}) sem linhas validas para processar.` +
-          ` Aba analisada: ${String(normalizedWorkbook.sheetName || "n/d")}.`
+          ` Aba analisada: ${String(normalizedWorkbook.sheetName || "n/d")}.\n\n` +
+          `Preview das primeiras linhas lidas:\n${preview}`
         );
       }
       const csvBlob = new Blob([csvRaw], { type: "text/csv;charset=utf-8" });
@@ -1145,8 +1149,62 @@ function buildR2LaneSummaryFromRows(rows, operationType) {
     : summarizeNuvidioRowsClient(rows);
 }
 
+function getXlsxCellDisplayValue(cell) {
+  if (!cell || typeof cell !== "object") return "";
+  if (cell.w !== undefined && cell.w !== null && String(cell.w).trim() !== "") return String(cell.w);
+  if (cell.v !== undefined && cell.v !== null) return String(cell.v);
+  if (cell.f !== undefined && cell.f !== null) return String(cell.f);
+  return "";
+}
+
+function buildMatrixFromSheetRef(sheet) {
+  try {
+    const ref = String(sheet?.["!ref"] || "").trim();
+    if (!ref) return [];
+    const range = XLSX.utils.decode_range(ref);
+    const matrix = [];
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      const line = [];
+      let hasValue = false;
+      for (let col = range.s.c; col <= range.e.c; col += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: col });
+        const cell = sheet?.[address];
+        const value = String(getXlsxCellDisplayValue(cell) || "").trim();
+        line.push(value);
+        if (value) hasValue = true;
+      }
+      if (hasValue) matrix.push(line);
+    }
+    return matrix;
+  } catch {
+    return [];
+  }
+}
+
+function getSheetDebugPreview(sheet, maxRows = 12, maxCols = 14) {
+  let matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, defval: "" });
+  if (!Array.isArray(matrix) || !matrix.length) {
+    matrix = buildMatrixFromSheetRef(sheet);
+  }
+  if (!Array.isArray(matrix) || !matrix.length) return "Sem linhas lidas na aba.";
+
+  const lines = [];
+  const limitRows = Math.min(matrix.length, maxRows);
+  for (let r = 0; r < limitRows; r += 1) {
+    const row = Array.isArray(matrix[r]) ? matrix[r] : [];
+    const cols = row.slice(0, maxCols).map((cell) => String(cell || "").trim());
+    const hasValue = cols.some((v) => v);
+    if (!hasValue) continue;
+    lines.push(`${r + 1}: ${cols.join(" | ")}`);
+  }
+  return lines.length ? lines.join("\n") : "Linhas iniciais sem conteudo textual.";
+}
+
 function extractNormalizedSheetData(sheet) {
-  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, defval: "" });
+  let matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false, defval: "" });
+  if (!Array.isArray(matrix) || !matrix.length) {
+    matrix = buildMatrixFromSheetRef(sheet);
+  }
   if (!Array.isArray(matrix) || !matrix.length) {
     return { headers: [], rows: [], detectedOperation: "" };
   }
@@ -1170,7 +1228,7 @@ function extractNormalizedSheetData(sheet) {
     "sem acao"
   ];
 
-  const maxProbe = Math.min(matrix.length, 140);
+  const maxProbe = matrix.length;
   let bestCandidate = {
     headerIndex: 0,
     headers: [],
@@ -1182,7 +1240,25 @@ function extractNormalizedSheetData(sheet) {
   const buildRowsFromHeaderIndex = (headerIndex) => {
     const rawHeader = Array.isArray(matrix[headerIndex]) ? matrix[headerIndex] : [];
     const headers = rawHeader.map((cell, index) => String(cell || "").trim() || `coluna_${index + 1}`);
-    const width = headers.length;
+    let width = headers.length;
+    // amplia largura com base nas proximas linhas para evitar perder colunas
+    const previewEnd = Math.min(matrix.length, headerIndex + 25);
+    for (let r = headerIndex + 1; r < previewEnd; r += 1) {
+      const line = Array.isArray(matrix[r]) ? matrix[r] : [];
+      let lastFilled = -1;
+      for (let c = line.length - 1; c >= 0; c -= 1) {
+        if (String(line[c] || "").trim()) {
+          lastFilled = c;
+          break;
+        }
+      }
+      if (lastFilled >= 0) {
+        width = Math.max(width, lastFilled + 1);
+      }
+    }
+    while (headers.length < width) {
+      headers.push(`coluna_${headers.length + 1}`);
+    }
     if (!width) return { headers: [], rows: [] };
     const rows = [];
     for (let i = headerIndex + 1; i < matrix.length; i += 1) {
@@ -1207,6 +1283,7 @@ function extractNormalizedSheetData(sheet) {
     const score0800 = scoreHeadersByAliases(headerCells, expected0800);
     const scoreNuvidio = scoreHeadersByAliases(headerCells, expectedNuvidio);
     const aliasScore = Math.max(score0800, scoreNuvidio);
+    if (aliasScore <= 0 && headerCells.length < 3) continue;
     const detectedOperation = score0800 >= scoreNuvidio ? "0800" : "nuvidio";
     const built = buildRowsFromHeaderIndex(i);
     const dataRows = built.rows.length;
