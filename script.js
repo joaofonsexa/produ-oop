@@ -478,6 +478,44 @@ function shellTemplate() {
           </form>
         </div>
       </div>
+      <div class="modal-backdrop" id="user-modal" hidden>
+        <div class="modal-card">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Usuário</span>
+              <h3>Editar cadastro</h3>
+            </div>
+            <button class="icon-close" type="button" id="close-user-modal" aria-label="Fechar">×</button>
+          </div>
+          <form id="user-edit-form" class="section compact-form">
+            <input type="hidden" name="user_id" id="edit-user-id">
+            <div class="form-grid">
+              <label>Nome completo<input name="full_name" id="edit-full-name" required></label>
+              <label>Login<input name="login" id="edit-login" required></label>
+              <label>Perfil
+                <select name="role" id="edit-role" required>
+                  <option value="operator">Operador</option>
+                  <option value="manager">Gestor</option>
+                </select>
+              </label>
+              <label>Status
+                <select name="is_active" id="edit-is-active" required>
+                  <option value="true">Ativo</option>
+                  <option value="false">Inativo</option>
+                </select>
+              </label>
+              <label>ID 0800<input name="platform_0800_id" id="edit-platform-0800-id"></label>
+              <label>ID Nuvidio<input name="nuvidio_id" id="edit-nuvidio-id"></label>
+            </div>
+            <label>Nova senha (opcional)<input name="password" id="edit-password" type="password"></label>
+            <div class="info-box">Se você informar uma nova senha, o usuário será obrigado a trocá-la no próximo login.</div>
+            <div class="action-grid">
+              <button class="btn-secondary" type="button" id="cancel-user-modal">Cancelar</button>
+              <button class="btn" type="submit">Salvar alterações</button>
+            </div>
+          </form>
+        </div>
+      </div>
       ${flashTemplate()}
     </div>
   `;
@@ -813,11 +851,17 @@ function adminTemplate() {
           <div class="list">
             ${state.users.length ? state.users.map((user) => `
               <div class="list-row">
-                <div>
+                <div class="list-row-copy">
                   <strong>${esc(user.full_name)}</strong>
                   <span>${esc(user.login)} · ${user.role === "manager" ? "Gestor" : "Operador"}</span>
                 </div>
-                <span class="pill ${user.must_change_password ? "amber" : "green"}">${user.must_change_password ? "Troca pendente" : "Ativo"}</span>
+                <div class="list-row-actions">
+                  <button class="pill ${user.is_active ? "green" : "red"} user-toggle-btn" type="button" data-user-toggle="${user.id}">
+                    ${user.is_active ? "Ativo" : "Inativo"}
+                  </button>
+                  <button class="btn-secondary btn-small" type="button" data-user-edit="${user.id}">Editar</button>
+                  <button class="btn-secondary btn-small danger-outline" type="button" data-user-delete="${user.id}">Apagar</button>
+                </div>
               </div>
             `).join("") : `<div class="empty">Nenhum usuário cadastrado.</div>`}
           </div>
@@ -854,6 +898,7 @@ function bindShellEvents() {
   const profileMenuTrigger = document.getElementById("profile-menu-trigger");
   const profileMenuPopover = document.getElementById("profile-menu-popover");
   const passwordModal = document.getElementById("password-modal");
+  const userModal = document.getElementById("user-modal");
 
   const closeProfileMenu = () => {
     if (!profileMenuPopover || !profileMenuTrigger) return;
@@ -873,6 +918,31 @@ function bindShellEvents() {
     passwordModal.hidden = true;
     const form = document.getElementById("password-form");
     if (form) form.reset();
+  };
+
+  const closeUserModal = () => {
+    if (!userModal) return;
+    userModal.hidden = true;
+    const form = document.getElementById("user-edit-form");
+    if (form) form.reset();
+  };
+
+  const openUserModal = (userId) => {
+    const user = state.users.find((item) => String(item.id) === String(userId));
+    if (!user || !userModal) return;
+    const setValue = (id, value) => {
+      const input = document.getElementById(id);
+      if (input) input.value = value ?? "";
+    };
+    setValue("edit-user-id", user.id);
+    setValue("edit-full-name", user.full_name);
+    setValue("edit-login", user.login);
+    setValue("edit-role", user.role);
+    setValue("edit-is-active", String(Boolean(user.is_active)));
+    setValue("edit-platform-0800-id", user.platform_0800_id || "");
+    setValue("edit-nuvidio-id", user.nuvidio_id || "");
+    setValue("edit-password", "");
+    userModal.hidden = false;
   };
 
   if (profileMenuTrigger && profileMenuPopover) {
@@ -901,6 +971,10 @@ function bindShellEvents() {
     button.addEventListener("click", closePasswordModal);
   });
 
+  document.querySelectorAll("#close-user-modal, #cancel-user-modal").forEach((button) => {
+    button.addEventListener("click", closeUserModal);
+  });
+
   if (passwordModal) {
     passwordModal.addEventListener("click", (event) => {
       if (!state.forcePasswordChange && event.target === passwordModal) closePasswordModal();
@@ -910,6 +984,15 @@ function bindShellEvents() {
       if (event.key === "Escape" && !passwordModal.hidden && !state.forcePasswordChange) {
         closePasswordModal();
       }
+      if (event.key === "Escape" && userModal && !userModal.hidden) {
+        closeUserModal();
+      }
+    });
+  }
+
+  if (userModal) {
+    userModal.addEventListener("click", (event) => {
+      if (event.target === userModal) closeUserModal();
     });
   }
 
@@ -1075,6 +1158,80 @@ function bindShellEvents() {
       }
     });
   }
+
+  const userEditForm = document.getElementById("user-edit-form");
+  if (userEditForm) {
+    userEditForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const userId = form.get("user_id");
+      const payload = {
+        full_name: form.get("full_name"),
+        login: form.get("login"),
+        role: form.get("role"),
+        is_active: String(form.get("is_active")) === "true",
+        platform_0800_id: form.get("platform_0800_id"),
+        nuvidio_id: form.get("nuvidio_id"),
+        password: form.get("password"),
+      };
+      try {
+        const data = await api(`/api/admin/users/${userId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        await loadUsers();
+        if (String(state.user?.id) === String(data.user.id)) {
+          state.user = { ...state.user, ...data.user };
+        }
+        closeUserModal();
+        setFlash("success", "Usuário atualizado com sucesso.");
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
+    });
+  }
+
+  document.querySelectorAll("[data-user-edit]").forEach((button) => {
+    button.addEventListener("click", () => openUserModal(button.dataset.userEdit));
+  });
+
+  document.querySelectorAll("[data-user-toggle]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const user = state.users.find((item) => String(item.id) === String(button.dataset.userToggle));
+      if (!user) return;
+      try {
+        const data = await api(`/api/admin/users/${user.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ is_active: !user.is_active }),
+        });
+        await loadUsers();
+        if (String(state.user?.id) === String(data.user.id)) {
+          state.user = { ...state.user, ...data.user };
+        }
+        setFlash("success", `Usuário ${data.user.is_active ? "ativado" : "desativado"} com sucesso.`);
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-user-delete]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const user = state.users.find((item) => String(item.id) === String(button.dataset.userDelete));
+      if (!user) return;
+      if (!window.confirm(`Apagar o usuário ${user.full_name}?`)) return;
+      try {
+        await api(`/api/admin/users/${user.id}`, { method: "DELETE" });
+        await Promise.all([loadUsers(), loadOverview(), loadAnalysis(), loadHistory()]);
+        setFlash("success", "Usuário apagado com sucesso.");
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
+    });
+  });
 
   const downloadQualityTemplate = document.getElementById("download-quality-template");
   if (downloadQualityTemplate) {

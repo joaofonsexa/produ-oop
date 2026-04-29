@@ -764,17 +764,39 @@ async function handleApi(request, url, db, env = {}) {
     if (payload.login && db.users.some((entry) => entry.login === String(payload.login).trim() && entry.id !== user.id)) {
       return jsonResponse({ error: "Login ja cadastrado" }, 409);
     }
+    const wantsActive = payload.is_active === undefined ? user.is_active : Boolean(payload.is_active);
+    if (!wantsActive && user.id === auth.user.id) {
+      return jsonResponse({ error: "Voce nao pode desativar o proprio usuario" }, 400);
+    }
     user.full_name = String(payload.full_name || user.full_name).trim();
     user.login = String(payload.login || user.login).trim();
     user.role = payload.role || user.role;
     user.platform_0800_id = String(payload.platform_0800_id ?? user.platform_0800_id).trim();
     user.nuvidio_id = String(payload.nuvidio_id ?? user.nuvidio_id).trim();
+    user.is_active = wantsActive;
     user.updated_at = nowIso();
     if (String(payload.password || "").trim()) {
       user.password_hash = await hashPassword(String(payload.password).trim());
+      user.must_change_password = true;
     }
     await persistStorage(db, env);
     return jsonResponse({ user: serializeUser(user) });
+  }
+
+  if (url.pathname.startsWith("/api/admin/users/") && request.method === "DELETE") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const userId = Number(url.pathname.split("/").pop());
+    if (userId === auth.user.id) {
+      return jsonResponse({ error: "Voce nao pode apagar o proprio usuario" }, 400);
+    }
+    const userIndex = db.users.findIndex((entry) => entry.id === userId);
+    if (userIndex === -1) return jsonResponse({ error: "Usuario nao encontrado" }, 404);
+    db.users.splice(userIndex, 1);
+    db.dailyMetrics = db.dailyMetrics.filter((entry) => entry.user_id !== userId);
+    db.qualityScores = db.qualityScores.filter((entry) => entry.user_id !== userId);
+    await persistStorage(db, env);
+    return jsonResponse({ ok: true });
   }
 
   if (url.pathname === "/api/admin/quality" && request.method === "POST") {
