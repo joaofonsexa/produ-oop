@@ -39,6 +39,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div id="app"></div>
+  <script>window.__brandLogo=${JSON.stringify(FAVICON_DATA)};</script>
   <script src="/script.js"></script>
 </body>
 </html>`;
@@ -369,6 +370,18 @@ async function ensureD1Schema(connection) {
   await connection.exec(D1_SCHEMA);
   const tableInfo = await connection.prepare("PRAGMA table_info(users)").all();
   const columns = new Set((tableInfo?.results || []).map((row) => String(row.name)));
+  if (!columns.has("platform_0800_id")) {
+    await connection.exec("ALTER TABLE users ADD COLUMN platform_0800_id TEXT");
+  }
+  if (!columns.has("nuvidio_id")) {
+    await connection.exec("ALTER TABLE users ADD COLUMN nuvidio_id TEXT");
+  }
+  if (!columns.has("must_change_password")) {
+    await connection.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!columns.has("is_active")) {
+    await connection.exec("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1");
+  }
   if (!columns.has("preferred_theme")) {
     await connection.exec("ALTER TABLE users ADD COLUMN preferred_theme TEXT NOT NULL DEFAULT 'dark'");
   }
@@ -483,31 +496,27 @@ function seedState() {
 
 async function ensureStorage(env = {}) {
   if (env?.DB) {
-    try {
-      await ensureD1Schema(env.DB);
-      const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
-      const baseState = row?.data ? normalizeDbState(JSON.parse(row.data)) : normalizeDbState(seedState());
-      const loadedUsers = await loadUsersFromD1(env.DB);
-      if (loadedUsers.length) {
-        baseState.users = loadedUsers;
-      } else if (!row?.data) {
-        baseState.users[0].password_hash = await hashPassword("admin123");
-      }
-      const db = normalizeDbState(baseState);
-      const repairedPasswords = await ensureDefaultPasswords(db);
-      const shouldPersist =
-        !row?.data ||
-        !loadedUsers.length ||
-        repairedPasswords ||
-        db.users.length !== loadedUsers.length;
-      if (shouldPersist) {
-        await persistStorage(db, env);
-      }
-      storageCache = db;
-      return db;
-    } catch (error) {
-      console.error("D1 fallback activated in ensureStorage", error);
+    await ensureD1Schema(env.DB);
+    const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
+    const baseState = row?.data ? normalizeDbState(JSON.parse(row.data)) : normalizeDbState(seedState());
+    const loadedUsers = await loadUsersFromD1(env.DB);
+    if (loadedUsers.length) {
+      baseState.users = loadedUsers;
+    } else if (!row?.data) {
+      baseState.users[0].password_hash = await hashPassword("admin123");
     }
+    const db = normalizeDbState(baseState);
+    const repairedPasswords = await ensureDefaultPasswords(db);
+    const shouldPersist =
+      !row?.data ||
+      !loadedUsers.length ||
+      repairedPasswords ||
+      db.users.length !== loadedUsers.length;
+    if (shouldPersist) {
+      await persistStorage(db, env);
+    }
+    storageCache = db;
+    return db;
   }
   if (storageCache) return storageCache;
   if (isLocalNodeRuntime) {
@@ -530,21 +539,17 @@ async function ensureStorage(env = {}) {
 
 async function persistStorage(db, env = {}) {
   if (env?.DB) {
-    try {
-      await ensureD1Schema(env.DB);
-      await persistUsersToD1(env.DB, db.users || []);
-      await env.DB.prepare(`
-        INSERT INTO app_state (id, data, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          data = excluded.data,
-          updated_at = excluded.updated_at
-      `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
-      storageCache = db;
-      return;
-    } catch (error) {
-      console.error("D1 fallback activated in persistStorage", error);
-    }
+    await ensureD1Schema(env.DB);
+    await persistUsersToD1(env.DB, db.users || []);
+    await env.DB.prepare(`
+      INSERT INTO app_state (id, data, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        data = excluded.data,
+        updated_at = excluded.updated_at
+    `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
+    storageCache = db;
+    return;
   }
   if (!isLocalNodeRuntime || !db) {
     storageCache = db;

@@ -21,6 +21,10 @@ const state = {
 
 const app = document.getElementById("app");
 
+function brandLogoSrc() {
+  return window.__brandLogo || "/logos_KR-02.png";
+}
+
 function applyTheme() {
   document.body.classList.toggle("theme-contrast", state.theme === "contrast");
 }
@@ -342,7 +346,7 @@ function renderOfflineHint() {
         <div class="login-copy">
           <div class="brand">
             <div class="brand-logo-wrap">
-              <img class="brand-logo" src="/logos_KR-02.png" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
+              <img class="brand-logo" src="${brandLogoSrc()}" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
               <div class="brand-mark" style="display:none;">KR</div>
             </div>
             <div class="brand-copy">
@@ -464,7 +468,7 @@ function shellTemplate() {
         <div class="brand-box">
           <div class="brand">
             <div class="brand-logo-wrap">
-              <img class="brand-logo" src="/logos_KR-02.png" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
+              <img class="brand-logo" src="${brandLogoSrc()}" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
               <div class="brand-mark" style="display:none;">KR</div>
             </div>
             <div class="brand-copy">
@@ -585,7 +589,7 @@ function loginTemplate() {
         <div class="login-copy">
           <div class="brand">
             <div class="brand-logo-wrap">
-              <img class="brand-logo" src="/logos_KR-02.png" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
+              <img class="brand-logo" src="${brandLogoSrc()}" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
               <div class="brand-mark" style="display:none;">KR</div>
             </div>
             <div class="brand-copy">
