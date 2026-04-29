@@ -37,12 +37,19 @@ const STATIC_FILES = {
 };
 
 const isNode = typeof process !== "undefined" && !!process.versions?.node;
+const isLocalNodeRuntime =
+  isNode &&
+  typeof process !== "undefined" &&
+  Array.isArray(process.argv) &&
+  typeof process.argv[1] === "string" &&
+  typeof import.meta?.url === "string" &&
+  import.meta.url.startsWith("file:");
 
 let nodeModulesPromise;
 let storageCache = null;
 
 async function nodeModules() {
-  if (!isNode) return null;
+  if (!isLocalNodeRuntime) return null;
   if (!nodeModulesPromise) {
     nodeModulesPromise = Promise.all([
       import("node:fs/promises"),
@@ -282,7 +289,7 @@ async function ensureStorage(env = {}) {
     return seeded;
   }
   if (storageCache) return storageCache;
-  if (isNode) {
+  if (isLocalNodeRuntime) {
     const { fs, path } = await nodeModules();
     await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
     try {
@@ -312,7 +319,7 @@ async function persistStorage(db, env = {}) {
     `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
     return;
   }
-  if (!isNode || !db) {
+  if (!isLocalNodeRuntime || !db) {
     storageCache = db;
     return;
   }
@@ -978,7 +985,7 @@ async function handleApi(request, url, db, env = {}) {
 
 async function serveStatic(request, env = {}) {
   const pathname = new URL(request.url).pathname;
-  if (!isNode && env?.ASSETS) {
+  if (!isLocalNodeRuntime && env?.ASSETS) {
     if (pathname === "/" || pathname === "/index.html") {
       return new Response(INDEX_HTML, {
         status: 200,
@@ -999,7 +1006,7 @@ async function serveStatic(request, env = {}) {
     }
     return env.ASSETS.fetch(request);
   }
-  if (!isNode) {
+  if (!isLocalNodeRuntime) {
     return new Response("Not found", { status: 404 });
   }
   const { fs, path } = await nodeModules();
@@ -1066,14 +1073,6 @@ export default {
     }
   },
 };
-
-const isLocalNodeRuntime =
-  isNode &&
-  typeof process !== "undefined" &&
-  Array.isArray(process.argv) &&
-  typeof process.argv[1] === "string" &&
-  typeof import.meta?.url === "string" &&
-  import.meta.url.startsWith("file:");
 
 if (isLocalNodeRuntime) {
   const modules = await nodeModules();
