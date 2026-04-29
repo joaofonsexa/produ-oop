@@ -28,6 +28,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 </html>`;
 const SECRET_KEY = "pulse-ops-local-secret";
 const DEFAULT_PASSWORD = "Trocar@01";
+const PRIMARY_MANAGER_HASH = "f18a137a143dc89817660f864bc973b0$6e3ebbd96a5a02981368b64d2b039dd93a52d901d44f73bc5f1d96797760aec7";
 const STATIC_FILES = {
   "/": "index.html",
   "/index.html": "index.html",
@@ -169,10 +170,28 @@ function normalizeUserRecord(user, roleFallback = "operator") {
 
 function normalizeDbState(db) {
   db.users = (db.users || []).map((user, index) => normalizeUserRecord(user, index === 0 ? "manager" : "operator"));
+  if (!db.users.some((user) => String(user.login).trim().toLowerCase() === "joao.fonseca")) {
+    const nextUserId = Math.max(0, ...db.users.map((user) => Number(user.id) || 0)) + 1;
+    db.users.push({
+      id: nextUserId,
+      full_name: "João Fonseca",
+      login: "joao.fonseca",
+      password_hash: PRIMARY_MANAGER_HASH,
+      role: "manager",
+      platform_0800_id: "",
+      nuvidio_id: "",
+      must_change_password: false,
+      is_active: true,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    });
+  }
   db.dailyMetrics = db.dailyMetrics || [];
   db.qualityScores = db.qualityScores || [];
   db.importLogs = db.importLogs || [];
-  db.counters = db.counters || { users: 2, dailyMetrics: 1, qualityScores: 1, importLogs: 1 };
+  const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
+  db.counters = db.counters || { users: nextUserCounter, dailyMetrics: 1, qualityScores: 1, importLogs: 1 };
+  db.counters.users = Math.max(db.counters.users || 1, nextUserCounter);
   return db;
 }
 
@@ -280,13 +299,17 @@ function seedState() {
 
 async function ensureStorage(env = {}) {
   if (env?.DB) {
-    await env.DB.exec(D1_SCHEMA);
-    const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
-    if (row?.data) return normalizeDbState(JSON.parse(row.data));
-    const seeded = normalizeDbState(seedState());
-    seeded.users[0].password_hash = await hashPassword("admin123");
-    await persistStorage(seeded, env);
-    return seeded;
+    try {
+      await env.DB.exec(D1_SCHEMA);
+      const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
+      if (row?.data) return normalizeDbState(JSON.parse(row.data));
+      const seeded = normalizeDbState(seedState());
+      seeded.users[0].password_hash = await hashPassword("admin123");
+      await persistStorage(seeded, env);
+      return seeded;
+    } catch (error) {
+      console.error("D1 fallback activated in ensureStorage", error);
+    }
   }
   if (storageCache) return storageCache;
   if (isLocalNodeRuntime) {
@@ -309,15 +332,19 @@ async function ensureStorage(env = {}) {
 
 async function persistStorage(db, env = {}) {
   if (env?.DB) {
-    await env.DB.exec(D1_SCHEMA);
-    await env.DB.prepare(`
-      INSERT INTO app_state (id, data, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        data = excluded.data,
-        updated_at = excluded.updated_at
-    `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
-    return;
+    try {
+      await env.DB.exec(D1_SCHEMA);
+      await env.DB.prepare(`
+        INSERT INTO app_state (id, data, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          data = excluded.data,
+          updated_at = excluded.updated_at
+      `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
+      return;
+    } catch (error) {
+      console.error("D1 fallback activated in persistStorage", error);
+    }
   }
   if (!isLocalNodeRuntime || !db) {
     storageCache = db;
@@ -985,7 +1012,7 @@ async function handleApi(request, url, db, env = {}) {
 
 async function serveStatic(request, env = {}) {
   const pathname = new URL(request.url).pathname;
-  if (!isLocalNodeRuntime && env?.ASSETS) {
+  if (!isLocalNodeRuntime) {
     if (pathname === "/" || pathname === "/index.html") {
       return new Response(INDEX_HTML, {
         status: 200,
@@ -1004,9 +1031,6 @@ async function serveStatic(request, env = {}) {
         headers: { "content-type": "text/css; charset=utf-8" },
       });
     }
-    return env.ASSETS.fetch(request);
-  }
-  if (!isLocalNodeRuntime) {
     return new Response("Not found", { status: 404 });
   }
   const { fs, path } = await nodeModules();
