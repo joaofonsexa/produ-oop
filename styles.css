@@ -73,6 +73,50 @@ body {
     linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 100%);
 }
 
+.boot-loader {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 14, 0.9);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+.boot-loader.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.boot-loader-card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px 28px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.boot-loader-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 3px solid rgba(93, 130, 255, 0.2);
+  border-top-color: var(--blue);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 button,
 input,
 select,

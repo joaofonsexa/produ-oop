@@ -20,6 +20,23 @@ const state = {
 };
 
 const app = document.getElementById("app");
+const bootLoader = document.createElement("div");
+bootLoader.className = "boot-loader";
+bootLoader.innerHTML = `
+  <div class="boot-loader-card">
+    <div class="boot-loader-spinner"></div>
+    <strong>Carregando portal...</strong>
+  </div>
+`;
+document.body.appendChild(bootLoader);
+
+function showBootLoader() {
+  bootLoader.classList.add("visible");
+}
+
+function hideBootLoader() {
+  bootLoader.classList.remove("visible");
+}
 
 function brandLogoSrc() {
   return window.__brandLogo || "/logos_KR-02.png?v=20260429";
@@ -367,9 +384,11 @@ function renderOfflineHint() {
 }
 
 async function boot() {
+  showBootLoader();
   applyTheme();
   if (window.location.protocol === "file:") {
     renderOfflineHint();
+    hideBootLoader();
     return;
   }
   try {
@@ -388,6 +407,7 @@ async function boot() {
     state.user = null;
   }
   render();
+  hideBootLoader();
 }
 
 async function loadAll() {

@@ -90,21 +90,10 @@ function normalizeHeader(value) {
   return String(value ?? "")
     .trim()
     .toLowerCase()
-    .replaceAll(" ", "_")
-    .replaceAll("-", "_")
-    .replaceAll("/", "_")
-    .replaceAll(".", "")
-    .replaceAll("Ã£", "a")
-    .replaceAll("Ã¡", "a")
-    .replaceAll("Ã¢", "a")
-    .replaceAll("Ã©", "e")
-    .replaceAll("Ãª", "e")
-    .replaceAll("Ã­", "i")
-    .replaceAll("Ã³", "o")
-    .replaceAll("Ã´", "o")
-    .replaceAll("Ãµ", "o")
-    .replaceAll("Ãº", "u")
-    .replaceAll("Ã§", "c");
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function toInt(value) {
@@ -1463,8 +1452,28 @@ async function handleApi(request, url, db, env = {}) {
     const processedKeys = new Set((db.r2ProcessedKeys || []).map((key) => String(key)));
     const parsedCandidates = objects.filter((item) => /parsed\//i.test(item.key) && /\.csv$/i.test(item.key));
     const unprocessedParsed = parsedCandidates.filter((item) => !processedKeys.has(item.key));
-    const fallbackCandidates = objects.filter((item) => /\.csv$/i.test(item.key) && !processedKeys.has(item.key));
-    const toProcess = unprocessedParsed.length ? [unprocessedParsed[0]] : (fallbackCandidates.length ? [fallbackCandidates[0]] : []);
+    const unprocessedCsv = objects.filter((item) => /\.csv$/i.test(item.key) && !processedKeys.has(item.key));
+
+    const pickByOperation = (list, operationRegex) =>
+      list.find((item) => operationRegex.test(item.key));
+
+    const parsed0800 = pickByOperation(unprocessedParsed, /0800/i);
+    const parsedNuvidio = pickByOperation(unprocessedParsed, /nuvidio/i);
+    const raw0800 = pickByOperation(unprocessedCsv, /0800/i);
+    const rawNuvidio = pickByOperation(unprocessedCsv, /nuvidio/i);
+
+    const uniqueByKey = (items) => {
+      const map = new Map();
+      for (const item of items) {
+        if (item?.key && !map.has(item.key)) map.set(item.key, item);
+      }
+      return [...map.values()];
+    };
+
+    const toProcess = uniqueByKey([
+      parsed0800 || raw0800,
+      parsedNuvidio || rawNuvidio,
+    ]).slice(0, 2);
     const summary = {
       processedFiles: 0,
       processedRows: 0,
@@ -1512,7 +1521,7 @@ async function handleApi(request, url, db, env = {}) {
       }
 
       registerImportLog(db, auth.user.id, item.key, result.processed, result.rejected);
-      if (!db.r2ProcessedKeys.includes(item.key)) db.r2ProcessedKeys.push(item.key);
+      if (result.processed > 0 && !db.r2ProcessedKeys.includes(item.key)) db.r2ProcessedKeys.push(item.key);
       summary.processedFiles += 1;
       summary.processedRows += result.processed;
       summary.rejectedRows += result.rejected;
