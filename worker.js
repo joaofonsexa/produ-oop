@@ -25,6 +25,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 const SECRET_KEY = "pulse-ops-local-secret";
+const DEFAULT_PASSWORD = "Trocar@01";
 const STATIC_FILES = {
   "/": "index.html",
   "/index.html": "index.html",
@@ -143,8 +144,27 @@ function serializeUser(user) {
     role: user.role,
     platform_0800_id: user.platform_0800_id,
     nuvidio_id: user.nuvidio_id,
+    must_change_password: !!user.must_change_password,
     is_active: user.is_active,
   };
+}
+
+function normalizeUserRecord(user, roleFallback = "operator") {
+  return {
+    ...user,
+    role: user.role || roleFallback,
+    must_change_password: Boolean(user.must_change_password),
+    is_active: user.is_active !== false,
+  };
+}
+
+function normalizeDbState(db) {
+  db.users = (db.users || []).map((user, index) => normalizeUserRecord(user, index === 0 ? "manager" : "operator"));
+  db.dailyMetrics = db.dailyMetrics || [];
+  db.qualityScores = db.qualityScores || [];
+  db.importLogs = db.importLogs || [];
+  db.counters = db.counters || { users: 2, dailyMetrics: 1, qualityScores: 1, importLogs: 1 };
+  return db;
 }
 
 function calculateEffectiveness(metric) {
@@ -237,6 +257,7 @@ function seedState() {
         role: "manager",
         platform_0800_id: "GESTOR-001",
         nuvidio_id: "NUVIDIO-001",
+        must_change_password: false,
         is_active: true,
         created_at: nowIso(),
         updated_at: nowIso(),
@@ -252,8 +273,8 @@ async function ensureStorage(env = {}) {
   if (env?.DB) {
     await env.DB.exec(D1_SCHEMA);
     const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
-    if (row?.data) return JSON.parse(row.data);
-    const seeded = seedState();
+    if (row?.data) return normalizeDbState(JSON.parse(row.data));
+    const seeded = normalizeDbState(seedState());
     seeded.users[0].password_hash = await hashPassword("admin123");
     await persistStorage(seeded, env);
     return seeded;
@@ -264,14 +285,14 @@ async function ensureStorage(env = {}) {
     await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
     try {
       const raw = await fs.readFile(DB_PATH, "utf8");
-      storageCache = JSON.parse(raw);
+      storageCache = normalizeDbState(JSON.parse(raw));
     } catch {
-      storageCache = seedState();
+      storageCache = normalizeDbState(seedState());
       storageCache.users[0].password_hash = await hashPassword("admin123");
       await persistStorage(storageCache, env);
     }
   } else {
-    storageCache = seedState();
+    storageCache = normalizeDbState(seedState());
     storageCache.users[0].password_hash = await hashPassword("admin123");
   }
   return storageCache;
@@ -620,7 +641,7 @@ async function handleApi(request, url, db, env = {}) {
     const newPassword = String(payload.new_password || "").trim();
     const confirmPassword = String(payload.confirm_password || "").trim();
 
-    if (!(await verifyPassword(currentPassword, auth.user.password_hash))) {
+    if (!auth.user.must_change_password && !(await verifyPassword(currentPassword, auth.user.password_hash))) {
       return jsonResponse({ error: "Senha atual invalida" }, 400);
     }
     if (newPassword.length < 4) {
@@ -631,9 +652,10 @@ async function handleApi(request, url, db, env = {}) {
     }
 
     auth.user.password_hash = await hashPassword(newPassword);
+    auth.user.must_change_password = false;
     auth.user.updated_at = nowIso();
     await persistStorage(db, env);
-    return jsonResponse({ ok: true });
+    return jsonResponse({ ok: true, user: serializeUser(auth.user) });
   }
 
   if (url.pathname === "/api/dashboard/overview" && request.method === "GET") {
@@ -664,7 +686,7 @@ async function handleApi(request, url, db, env = {}) {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
     const payload = await request.json();
-    const required = ["full_name", "login", "password", "role"];
+    const required = ["full_name", "login", "role"];
     const missing = required.filter((field) => !String(payload[field] || "").trim());
     if (missing.length) {
       return jsonResponse({ error: `Campos obrigatorios: ${missing.join(", ")}` }, 400);
@@ -679,17 +701,18 @@ async function handleApi(request, url, db, env = {}) {
       id: nextId(db, "users"),
       full_name: String(payload.full_name).trim(),
       login: String(payload.login).trim(),
-      password_hash: await hashPassword(String(payload.password)),
+      password_hash: await hashPassword(DEFAULT_PASSWORD),
       role: payload.role,
       platform_0800_id: String(payload.platform_0800_id || "").trim(),
       nuvidio_id: String(payload.nuvidio_id || "").trim(),
+      must_change_password: true,
       is_active: true,
       created_at: nowIso(),
       updated_at: nowIso(),
     };
     db.users.push(user);
     await persistStorage(db, env);
-    return jsonResponse({ user: serializeUser(user) }, 201);
+    return jsonResponse({ user: serializeUser(user), default_password: DEFAULT_PASSWORD }, 201);
   }
 
   if (url.pathname.startsWith("/api/admin/users/") && request.method === "PUT") {

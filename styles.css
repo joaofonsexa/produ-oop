@@ -616,6 +616,27 @@ body.theme-contrast .nav button.active {
   gap: 10px;
 }
 
+.list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.list-row strong,
+.list-row span {
+  display: block;
+}
+
+.list-row span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .mini-row {
   display: grid;
   gap: 6px;

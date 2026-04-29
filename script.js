@@ -6,6 +6,7 @@ const state = {
   history: null,
   users: [],
   flash: null,
+  forcePasswordChange: false,
   theme: localStorage.getItem("pulse-theme") || "dark",
   filters: {
     today: new Date().toISOString().slice(0, 10),
@@ -320,6 +321,7 @@ async function boot() {
       if (!isManager()) state.filters.analysisUserId = String(state.user.id);
       await loadAll();
       state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
+      state.forcePasswordChange = Boolean(state.user.must_change_password);
     }
   } catch {
     state.user = null;
@@ -455,17 +457,17 @@ function shellTemplate() {
           <div class="panel-head">
             <div>
               <span class="eyebrow">Segurança</span>
-              <h3>Redefinir senha</h3>
+              <h3>${state.forcePasswordChange ? "Primeiro acesso" : "Redefinir senha"}</h3>
             </div>
-            <button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">×</button>
+            ${state.forcePasswordChange ? "" : `<button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">×</button>`}
           </div>
           <form id="password-form" class="section compact-form">
-            <label>Senha atual<input name="current_password" type="password" required></label>
+            ${state.forcePasswordChange ? `<div class="info-box">Para continuar, defina uma nova senha para substituir a senha padrão <strong>Trocar@01</strong>.</div>` : `<label>Senha atual<input name="current_password" type="password" required></label>`}
             <label>Nova senha<input name="new_password" type="password" minlength="4" required></label>
             <label>Confirmar nova senha<input name="confirm_password" type="password" minlength="4" required></label>
             <div class="action-grid">
-              <button class="btn-secondary" type="button" id="cancel-password-modal">Cancelar</button>
-              <button class="btn" type="submit">Salvar senha</button>
+              ${state.forcePasswordChange ? "" : `<button class="btn-secondary" type="button" id="cancel-password-modal">Cancelar</button>`}
+              <button class="btn" type="submit">${state.forcePasswordChange ? "Salvar e continuar" : "Salvar senha"}</button>
             </div>
           </form>
         </div>
@@ -778,6 +780,43 @@ function adminTemplate() {
           </form>
         </article>
       </div>
+      <div class="hero-grid">
+        <article class="panel">
+          <div class="panel-head"><div><span class="eyebrow">Usuários</span><h3>Novo usuário</h3></div></div>
+          <form id="admin-user-form" class="section">
+            <div class="form-grid">
+              <label>Nome completo<input name="full_name" required></label>
+              <label>Login<input name="login" required></label>
+              <label>Perfil
+                <select name="role" required>
+                  <option value="operator">Operador</option>
+                  <option value="manager">Gestor</option>
+                </select>
+              </label>
+              <label>ID 0800<input name="platform_0800_id"></label>
+              <label>ID Nuvidio<input name="nuvidio_id"></label>
+            </div>
+            <div class="info-box">Senha inicial automática: <strong>Trocar@01</strong>. No primeiro login, o usuário será obrigado a definir uma nova senha.</div>
+            <div class="action-grid">
+              <button class="btn" type="submit">Cadastrar usuário</button>
+            </div>
+          </form>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><span class="eyebrow">Usuários</span><h3>Cadastrados</h3></div></div>
+          <div class="list">
+            ${state.users.length ? state.users.map((user) => `
+              <div class="list-row">
+                <div>
+                  <strong>${esc(user.full_name)}</strong>
+                  <span>${esc(user.login)} · ${user.role === "manager" ? "Gestor" : "Operador"}</span>
+                </div>
+                <span class="pill ${user.must_change_password ? "amber" : "green"}">${user.must_change_password ? "Troca pendente" : "Ativo"}</span>
+              </div>
+            `).join("") : `<div class="empty">Nenhum usuário cadastrado.</div>`}
+          </div>
+        </article>
+      </div>
     </section>
   `;
 }
@@ -793,6 +832,7 @@ function bindLogin() {
       });
       state.user = response.user;
       clearFlash();
+      state.forcePasswordChange = Boolean(state.user.must_change_password);
       state.filters.historyUserId = String(state.user.id);
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
       await loadAll();
@@ -822,6 +862,7 @@ function bindShellEvents() {
   };
 
   const closePasswordModal = () => {
+    if (state.forcePasswordChange) return;
     if (!passwordModal) return;
     passwordModal.hidden = true;
     const form = document.getElementById("password-form");
@@ -856,14 +897,18 @@ function bindShellEvents() {
 
   if (passwordModal) {
     passwordModal.addEventListener("click", (event) => {
-      if (event.target === passwordModal) closePasswordModal();
+      if (!state.forcePasswordChange && event.target === passwordModal) closePasswordModal();
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !passwordModal.hidden) {
+      if (event.key === "Escape" && !passwordModal.hidden && !state.forcePasswordChange) {
         closePasswordModal();
       }
     });
+  }
+
+  if (state.forcePasswordChange && passwordModal) {
+    passwordModal.hidden = false;
   }
 
   document.querySelectorAll("[data-route]").forEach((button) => {
@@ -1005,6 +1050,26 @@ function bindShellEvents() {
     });
   }
 
+  const adminUserForm = document.getElementById("admin-user-form");
+  if (adminUserForm) {
+    adminUserForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const payload = Object.fromEntries(form.entries());
+      try {
+        const data = await api("/api/admin/users", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await loadUsers();
+        setFlash("success", `Usuário cadastrado com senha inicial ${data.default_password}.`);
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
+    });
+  }
+
   const downloadQualityTemplate = document.getElementById("download-quality-template");
   if (downloadQualityTemplate) {
     downloadQualityTemplate.addEventListener("click", () => {
@@ -1023,7 +1088,9 @@ function bindShellEvents() {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        closePasswordModal();
+        state.user = { ...state.user, must_change_password: false };
+        state.forcePasswordChange = false;
+        if (passwordModal) passwordModal.hidden = true;
         setFlash("success", "Senha atualizada com sucesso.");
       } catch (error) {
         setFlash("error", error.message);
