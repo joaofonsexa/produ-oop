@@ -1,13 +1,13 @@
 const state = {
   user: null,
-  route: localStorage.getItem("pulse-route") || "overview",
+  route: "overview",
   overview: null,
   analysis: null,
   history: null,
   users: [],
   flash: null,
   forcePasswordChange: false,
-  theme: localStorage.getItem("pulse-theme") || "dark",
+  theme: "dark",
   filters: {
     today: new Date().toISOString().slice(0, 10),
     start: new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
@@ -82,6 +82,29 @@ function isManager() {
   return state.user?.role === "manager";
 }
 
+function normalizeRoute(route, role = state.user?.role) {
+  const value = String(route || "").trim();
+  const allowed = role === "manager"
+    ? ["overview", "analysis", "history", "admin"]
+    : ["overview", "analysis", "history"];
+  return allowed.includes(value) ? value : "overview";
+}
+
+function applyUserPreferences() {
+  if (!state.user) return;
+  state.theme = state.user.preferred_theme === "contrast" ? "contrast" : "dark";
+  state.route = normalizeRoute(state.user.last_route, state.user.role);
+}
+
+async function saveUserPreferences(partial) {
+  if (!state.user) return;
+  const response = await api("/api/auth/preferences", {
+    method: "PATCH",
+    body: JSON.stringify(partial),
+  });
+  state.user = response.user;
+}
+
 function enforceOperatorScope() {
   if (!state.user || isManager()) return;
   state.filters.historyUserId = String(state.user.id);
@@ -89,16 +112,35 @@ function enforceOperatorScope() {
   state.filters.historyQuery = state.user.full_name;
 }
 
+function getOperatorUsers() {
+  return state.users.filter((user) => user.role === "operator" && user.is_active);
+}
+
+function ensureManagerUserFilters() {
+  if (!isManager()) return;
+  const operators = getOperatorUsers();
+  const firstOperatorId = operators[0] ? String(operators[0].id) : "";
+  if (state.filters.analysisUserId !== "all" && !operators.some((user) => String(user.id) === String(state.filters.analysisUserId))) {
+    state.filters.analysisUserId = "all";
+  }
+  if (!operators.some((user) => String(user.id) === String(state.filters.historyUserId))) {
+    state.filters.historyUserId = firstOperatorId;
+  }
+  if (!state.filters.historyQuery || !operators.some((user) => user.full_name === state.filters.historyQuery)) {
+    state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || "";
+  }
+}
+
 function getUserLabelById(userId) {
-  return state.users.find((user) => String(user.id) === String(userId))?.full_name || "";
+  return getOperatorUsers().find((user) => String(user.id) === String(userId))?.full_name || "";
 }
 
 function resolveHistoryUserId(query) {
   const normalized = String(query || "").trim().toLowerCase();
   if (!normalized) return "";
-  const exact = state.users.find((user) => user.full_name.trim().toLowerCase() === normalized);
+  const exact = getOperatorUsers().find((user) => user.full_name.trim().toLowerCase() === normalized);
   if (exact) return String(exact.id);
-  const partial = state.users.find((user) => user.full_name.trim().toLowerCase().includes(normalized));
+  const partial = getOperatorUsers().find((user) => user.full_name.trim().toLowerCase().includes(normalized));
   return partial ? String(partial.id) : "";
 }
 
@@ -330,6 +372,7 @@ async function boot() {
     const auth = await api("/api/auth/me");
     state.user = auth.user;
     if (state.user) {
+      applyUserPreferences();
       state.filters.historyUserId = String(state.user.id);
       if (!isManager()) state.filters.analysisUserId = String(state.user.id);
       enforceOperatorScope();
@@ -344,11 +387,14 @@ async function boot() {
 }
 
 async function loadAll() {
+  if (isManager()) {
+    await loadUsers();
+    ensureManagerUserFilters();
+  }
   await Promise.all([
     loadOverview(),
     loadAnalysis(),
     loadHistory(),
-    isManager() ? loadUsers() : Promise.resolve(),
   ]);
 }
 
@@ -369,6 +415,7 @@ async function loadUsers() {
   const response = await api("/api/admin/users");
   state.users = response.users;
   if (isManager()) {
+    ensureManagerUserFilters();
     state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.filters.historyQuery;
   }
 }
@@ -407,8 +454,9 @@ function shellTemplate() {
     admin: { title: "Gestão", desc: "" },
   };
   const current = titles[state.route];
+  const operatorUsers = getOperatorUsers();
   const selectedLabel = isManager()
-    ? (state.filters.analysisUserId === "all" ? "Todos os operadores" : state.users.find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador")
+    ? (state.filters.analysisUserId === "all" ? "Todos os operadores" : operatorUsers.find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador")
     : state.user.full_name;
   return `
     <div class="shell">
@@ -444,7 +492,7 @@ function shellTemplate() {
               <select id="global-user-select" ${isManager() ? "" : 'disabled aria-disabled="true"'}>
                 ${isManager() ? `
                   <option value="all" ${state.filters.analysisUserId === "all" ? "selected" : ""}>Todos os operadores</option>
-                  ${state.users.map((user) => `<option value="${user.id}" ${String(user.id) === String(state.filters.analysisUserId) ? "selected" : ""}>${esc(user.full_name)}</option>`).join("")}
+                  ${operatorUsers.map((user) => `<option value="${user.id}" ${String(user.id) === String(state.filters.analysisUserId) ? "selected" : ""}>${esc(user.full_name)}</option>`).join("")}
                 ` : `<option value="${state.user.id}">${esc(selectedLabel)}</option>`}
               </select>
             </div>
@@ -740,7 +788,7 @@ function historyTemplate() {
               <label>Operador
                 <input id="history-user-search" list="history-user-options" value="${esc(state.filters.historyQuery || currentHistoryUser)}" placeholder="Pesquisar operador">
                 <datalist id="history-user-options">
-                  ${state.users.map((user) => `<option value="${esc(user.full_name)}"></option>`).join("")}
+                  ${getOperatorUsers().map((user) => `<option value="${esc(user.full_name)}"></option>`).join("")}
                 </datalist>
               </label>
             ` : ""}
@@ -880,6 +928,7 @@ function bindLogin() {
         body: JSON.stringify({ login: form.get("login"), password: form.get("password") }),
       });
       state.user = response.user;
+      applyUserPreferences();
       clearFlash();
       state.forcePasswordChange = Boolean(state.user.must_change_password);
       state.filters.historyUserId = String(state.user.id);
@@ -1001,11 +1050,15 @@ function bindShellEvents() {
   }
 
   document.querySelectorAll("[data-route]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       clearFlash();
       state.route = button.dataset.route;
-      localStorage.setItem("pulse-route", state.route);
       render();
+      try {
+        await saveUserPreferences({ last_route: state.route });
+      } catch (error) {
+        setFlash("error", error.message || "Não foi possível salvar a aba atual.");
+      }
     });
   });
 
@@ -1022,8 +1075,10 @@ function bindShellEvents() {
   const globalUserSelect = document.getElementById("global-user-select");
   if (globalUserSelect && isManager()) {
     globalUserSelect.addEventListener("change", async (event) => {
+      const operatorUsers = getOperatorUsers();
+      const firstOperatorId = operatorUsers[0] ? String(operatorUsers[0].id) : "";
       state.filters.analysisUserId = event.target.value;
-      state.filters.historyUserId = event.target.value === "all" ? String(state.user.id) : event.target.value;
+      state.filters.historyUserId = event.target.value === "all" ? firstOperatorId : event.target.value;
       state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || "";
       if (event.target.value !== "all") await loadHistory();
       render();
@@ -1042,7 +1097,7 @@ function bindShellEvents() {
       await api("/api/auth/logout", { method: "POST" });
       state.user = null;
       state.route = "overview";
-      localStorage.setItem("pulse-route", state.route);
+      state.theme = "dark";
       setFlash("success", "Sessão encerrada.");
     },
     "refresh-all": async () => {
@@ -1075,8 +1130,12 @@ function bindShellEvents() {
     },
     "toggle-theme": async () => {
       state.theme = state.theme === "dark" ? "contrast" : "dark";
-      localStorage.setItem("pulse-theme", state.theme);
       render();
+      try {
+        await saveUserPreferences({ preferred_theme: state.theme });
+      } catch (error) {
+        setFlash("error", error.message || "Não foi possível salvar o tema.");
+      }
     },
     "refresh-r2": async () => {
       const data = await api("/api/admin/import/r2", { method: "POST" });
