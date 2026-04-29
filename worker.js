@@ -990,7 +990,15 @@ export default {
   fetch: (request, env) => handleRequest(request, env),
 };
 
-if (isNode) {
+const isLocalNodeRuntime =
+  isNode &&
+  typeof process !== "undefined" &&
+  Array.isArray(process.argv) &&
+  typeof process.argv[1] === "string" &&
+  typeof import.meta?.url === "string" &&
+  import.meta.url.startsWith("file:");
+
+if (isLocalNodeRuntime) {
   const modules = await nodeModules();
   const __filename = modules.fileURLToPath(import.meta.url);
   if (process.argv[1] === __filename) {
