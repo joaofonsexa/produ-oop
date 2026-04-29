@@ -87,7 +87,7 @@ function integer(value) {
 }
 
 function percent(value) {
-  return `${Number(value || 0).toFixed(2)}%`;
+  return `${Math.round(Number(value || 0))}%`;
 }
 
 function initials(name) {
@@ -694,8 +694,8 @@ function overviewTemplate() {
   const latestEffectiveness = model.latest ? percent(model.latest.effectiveness) : "--%";
   const cards = [
     { label: "Total atendido", value: integer(model.totalAttended) },
-    { label: "Média de produção", value: number(model.avgProduction) || "--" },
-    { label: "Efetividade média", value: model.avgEffectiveness ? percent(model.avgEffectiveness) : "--%" },
+    { label: "Média de produção", value: integer(model.avgProduction) || "--" },
+    { label: "Efetividade média", value: percent(model.avgEffectiveness) },
     { label: "Qualidade média", value: model.avgQuality ? number(model.avgQuality) : "--" },
   ];
   return `
@@ -871,7 +871,7 @@ function analysisTemplate() {
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Resumo</span><h3>Consolidado</h3></div></div>
               <div class="mini-grid">
-                <div class="mini-card"><span class="muted">Produção média</span><div class="metric-value">${number(model.summary.production)}</div></div>
+                <div class="mini-card"><span class="muted">Produção média</span><div class="metric-value">${integer(model.summary.production)}</div></div>
                 <div class="mini-card"><span class="muted">Efetividade média</span><div class="metric-value">${percent(model.summary.effectiveness)}</div></div>
               </div>
             </article>
