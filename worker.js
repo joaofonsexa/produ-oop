@@ -938,12 +938,7 @@ async function handleApi(request, url, db, env = {}) {
 async function serveStatic(request, env = {}) {
   const pathname = new URL(request.url).pathname;
   if (!isNode && env?.ASSETS) {
-    const assetResponse = await env.ASSETS.fetch(request);
-    if (assetResponse.status !== 404) return assetResponse;
-    if (pathname === "/" || !pathname.includes(".")) {
-      return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
-    }
-    return assetResponse;
+    return env.ASSETS.fetch(request);
   }
   if (!isNode) {
     return new Response("Not found", { status: 404 });
