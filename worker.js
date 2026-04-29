@@ -30,6 +30,8 @@ const INDEX_HTML = `<!DOCTYPE html>
 const SECRET_KEY = "pulse-ops-local-secret";
 const DEFAULT_PASSWORD = "Trocar@01";
 const PRIMARY_MANAGER_HASH = "f18a137a143dc89817660f864bc973b0$6e3ebbd96a5a02981368b64d2b039dd93a52d901d44f73bc5f1d96797760aec7";
+const R2_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const R2_MAX_ROWS_PER_RUN = 12000;
 const STATIC_FILES = {
   "/": "index.html",
   "/index.html": "index.html",
@@ -231,6 +233,7 @@ function normalizeDbState(db) {
   });
   db.qualityScores = db.qualityScores || [];
   db.importLogs = db.importLogs || [];
+  db.r2ProcessedKeys = Array.isArray(db.r2ProcessedKeys) ? db.r2ProcessedKeys : [];
   const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
   db.counters = db.counters || { users: nextUserCounter, dailyMetrics: 1, qualityScores: 1, importLogs: 1 };
   db.counters.users = Math.max(db.counters.users || 1, nextUserCounter);
@@ -653,7 +656,7 @@ function matchUserByName(users, name) {
   return users.find((user) => normalizeComparable(user.full_name) === target) || null;
 }
 
-function parseCsv(text) {
+function parseCsv(text, maxRows = Number.POSITIVE_INFINITY) {
   const rows = [];
   let current = "";
   let row = [];
@@ -674,14 +677,17 @@ function parseCsv(text) {
     } else if ((char === "\n" || char === "\r") && !inQuotes) {
       if (char === "\r" && next === "\n") i += 1;
       row.push(current);
-      if (row.some((cell) => cell.length)) rows.push(row);
+      if (row.some((cell) => cell.length)) {
+        rows.push(row);
+        if (rows.length >= maxRows) break;
+      }
       row = [];
       current = "";
     } else {
       current += char;
     }
   }
-  if (current.length || row.length) {
+  if ((current.length || row.length) && rows.length < maxRows) {
     row.push(current);
     if (row.some((cell) => cell.length)) rows.push(row);
   }
@@ -1417,7 +1423,7 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: "Bucket R2 nao configurado para este ambiente." }, 400);
     }
 
-    const listing = await env.IMPORTS_BUCKET.list({ limit: 200 });
+    const listing = await env.IMPORTS_BUCKET.list({ limit: 500 });
     const objects = (listing.objects || [])
       .filter((item) => /\.(csv|xlsx)$/i.test(item.key))
       .sort((a, b) => new Date(b.uploaded || 0).getTime() - new Date(a.uploaded || 0).getTime());
@@ -1426,16 +1432,18 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: "Nenhum arquivo CSV ou XLSX encontrado no R2." }, 404);
     }
 
-    const normalizedCandidate = objects.find((item) => /\.csv$/i.test(item.key) && /base|produc|resultado|consolid/i.test(item.key));
-    const latest0800 = objects.find((item) => /0800/i.test(item.key));
-    const latestNuvidio = objects.find((item) => /nuvidio/i.test(item.key));
-    const toProcess = normalizedCandidate ? [normalizedCandidate] : [latest0800, latestNuvidio].filter(Boolean);
+    const processedKeys = new Set((db.r2ProcessedKeys || []).map((key) => String(key)));
+    const parsedCandidates = objects.filter((item) => /parsed\//i.test(item.key) && /\.csv$/i.test(item.key));
+    const unprocessedParsed = parsedCandidates.filter((item) => !processedKeys.has(item.key));
+    const fallbackCandidates = objects.filter((item) => /\.csv$/i.test(item.key) && !processedKeys.has(item.key));
+    const toProcess = unprocessedParsed.length ? [unprocessedParsed[0]] : (fallbackCandidates.length ? [fallbackCandidates[0]] : []);
     const summary = {
       processedFiles: 0,
       processedRows: 0,
       rejectedRows: 0,
       files: [],
       skipped: [],
+      mode: "incremental_single_file",
     };
 
     for (const item of toProcess) {
@@ -1450,11 +1458,19 @@ async function handleApi(request, url, db, env = {}) {
         continue;
       }
 
+      if (Number(object.size || 0) > R2_MAX_FILE_BYTES) {
+        summary.skipped.push(`${item.key}: arquivo acima do limite de ${Math.round(R2_MAX_FILE_BYTES / (1024 * 1024))}MB para processamento em Worker.`);
+        continue;
+      }
+
       const text = await object.text();
-      const rows = parseCsv(text);
+      const rows = parseCsv(text, R2_MAX_ROWS_PER_RUN);
       if (!rows.length) {
         summary.skipped.push(`${item.key}: arquivo vazio.`);
         continue;
+      }
+      if (rows.length >= R2_MAX_ROWS_PER_RUN) {
+        summary.skipped.push(`${item.key}: limite de ${R2_MAX_ROWS_PER_RUN} linhas por sincronização atingido (rode novamente para continuar).`);
       }
 
       const schema = detectImportSchema(rows[0], item.key);
@@ -1468,6 +1484,7 @@ async function handleApi(request, url, db, env = {}) {
       }
 
       registerImportLog(db, auth.user.id, item.key, result.processed, result.rejected);
+      if (!db.r2ProcessedKeys.includes(item.key)) db.r2ProcessedKeys.push(item.key);
       summary.processedFiles += 1;
       summary.processedRows += result.processed;
       summary.rejectedRows += result.rejected;
@@ -1480,6 +1497,10 @@ async function handleApi(request, url, db, env = {}) {
       result.errors.slice(0, 10).forEach((entry) => {
         summary.skipped.push(`${item.key} linha ${entry.row}: ${entry.error}`);
       });
+    }
+
+    if (!toProcess.length) {
+      summary.skipped.push("Nenhum arquivo novo para processar no R2.");
     }
 
     await persistStorage(db, env);
