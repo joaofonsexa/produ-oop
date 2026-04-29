@@ -891,8 +891,10 @@ function adminTemplate() {
                   <option value="nuvidio">Nuvidio</option>
                 </select>
               </label>
-              <label>Tag<input name="tag" placeholder="Aprovada, Reprovada, Pendenciada, Sem ação" required></label>
-              <label>Quantidade<input type="number" min="1" step="1" name="quantity" value="1" required></label>
+              <label>Aprovado<input type="number" min="0" step="1" name="approved" value="0" required></label>
+              <label>Reprovado<input type="number" min="0" step="1" name="rejected" value="0" required></label>
+              <label>Sem ação<input type="number" min="0" step="1" name="no_action" value="0" required></label>
+              <label class="pending-only">Pendenciado<input type="number" min="0" step="1" name="pending" value="0"></label>
             </div>
             <div class="action-grid">
               <button class="btn" type="submit">Salvar lançamento</button>
@@ -1259,6 +1261,15 @@ function bindShellEvents() {
 
   const manualTagForm = document.getElementById("manual-tag-form");
   if (manualTagForm) {
+    const operationSelect = manualTagForm.querySelector('select[name="operation"]');
+    const pendingField = manualTagForm.querySelector(".pending-only");
+    const syncPendingVisibility = () => {
+      if (!operationSelect || !pendingField) return;
+      pendingField.style.display = operationSelect.value === "0800" ? "grid" : "none";
+    };
+    syncPendingVisibility();
+    if (operationSelect) operationSelect.addEventListener("change", syncPendingVisibility);
+
     manualTagForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const payload = Object.fromEntries(new FormData(event.currentTarget).entries());

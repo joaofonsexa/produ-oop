@@ -1497,8 +1497,8 @@ async function handleApi(request, url, db, env = {}) {
     return new Response(csv, {
       status: 200,
       headers: {
-        "content-type": "text/csv; charset=utf-8",
-        "content-disposition": 'attachment; filename="modelo-base-operacional.csv"',
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-disposition": 'attachment; filename="modelo-base-operacional.xlsx"',
       },
     });
   }
@@ -1509,15 +1509,30 @@ async function handleApi(request, url, db, env = {}) {
     const payload = await request.json();
     const userId = Number(payload.user_id);
     const metricDate = parseDate(payload.date || todayIso());
-    const operation = String(payload.operation || "").trim();
-    const tag = String(payload.tag || "").trim();
-    const quantity = Math.max(0, toInt(payload.quantity));
-    if (!userId || !operation || !tag || !quantity) {
-      return jsonResponse({ error: "Preencha operador, data, operação, tag e quantidade." }, 400);
+    const operation = String(payload.operation || "").trim().toLowerCase();
+    const approved = Math.max(0, toInt(payload.approved));
+    const rejected = Math.max(0, toInt(payload.rejected));
+    const noAction = Math.max(0, toInt(payload.no_action));
+    const pending = Math.max(0, toInt(payload.pending));
+    if (!userId || !operation) {
+      return jsonResponse({ error: "Preencha operador, data e operação." }, 400);
     }
     const user = db.users.find((entry) => entry.id === userId && entry.is_active && entry.role === "operator");
     if (!user) return jsonResponse({ error: "Operador não encontrado." }, 404);
-    const values = buildManualValues(operation, tag, quantity);
+    const values = operation === "0800"
+      ? {
+          production_0800: approved + rejected + pending + noAction,
+          calls_0800_approved: approved,
+          calls_0800_rejected: rejected,
+          calls_0800_pending: pending,
+          calls_0800_no_action: noAction,
+        }
+      : {
+          production_nuvidio: approved + rejected + noAction,
+          calls_nuvidio_approved: approved,
+          calls_nuvidio_rejected: rejected,
+          calls_nuvidio_no_action: noAction,
+        };
     upsertDailyMetric(db, user.id, metricDate, values, "manual_tag");
     await persistStorage(db, env);
     return jsonResponse({ ok: true });
