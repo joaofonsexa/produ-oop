@@ -1,6 +1,13 @@
 const SESSION_NAME = "pulse_session";
 const DB_PATH = "./data/db.json";
-const KV_KEY = "pulse_ops_db";
+const D1_STATE_ID = 1;
+const D1_SCHEMA = `
+CREATE TABLE IF NOT EXISTS app_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  data TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
 const SECRET_KEY = "pulse-ops-local-secret";
 const STATIC_FILES = {
   "/": "index.html",
@@ -226,9 +233,10 @@ function seedState() {
 }
 
 async function ensureStorage(env = {}) {
-  if (env?.APP_STORE) {
-    const raw = await env.APP_STORE.get(KV_KEY);
-    if (raw) return JSON.parse(raw);
+  if (env?.DB) {
+    await env.DB.exec(D1_SCHEMA);
+    const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
+    if (row?.data) return JSON.parse(row.data);
     const seeded = seedState();
     seeded.users[0].password_hash = await hashPassword("admin123");
     await persistStorage(seeded, env);
@@ -254,8 +262,15 @@ async function ensureStorage(env = {}) {
 }
 
 async function persistStorage(db, env = {}) {
-  if (env?.APP_STORE) {
-    await env.APP_STORE.put(KV_KEY, JSON.stringify(db));
+  if (env?.DB) {
+    await env.DB.exec(D1_SCHEMA);
+    await env.DB.prepare(`
+      INSERT INTO app_state (id, data, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        data = excluded.data,
+        updated_at = excluded.updated_at
+    `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
     return;
   }
   if (!isNode || !db) {

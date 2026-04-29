@@ -7,11 +7,11 @@
     "directory": ".",
     "binding": "ASSETS"
   },
-  "kv_namespaces": [
+  "d1_databases": [
     {
-      "binding": "APP_STORE",
-      "id": "SUBSTITUA_PELO_ID_DO_KV",
-      "preview_id": "SUBSTITUA_PELO_PREVIEW_ID_DO_KV"
+      "binding": "DB",
+      "database_name": "banco-de-dados-de-producao",
+      "database_id": "SUBSTITUA_PELO_ID_DO_D1"
     }
   ],
   "vars": {
