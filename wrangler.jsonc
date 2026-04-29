@@ -11,7 +11,7 @@
     {
       "binding": "DB",
       "database_name": "banco-de-dados-de-producao",
-      "database_id": "SUBSTITUA_PELO_ID_DO_D1"
+      "database_id": "8c70558a-5492-4e6a-9c93-b4e5f568ee78"
     }
   ],
   "vars": {

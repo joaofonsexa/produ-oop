@@ -3,5 +3,6 @@ tools/
 README.md
 sample-import.csv
 .gitignore
+_worker.js
 worker.js
 wrangler.jsonc
