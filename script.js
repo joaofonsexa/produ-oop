@@ -22,7 +22,7 @@ const state = {
 const app = document.getElementById("app");
 
 function brandLogoSrc() {
-  return "/logos_KR-02.png?v=20260429";
+  return window.__brandLogo || "/logos_KR-02.png?v=20260429";
 }
 
 function applyTheme() {
