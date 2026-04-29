@@ -214,7 +214,7 @@ function monthOptions(selectedValue = "") {
   const months = [
     "Janeiro",
     "Fevereiro",
-    "MarÃ§o",
+    "Março",
     "Abril",
     "Maio",
     "Junho",
@@ -446,10 +446,10 @@ async function loadUsers() {
 
 function navMeta() {
   return {
-    overview: "VisÃ£o geral",
-    analysis: "AnÃ¡lises",
-    history: "HistÃ³rico",
-    admin: "GestÃ£o",
+    overview: "Visão geral",
+    analysis: "Análises",
+    history: "Histórico",
+    admin: "Gestão",
   };
 }
 
@@ -472,10 +472,10 @@ function flashTemplate() {
 
 function shellTemplate() {
   const titles = {
-    overview: { title: isManager() ? "VisÃ£o da operaÃ§Ã£o" : "Performance do operador", desc: "" },
-    analysis: { title: "AnÃ¡lises", desc: "" },
-    history: { title: "HistÃ³rico", desc: "" },
-    admin: { title: "GestÃ£o", desc: "" },
+    overview: { title: isManager() ? "Visão da operação" : "Performance do operador", desc: "" },
+    analysis: { title: "Análises", desc: "" },
+    history: { title: "Histórico", desc: "" },
+    admin: { title: "Gestão", desc: "" },
   };
   const current = titles[state.route];
   const operatorUsers = getOperatorUsers();
@@ -521,7 +521,7 @@ function shellTemplate() {
               </select>
             </div>
             <button class="btn" data-action="refresh-all">Atualizar</button>
-            <button class="toggle" data-action="toggle-theme">${state.theme === "contrast" ? "â—" : "â—‘"}</button>
+            <button class="toggle" data-action="toggle-theme">${state.theme === "contrast" ? "◐" : "◑"}</button>
             <div class="profile-menu profile-menu-topbar">
               <button class="topbar-user menu-trigger topbar-user-trigger" type="button" id="profile-menu-trigger" aria-haspopup="true" aria-expanded="false">
                 <div class="avatar">${initials(state.user.full_name)}</div>
@@ -543,10 +543,10 @@ function shellTemplate() {
         <div class="modal-card">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">SeguranÃ§a</span>
+              <span class="eyebrow">Segurança</span>
               <h3>${state.forcePasswordChange ? "Primeiro acesso" : "Redefinir senha"}</h3>
             </div>
-            ${state.forcePasswordChange ? "" : `<button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">Ã—</button>`}
+            ${state.forcePasswordChange ? "" : `<button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">×</button>`}
           </div>
           <form id="password-form" class="section compact-form">
             ${state.forcePasswordChange ? `<div class="info-box">Para continuar, defina uma nova senha.</div>` : `<label>Senha atual<input name="current_password" type="password" required></label>`}
@@ -563,10 +563,10 @@ function shellTemplate() {
         <div class="modal-card">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">UsuÃ¡rio</span>
+              <span class="eyebrow">Usuário</span>
               <h3>Editar cadastro</h3>
             </div>
-            <button class="icon-close" type="button" id="close-user-modal" aria-label="Fechar">Ã—</button>
+            <button class="icon-close" type="button" id="close-user-modal" aria-label="Fechar">×</button>
           </div>
           <form id="user-edit-form" class="section compact-form">
             <input type="hidden" name="user_id" id="edit-user-id">
@@ -589,10 +589,10 @@ function shellTemplate() {
               <label>ID Nuvidio<input name="nuvidio_id" id="edit-nuvidio-id"></label>
             </div>
             <label>Nova senha (opcional)<input name="password" id="edit-password" type="password"></label>
-            <div class="info-box">Se vocÃª informar uma nova senha, o usuÃ¡rio serÃ¡ obrigado a trocÃ¡-la no prÃ³ximo login.</div>
+            <div class="info-box">Se você informar uma nova senha, o usuário será obrigado a trocá-la no próximo login.</div>
             <div class="action-grid">
               <button class="btn-secondary" type="button" id="cancel-user-modal">Cancelar</button>
-              <button class="btn" type="submit">Salvar alteraÃ§Ãµes</button>
+              <button class="btn" type="submit">Salvar alterações</button>
             </div>
           </form>
         </div>
@@ -646,9 +646,9 @@ function overviewTemplate() {
   const latestEffectiveness = model.latest ? percent(model.latest.effectiveness) : "--%";
   const cards = [
     { label: "Total atendido", value: integer(model.totalAttended) },
-    { label: "MÃ©dia de produÃ§Ã£o", value: number(model.avgProduction) || "--" },
-    { label: "Efetividade mÃ©dia", value: model.avgEffectiveness ? percent(model.avgEffectiveness) : "--%" },
-    { label: "Qualidade mÃ©dia", value: model.avgQuality ? number(model.avgQuality) : "--" },
+    { label: "Média de produção", value: number(model.avgProduction) || "--" },
+    { label: "Efetividade média", value: model.avgEffectiveness ? percent(model.avgEffectiveness) : "--%" },
+    { label: "Qualidade média", value: model.avgQuality ? number(model.avgQuality) : "--" },
   ];
   return `
     <section class="section">
@@ -662,11 +662,11 @@ function overviewTemplate() {
           </div>
           <div class="mini-grid">
             <div class="mini-card">
-              <span class="muted">Ãšltima data</span>
+              <span class="muted">Última data</span>
               <div class="metric-value">${latestDate}</div>
             </div>
             <div class="mini-card">
-              <span class="muted">Dias lanÃ§ados</span>
+              <span class="muted">Dias lançados</span>
               <div class="metric-value">${integer(model.daysTracked)}</div>
             </div>
           </div>
@@ -674,13 +674,13 @@ function overviewTemplate() {
         <article class="panel">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">Ãšltima atualizaÃ§Ã£o</span>
-              <h3>${model.latest ? "Base atualizada" : "Aguardando lanÃ§amentos"}</h3>
+              <span class="eyebrow">Última atualização</span>
+              <h3>${model.latest ? "Base atualizada" : "Aguardando lançamentos"}</h3>
             </div>
           </div>
           <div class="mini-grid">
             <div class="mini-card">
-              <span class="muted">ProduÃ§Ã£o</span>
+              <span class="muted">Produção</span>
               <div class="metric-value">${latestProduction}</div>
             </div>
             <div class="mini-card">
@@ -694,7 +694,7 @@ function overviewTemplate() {
       <article class="panel">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">Resumo rÃ¡pido</span>
+            <span class="eyebrow">Resumo rápido</span>
             <h3>Indicadores principais</h3>
           </div>
         </div>
@@ -711,8 +711,8 @@ function overviewTemplate() {
       <article class="panel">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">EvoluÃ§Ã£o visual</span>
-            <h3>TendÃªncia recente</h3>
+            <span class="eyebrow">Evolução visual</span>
+            <h3>Tendência recente</h3>
           </div>
         </div>
         <div class="chart">
@@ -721,7 +721,7 @@ function overviewTemplate() {
               <div class="column" style="height:${Math.max(14, (Number(item.production || 0) / Math.max(...state.overview.trend.map((row) => Number(row.production || 0)), 1)) * 110)}px;"></div>
               <small>${shortDate(item.date)}</small>
             </div>
-          `).join("") : `<div class="empty">Sem tendÃªncia disponÃ­vel.</div>`}
+          `).join("") : `<div class="empty">Sem tendência disponível.</div>`}
         </div>
       </article>
     </section>
@@ -745,9 +745,9 @@ function analysisTemplate() {
               <h3>Recorte</h3>
             </div>
           </div>
-          <label>InÃ­cio<input type="date" id="start-filter" value="${state.filters.start}"></label>
+          <label>Início<input type="date" id="start-filter" value="${state.filters.start}"></label>
           <label>Fim<input type="date" id="end-filter" value="${state.filters.end}"></label>
-          <label>OperaÃ§Ã£o
+          <label>Operação
             <select id="operation-filter">
               <option value="all" ${state.filters.operation === "all" ? "selected" : ""}>Nuvidio + 0800</option>
               <option value="nuvidio" ${state.filters.operation === "nuvidio" ? "selected" : ""}>Nuvidio</option>
@@ -762,15 +762,15 @@ function analysisTemplate() {
         <div class="section">
           <div class="hero-grid">
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">ProduÃ§Ã£o</span><h3>SÃ©rie diÃ¡ria</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">Produção</span><h3>Série diária</h3></div></div>
               <div class="chart">
-                ${trend.length ? trend.map((item) => `<div class="chart-col"><div class="column" style="height:${Math.max(12, (item.production / maxProduction) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trend.length ? trend.map((item) => `<div class="chart-col"><span class="chart-value">${integer(item.production)}</span><div class="column" style="height:${Math.max(12, (item.production / maxProduction) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">Efetividade</span><h3>SÃ©rie diÃ¡ria</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">Efetividade</span><h3>Série diária</h3></div></div>
               <div class="chart">
-                ${trend.length ? trend.map((item) => `<div class="chart-col"><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEffectiveness) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trend.length ? trend.map((item) => `<div class="chart-col"><span class="chart-value">${percent(item.effectiveness)}</span><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEffectiveness) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
           </div>
@@ -779,14 +779,14 @@ function analysisTemplate() {
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Mensal</h3></div></div>
               <div class="chart">
-                ${qualityMonths.length ? qualityMonths.map((item) => `<div class="chart-col"><div class="column amber" style="height:${Math.max(12, (item.score / maxQuality) * 110)}px;"></div><small>${formatMonthLabel(item.reference_month)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${qualityMonths.length ? qualityMonths.map((item) => `<div class="chart-col"><span class="chart-value">${number(item.score)}</span><div class="column amber" style="height:${Math.max(12, (item.score / maxQuality) * 110)}px;"></div><small>${formatMonthLabel(item.reference_month)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Resumo</span><h3>Consolidado</h3></div></div>
               <div class="mini-grid">
-                <div class="mini-card"><span class="muted">ProduÃ§Ã£o mÃ©dia</span><div class="metric-value">${number(model.summary.production)}</div></div>
-                <div class="mini-card"><span class="muted">Efetividade mÃ©dia</span><div class="metric-value">${percent(model.summary.effectiveness)}</div></div>
+                <div class="mini-card"><span class="muted">Produção média</span><div class="metric-value">${number(model.summary.production)}</div></div>
+                <div class="mini-card"><span class="muted">Efetividade média</span><div class="metric-value">${percent(model.summary.effectiveness)}</div></div>
               </div>
             </article>
           </div>
@@ -804,7 +804,7 @@ function historyTemplate() {
       <article class="table-card">
         <div class="history-header">
           <div>
-            <span class="eyebrow">HistÃ³rico</span>
+            <span class="eyebrow">Histórico</span>
             <h3>Resultados por data</h3>
           </div>
           <div class="filter-actions history-tools">
@@ -824,8 +824,8 @@ function historyTemplate() {
             <thead>
               <tr>
                 <th>Data</th>
-                <th>OperaÃ§Ã£o</th>
-                <th>ProduÃ§Ã£o</th>
+                <th>Operação</th>
+                <th>Produção</th>
                 <th>Efetividade</th>
                 <th>Qualidade</th>
                 <th>Atualizado</th>
@@ -1112,7 +1112,7 @@ function bindShellEvents() {
       try {
         await saveUserPreferences({ last_route: state.route });
       } catch (error) {
-        setFlash("error", error.message || "NÃ£o foi possÃ­vel salvar a aba atual.");
+        setFlash("error", error.message || "Não foi possível salvar a aba atual.");
       }
     });
   });
@@ -1153,7 +1153,7 @@ function bindShellEvents() {
       state.user = null;
       state.route = "overview";
       state.theme = "dark";
-      setFlash("success", "SessÃ£o encerrada.");
+      setFlash("success", "Sessão encerrada.");
     },
     "refresh-all": async () => {
       await loadAll();
@@ -1161,19 +1161,19 @@ function bindShellEvents() {
     },
     "refresh-analysis": async () => {
       await Promise.all([loadAnalysis(), loadOverview(), loadHistory()]);
-      setFlash("success", "AnÃ¡lises atualizadas.");
+      setFlash("success", "Análises atualizadas.");
     },
     "refresh-history": async () => {
       if (isManager()) {
         const resolvedUserId = resolveHistoryUserId(state.filters.historyQuery);
         if (!resolvedUserId) {
-          throw new Error("Selecione um operador vÃ¡lido para pesquisar.");
+          throw new Error("Selecione um operador válido para pesquisar.");
         }
         state.filters.historyUserId = resolvedUserId;
         state.filters.historyQuery = getUserLabelById(resolvedUserId);
       }
       await loadHistory();
-      setFlash("success", "HistÃ³rico atualizado.");
+      setFlash("success", "Histórico atualizado.");
     },
     "reset-analysis": async () => {
       state.filters.start = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -1189,7 +1189,7 @@ function bindShellEvents() {
       try {
         await saveUserPreferences({ preferred_theme: state.theme });
       } catch (error) {
-        setFlash("error", error.message || "NÃ£o foi possÃ­vel salvar o tema.");
+        setFlash("error", error.message || "Não foi possível salvar o tema.");
       }
     },
   };
@@ -1299,7 +1299,7 @@ function bindShellEvents() {
           body: JSON.stringify(payload),
         });
         await loadUsers();
-        setFlash("success", `UsuÃ¡rio cadastrado com senha inicial ${data.default_password}.`);
+        setFlash("success", `Usuário cadastrado com senha inicial ${data.default_password}.`);
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1332,7 +1332,7 @@ function bindShellEvents() {
           state.user = { ...state.user, ...data.user };
         }
         closeUserModal();
-        setFlash("success", "UsuÃ¡rio atualizado com sucesso.");
+        setFlash("success", "Usuário atualizado com sucesso.");
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1357,7 +1357,7 @@ function bindShellEvents() {
         if (String(state.user?.id) === String(data.user.id)) {
           state.user = { ...state.user, ...data.user };
         }
-        setFlash("success", `UsuÃ¡rio ${data.user.is_active ? "ativado" : "desativado"} com sucesso.`);
+        setFlash("success", `Usuário ${data.user.is_active ? "ativado" : "desativado"} com sucesso.`);
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1369,11 +1369,11 @@ function bindShellEvents() {
     button.addEventListener("click", async () => {
       const user = state.users.find((item) => String(item.id) === String(button.dataset.userDelete));
       if (!user) return;
-      if (!window.confirm(`Apagar o usuÃ¡rio ${user.full_name}?`)) return;
+      if (!window.confirm(`Apagar o usuário ${user.full_name}?`)) return;
       try {
         await api(`/api/admin/users/${user.id}`, { method: "DELETE" });
         await Promise.all([loadUsers(), loadOverview(), loadAnalysis(), loadHistory()]);
-        setFlash("success", "UsuÃ¡rio apagado com sucesso.");
+        setFlash("success", "Usuário apagado com sucesso.");
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1411,3 +1411,4 @@ function bindShellEvents() {
 }
 
 boot();
+

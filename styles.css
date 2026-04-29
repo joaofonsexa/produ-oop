@@ -762,6 +762,14 @@ body.theme-contrast .select-wrap select:disabled {
   gap: 6px;
 }
 
+.chart-value {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .chart-col .column {
   width: 100%;
   min-height: 12px;
