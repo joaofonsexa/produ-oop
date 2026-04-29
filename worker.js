@@ -711,6 +711,7 @@ function detectImportSchema(row, fileName = "") {
   if (hasFields(row, normalizedFields)) return "normalized";
   if (hasFields(row, ["motivo", "numero_do_protocolo", "data_abertura_ocorrencia", "usuario_de_abertura_da_ocorrencia"])) return "0800";
   if (hasFields(row, ["protocolo", "data_abreviada", "email_do_atendente", "tag"])) return "nuvidio";
+  if (hasFields(row, ["usuario_nuvidio", "nuvidio_aprovadas", "nuvidio_reprovadas", "nuvidio_sem_acao", "data"])) return "nuvidio_summary";
   if (lowerName.includes("0800")) return "0800";
   if (lowerName.includes("nuvidio")) return "nuvidio";
   return "unknown";
@@ -989,6 +990,46 @@ function importNuvidioRows(db, users, rows, sourceName) {
   return { processed: aggregates.size, rejected: errors.length, errors };
 }
 
+function importNuvidioSummaryRows(db, users, rows, sourceName) {
+  let processed = 0;
+  let rejected = 0;
+  const errors = [];
+
+  rows.forEach((row, index) => {
+    try {
+      const user = matchUser(users, {
+        login: row.usuario_nuvidio,
+        usuario: row.usuario_nuvidio,
+        plataforma_nuvidio: row.usuario_nuvidio,
+        id_nuvidio: row.usuario_nuvidio,
+      });
+      if (!user) throw new Error("Operador da Nuvidio não encontrado no cadastro.");
+      const metricDate = parseDate(row.data);
+      upsertDailyMetric(
+        db,
+        user.id,
+        metricDate,
+        {
+          production_nuvidio:
+            toInt(row.nuvidio_aprovadas) +
+            toInt(row.nuvidio_reprovadas) +
+            toInt(row.nuvidio_sem_acao),
+          calls_nuvidio_approved: toInt(row.nuvidio_aprovadas),
+          calls_nuvidio_rejected: toInt(row.nuvidio_reprovadas),
+          calls_nuvidio_no_action: toInt(row.nuvidio_sem_acao),
+        },
+        sourceName,
+      );
+      processed += 1;
+    } catch (error) {
+      rejected += 1;
+      errors.push({ row: index + 2, error: error.message });
+    }
+  });
+
+  return { processed, rejected, errors };
+}
+
 function registerImportLog(db, userId, sourceName, processed, rejected) {
   db.importLogs.push({
     id: nextId(db, "importLogs"),
@@ -998,6 +1039,41 @@ function registerImportLog(db, userId, sourceName, processed, rejected) {
     rows_processed: processed,
     rows_rejected: rejected,
   });
+}
+
+function buildBaseTemplateCsv(users = []) {
+  const header = "usuario_nuvidio,nuvidio_aprovadas,nuvidio_reprovadas,nuvidio_sem_acao,data";
+  const rows = users.map((user) => {
+    const nuvidio = String(user.nuvidio_id || user.login || "").replaceAll('"', '""');
+    return `"${nuvidio}",0,0,0,2026-01-01`;
+  });
+  return [header, ...rows].join("\n");
+}
+
+function normalizeOperationTag(operation, tag) {
+  const op = normalizeComparable(operation);
+  const normalizedTag = normalizeComparable(tag);
+  return { op, normalizedTag };
+}
+
+function buildManualValues(operation, tag, quantity) {
+  const qty = Math.max(0, toInt(quantity));
+  const { op, normalizedTag } = normalizeOperationTag(operation, tag);
+  const values = {};
+  if (op.includes("0800") || op === "integrall") {
+    values.production_0800 = qty;
+    if (normalizedTag.includes("aprova")) values.calls_0800_approved = qty;
+    else if (normalizedTag.includes("reprova") || normalizedTag.includes("cancel")) values.calls_0800_rejected = qty;
+    else if (normalizedTag.includes("pendenc")) values.calls_0800_pending = qty;
+    else values.calls_0800_no_action = qty;
+    return values;
+  }
+
+  values.production_nuvidio = qty;
+  if (normalizedTag.includes("aprova")) values.calls_nuvidio_approved = qty;
+  else if (normalizedTag.includes("reprova")) values.calls_nuvidio_rejected = qty;
+  else values.calls_nuvidio_no_action = qty;
+  return values;
 }
 
 function buildOverview(db, user, url) {
@@ -1413,6 +1489,40 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ processed, rejected: errors.length, errors: errors.slice(0, 20) });
   }
 
+  if (url.pathname === "/api/admin/import/template" && request.method === "GET") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const operators = db.users.filter((user) => user.is_active && user.role === "operator");
+    const csv = buildBaseTemplateCsv(operators);
+    return new Response(csv, {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": 'attachment; filename="modelo-base-operacional.csv"',
+      },
+    });
+  }
+
+  if (url.pathname === "/api/admin/manual-tag" && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const payload = await request.json();
+    const userId = Number(payload.user_id);
+    const metricDate = parseDate(payload.date || todayIso());
+    const operation = String(payload.operation || "").trim();
+    const tag = String(payload.tag || "").trim();
+    const quantity = Math.max(0, toInt(payload.quantity));
+    if (!userId || !operation || !tag || !quantity) {
+      return jsonResponse({ error: "Preencha operador, data, operação, tag e quantidade." }, 400);
+    }
+    const user = db.users.find((entry) => entry.id === userId && entry.is_active && entry.role === "operator");
+    if (!user) return jsonResponse({ error: "Operador não encontrado." }, 404);
+    const values = buildManualValues(operation, tag, quantity);
+    upsertDailyMetric(db, user.id, metricDate, values, "manual_tag");
+    await persistStorage(db, env);
+    return jsonResponse({ ok: true });
+  }
+
   if (url.pathname.startsWith("/api/admin/daily-metrics/") && request.method === "PUT") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
@@ -1515,6 +1625,7 @@ async function handleApi(request, url, db, env = {}) {
       if (schema === "normalized") result = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
       else if (schema === "0800") result = import0800Rows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
       else if (schema === "nuvidio") result = importNuvidioRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
+      else if (schema === "nuvidio_summary") result = importNuvidioSummaryRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
       else {
         summary.skipped.push(`${item.key}: formato nao reconhecido para importacao automatica.`);
         continue;
@@ -1558,23 +1669,15 @@ async function handleApi(request, url, db, env = {}) {
     const text = await file.text();
     const rows = parseCsv(text);
     if (!rows.length) return jsonResponse({ error: "A planilha esta vazia." }, 400);
-    const required = [
-      "data",
-      "producao",
-      "0800_aprovado",
-      "0800_cancelada",
-      "0800_pendenciada",
-      "0800_sem_acao",
-      "nuvidio_aprovada",
-      "nuvidio_reprovada",
-      "nuvidio_sem_acao",
-    ];
     const first = rows[0];
-    const missing = required.filter((field) => !(field in first));
-    if (missing.length) {
-      return jsonResponse({ error: `Colunas obrigatorias ausentes: ${missing.join(", ")}` }, 400);
-    }
-    const { processed, rejected, errors } = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    const schema = detectImportSchema(first, file.name);
+    let outcome;
+    if (schema === "normalized") outcome = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    else if (schema === "0800") outcome = import0800Rows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    else if (schema === "nuvidio") outcome = importNuvidioRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
+    const { processed, rejected, errors } = outcome;
     registerImportLog(db, auth.user.id, file.name, processed, rejected);
     await persistStorage(db, env);
     return jsonResponse({ processed, rejected, errors: errors.slice(0, 20) });

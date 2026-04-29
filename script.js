@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   user: null,
   route: "overview",
   overview: null,
@@ -214,7 +214,7 @@ function monthOptions(selectedValue = "") {
   const months = [
     "Janeiro",
     "Fevereiro",
-    "Março",
+    "MarÃ§o",
     "Abril",
     "Maio",
     "Junho",
@@ -446,10 +446,10 @@ async function loadUsers() {
 
 function navMeta() {
   return {
-    overview: "Visão geral",
-    analysis: "Análises",
-    history: "Histórico",
-    admin: "Gestão",
+    overview: "VisÃ£o geral",
+    analysis: "AnÃ¡lises",
+    history: "HistÃ³rico",
+    admin: "GestÃ£o",
   };
 }
 
@@ -472,10 +472,10 @@ function flashTemplate() {
 
 function shellTemplate() {
   const titles = {
-    overview: { title: isManager() ? "Visão da operação" : "Performance do operador", desc: "" },
-    analysis: { title: "Análises", desc: "" },
-    history: { title: "Histórico", desc: "" },
-    admin: { title: "Gestão", desc: "" },
+    overview: { title: isManager() ? "VisÃ£o da operaÃ§Ã£o" : "Performance do operador", desc: "" },
+    analysis: { title: "AnÃ¡lises", desc: "" },
+    history: { title: "HistÃ³rico", desc: "" },
+    admin: { title: "GestÃ£o", desc: "" },
   };
   const current = titles[state.route];
   const operatorUsers = getOperatorUsers();
@@ -521,7 +521,7 @@ function shellTemplate() {
               </select>
             </div>
             <button class="btn" data-action="refresh-all">Atualizar</button>
-            <button class="toggle" data-action="toggle-theme">${state.theme === "contrast" ? "◐" : "◑"}</button>
+            <button class="toggle" data-action="toggle-theme">${state.theme === "contrast" ? "â—" : "â—‘"}</button>
             <div class="profile-menu profile-menu-topbar">
               <button class="topbar-user menu-trigger topbar-user-trigger" type="button" id="profile-menu-trigger" aria-haspopup="true" aria-expanded="false">
                 <div class="avatar">${initials(state.user.full_name)}</div>
@@ -543,10 +543,10 @@ function shellTemplate() {
         <div class="modal-card">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">Segurança</span>
+              <span class="eyebrow">SeguranÃ§a</span>
               <h3>${state.forcePasswordChange ? "Primeiro acesso" : "Redefinir senha"}</h3>
             </div>
-            ${state.forcePasswordChange ? "" : `<button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">×</button>`}
+            ${state.forcePasswordChange ? "" : `<button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">Ã—</button>`}
           </div>
           <form id="password-form" class="section compact-form">
             ${state.forcePasswordChange ? `<div class="info-box">Para continuar, defina uma nova senha.</div>` : `<label>Senha atual<input name="current_password" type="password" required></label>`}
@@ -563,10 +563,10 @@ function shellTemplate() {
         <div class="modal-card">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">Usuário</span>
+              <span class="eyebrow">UsuÃ¡rio</span>
               <h3>Editar cadastro</h3>
             </div>
-            <button class="icon-close" type="button" id="close-user-modal" aria-label="Fechar">×</button>
+            <button class="icon-close" type="button" id="close-user-modal" aria-label="Fechar">Ã—</button>
           </div>
           <form id="user-edit-form" class="section compact-form">
             <input type="hidden" name="user_id" id="edit-user-id">
@@ -589,10 +589,10 @@ function shellTemplate() {
               <label>ID Nuvidio<input name="nuvidio_id" id="edit-nuvidio-id"></label>
             </div>
             <label>Nova senha (opcional)<input name="password" id="edit-password" type="password"></label>
-            <div class="info-box">Se você informar uma nova senha, o usuário será obrigado a trocá-la no próximo login.</div>
+            <div class="info-box">Se vocÃª informar uma nova senha, o usuÃ¡rio serÃ¡ obrigado a trocÃ¡-la no prÃ³ximo login.</div>
             <div class="action-grid">
               <button class="btn-secondary" type="button" id="cancel-user-modal">Cancelar</button>
-              <button class="btn" type="submit">Salvar alterações</button>
+              <button class="btn" type="submit">Salvar alteraÃ§Ãµes</button>
             </div>
           </form>
         </div>
@@ -646,9 +646,9 @@ function overviewTemplate() {
   const latestEffectiveness = model.latest ? percent(model.latest.effectiveness) : "--%";
   const cards = [
     { label: "Total atendido", value: integer(model.totalAttended) },
-    { label: "Média de produção", value: number(model.avgProduction) || "--" },
-    { label: "Efetividade média", value: model.avgEffectiveness ? percent(model.avgEffectiveness) : "--%" },
-    { label: "Qualidade média", value: model.avgQuality ? number(model.avgQuality) : "--" },
+    { label: "MÃ©dia de produÃ§Ã£o", value: number(model.avgProduction) || "--" },
+    { label: "Efetividade mÃ©dia", value: model.avgEffectiveness ? percent(model.avgEffectiveness) : "--%" },
+    { label: "Qualidade mÃ©dia", value: model.avgQuality ? number(model.avgQuality) : "--" },
   ];
   return `
     <section class="section">
@@ -662,11 +662,11 @@ function overviewTemplate() {
           </div>
           <div class="mini-grid">
             <div class="mini-card">
-              <span class="muted">Última data</span>
+              <span class="muted">Ãšltima data</span>
               <div class="metric-value">${latestDate}</div>
             </div>
             <div class="mini-card">
-              <span class="muted">Dias lançados</span>
+              <span class="muted">Dias lanÃ§ados</span>
               <div class="metric-value">${integer(model.daysTracked)}</div>
             </div>
           </div>
@@ -674,13 +674,13 @@ function overviewTemplate() {
         <article class="panel">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">Última atualização</span>
-              <h3>${model.latest ? "Base atualizada" : "Aguardando lançamentos"}</h3>
+              <span class="eyebrow">Ãšltima atualizaÃ§Ã£o</span>
+              <h3>${model.latest ? "Base atualizada" : "Aguardando lanÃ§amentos"}</h3>
             </div>
           </div>
           <div class="mini-grid">
             <div class="mini-card">
-              <span class="muted">Produção</span>
+              <span class="muted">ProduÃ§Ã£o</span>
               <div class="metric-value">${latestProduction}</div>
             </div>
             <div class="mini-card">
@@ -694,7 +694,7 @@ function overviewTemplate() {
       <article class="panel">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">Resumo rápido</span>
+            <span class="eyebrow">Resumo rÃ¡pido</span>
             <h3>Indicadores principais</h3>
           </div>
         </div>
@@ -711,8 +711,8 @@ function overviewTemplate() {
       <article class="panel">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">Evolução visual</span>
-            <h3>Tendência recente</h3>
+            <span class="eyebrow">EvoluÃ§Ã£o visual</span>
+            <h3>TendÃªncia recente</h3>
           </div>
         </div>
         <div class="chart">
@@ -721,7 +721,7 @@ function overviewTemplate() {
               <div class="column" style="height:${Math.max(14, (Number(item.production || 0) / Math.max(...state.overview.trend.map((row) => Number(row.production || 0)), 1)) * 110)}px;"></div>
               <small>${shortDate(item.date)}</small>
             </div>
-          `).join("") : `<div class="empty">Sem tendência disponível.</div>`}
+          `).join("") : `<div class="empty">Sem tendÃªncia disponÃ­vel.</div>`}
         </div>
       </article>
     </section>
@@ -745,9 +745,9 @@ function analysisTemplate() {
               <h3>Recorte</h3>
             </div>
           </div>
-          <label>Início<input type="date" id="start-filter" value="${state.filters.start}"></label>
+          <label>InÃ­cio<input type="date" id="start-filter" value="${state.filters.start}"></label>
           <label>Fim<input type="date" id="end-filter" value="${state.filters.end}"></label>
-          <label>Operação
+          <label>OperaÃ§Ã£o
             <select id="operation-filter">
               <option value="all" ${state.filters.operation === "all" ? "selected" : ""}>Nuvidio + 0800</option>
               <option value="nuvidio" ${state.filters.operation === "nuvidio" ? "selected" : ""}>Nuvidio</option>
@@ -762,13 +762,13 @@ function analysisTemplate() {
         <div class="section">
           <div class="hero-grid">
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">Produção</span><h3>Série diária</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">ProduÃ§Ã£o</span><h3>SÃ©rie diÃ¡ria</h3></div></div>
               <div class="chart">
                 ${trend.length ? trend.map((item) => `<div class="chart-col"><div class="column" style="height:${Math.max(12, (item.production / maxProduction) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">Efetividade</span><h3>Série diária</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">Efetividade</span><h3>SÃ©rie diÃ¡ria</h3></div></div>
               <div class="chart">
                 ${trend.length ? trend.map((item) => `<div class="chart-col"><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEffectiveness) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
@@ -785,8 +785,8 @@ function analysisTemplate() {
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Resumo</span><h3>Consolidado</h3></div></div>
               <div class="mini-grid">
-                <div class="mini-card"><span class="muted">Produção média</span><div class="metric-value">${number(model.summary.production)}</div></div>
-                <div class="mini-card"><span class="muted">Efetividade média</span><div class="metric-value">${percent(model.summary.effectiveness)}</div></div>
+                <div class="mini-card"><span class="muted">ProduÃ§Ã£o mÃ©dia</span><div class="metric-value">${number(model.summary.production)}</div></div>
+                <div class="mini-card"><span class="muted">Efetividade mÃ©dia</span><div class="metric-value">${percent(model.summary.effectiveness)}</div></div>
               </div>
             </article>
           </div>
@@ -804,7 +804,7 @@ function historyTemplate() {
       <article class="table-card">
         <div class="history-header">
           <div>
-            <span class="eyebrow">Histórico</span>
+            <span class="eyebrow">HistÃ³rico</span>
             <h3>Resultados por data</h3>
           </div>
           <div class="filter-actions history-tools">
@@ -824,8 +824,8 @@ function historyTemplate() {
             <thead>
               <tr>
                 <th>Data</th>
-                <th>Operação</th>
-                <th>Produção</th>
+                <th>OperaÃ§Ã£o</th>
+                <th>ProduÃ§Ã£o</th>
                 <th>Efetividade</th>
                 <th>Qualidade</th>
                 <th>Atualizado</th>
@@ -853,6 +853,7 @@ function historyTemplate() {
 function adminTemplate() {
   const currentReferenceMonth = new Date().toISOString().slice(0, 7);
   const [defaultYear, defaultMonth] = currentReferenceMonth.split("-");
+  const operatorUsers = getOperatorUsers();
   return `
     <section class="section">
       <div class="hero-grid">
@@ -863,14 +864,43 @@ function adminTemplate() {
               <h3>Base principal</h3>
             </div>
           </div>
-          <div class="panel-head"><div><span class="eyebrow">Base espelhada</span><h3>Atualiza&ccedil;&atilde;o pelo R2</h3></div></div>
-          <div class="section">
-            <div class="info-box">As planilhas operacionais ficam no bucket R2. Depois de enviar os arquivos para l&aacute;, basta atualizar os dados por aqui para sincronizar a base do portal.</div>
+          <div class="panel-head"><div><span class="eyebrow">Base operacional</span><h3>Carga por planilha</h3></div></div>
+          <form id="base-import-form" class="section">
+            <div class="info-box">Baixe o modelo, preencha e anexe o arquivo CSV para importar a base.</div>
+            <label>Arquivo base (CSV)<input type="file" name="file" accept=".csv" required></label>
             <div class="action-grid">
-              <button class="btn" type="button" data-action="refresh-r2">Atualizar dados (R2)</button>
+              <button class="btn-secondary" type="button" id="download-base-template">Baixar modelo</button>
+              <button class="btn" type="submit">Anexar arquivo</button>
             </div>
-          </div>
+          </form>
         </article>
+        <article class="panel">
+          <div class="panel-head"><div><span class="eyebrow">Lançamento manual</span><h3>Campos de tag</h3></div></div>
+          <form id="manual-tag-form" class="section">
+            <div class="form-grid">
+              <label>Operador
+                <select name="user_id" required>
+                  <option value="">Selecione</option>
+                  ${operatorUsers.map((user) => `<option value="${user.id}">${esc(user.full_name)}</option>`).join("")}
+                </select>
+              </label>
+              <label>Data<input type="date" name="date" value="${state.filters.today}" required></label>
+              <label>Operação
+                <select name="operation" required>
+                  <option value="0800">0800</option>
+                  <option value="nuvidio">Nuvidio</option>
+                </select>
+              </label>
+              <label>Tag<input name="tag" placeholder="Aprovada, Reprovada, Pendenciada, Sem ação" required></label>
+              <label>Quantidade<input type="number" min="1" step="1" name="quantity" value="1" required></label>
+            </div>
+            <div class="action-grid">
+              <button class="btn" type="submit">Salvar lançamento</button>
+            </div>
+          </form>
+        </article>
+      </div>
+      <div class="hero-grid">
         <article class="panel">
           <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Referência mensal</h3></div></div>
           <form id="quality-upload-form" class="section">
@@ -941,7 +971,6 @@ function adminTemplate() {
     </section>
   `;
 }
-
 function bindLogin() {
   document.getElementById("login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1081,7 +1110,7 @@ function bindShellEvents() {
       try {
         await saveUserPreferences({ last_route: state.route });
       } catch (error) {
-        setFlash("error", error.message || "Não foi possível salvar a aba atual.");
+        setFlash("error", error.message || "NÃ£o foi possÃ­vel salvar a aba atual.");
       }
     });
   });
@@ -1122,7 +1151,7 @@ function bindShellEvents() {
       state.user = null;
       state.route = "overview";
       state.theme = "dark";
-      setFlash("success", "Sessão encerrada.");
+      setFlash("success", "SessÃ£o encerrada.");
     },
     "refresh-all": async () => {
       await loadAll();
@@ -1130,19 +1159,19 @@ function bindShellEvents() {
     },
     "refresh-analysis": async () => {
       await Promise.all([loadAnalysis(), loadOverview(), loadHistory()]);
-      setFlash("success", "Análises atualizadas.");
+      setFlash("success", "AnÃ¡lises atualizadas.");
     },
     "refresh-history": async () => {
       if (isManager()) {
         const resolvedUserId = resolveHistoryUserId(state.filters.historyQuery);
         if (!resolvedUserId) {
-          throw new Error("Selecione um operador válido para pesquisar.");
+          throw new Error("Selecione um operador vÃ¡lido para pesquisar.");
         }
         state.filters.historyUserId = resolvedUserId;
         state.filters.historyQuery = getUserLabelById(resolvedUserId);
       }
       await loadHistory();
-      setFlash("success", "Histórico atualizado.");
+      setFlash("success", "HistÃ³rico atualizado.");
     },
     "reset-analysis": async () => {
       state.filters.start = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -1158,18 +1187,8 @@ function bindShellEvents() {
       try {
         await saveUserPreferences({ preferred_theme: state.theme });
       } catch (error) {
-        setFlash("error", error.message || "Não foi possível salvar o tema.");
+        setFlash("error", error.message || "NÃ£o foi possÃ­vel salvar o tema.");
       }
-    },
-    "refresh-r2": async () => {
-      const data = await api("/api/admin/import/r2", { method: "POST" });
-      await Promise.all([loadOverview(), loadAnalysis(), loadHistory(), loadUsers()]);
-      const details = [];
-      if (data.processedFiles) details.push(`${data.processedFiles} arquivo(s)`);
-      if (data.processedRows || data.processedRows === 0) details.push(`${data.processedRows} registro(s)`);
-      if (data.rejectedRows) details.push(`${data.rejectedRows} rejeição(ões)`);
-      const warning = Array.isArray(data.skipped) && data.skipped.length ? ` Avisos: ${data.skipped.slice(0, 2).join(" | ")}` : "";
-      setFlash("success", `R2 atualizado: ${details.join(", ") || "sincroniza\u00E7\u00E3o conclu\u00EDda"}.${warning}`.trim());
     },
   };
 
@@ -1213,6 +1232,50 @@ function bindShellEvents() {
     });
   }
 
+  const baseImportForm = document.getElementById("base-import-form");
+  if (baseImportForm) {
+    baseImportForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      try {
+        const response = await fetch("/api/admin/import", { method: "POST", body: form, credentials: "same-origin" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Erro ao importar base.");
+        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        setFlash("success", `Base importada: ${data.processed} registro(s), ${data.rejected} rejeição(ões).`);
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
+    });
+  }
+
+  const downloadBaseTemplate = document.getElementById("download-base-template");
+  if (downloadBaseTemplate) {
+    downloadBaseTemplate.addEventListener("click", () => {
+      window.location.href = "/api/admin/import/template";
+    });
+  }
+
+  const manualTagForm = document.getElementById("manual-tag-form");
+  if (manualTagForm) {
+    manualTagForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      try {
+        await api("/api/admin/manual-tag", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        setFlash("success", "Lançamento manual salvo.");
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
+    });
+  }
+
   const adminUserForm = document.getElementById("admin-user-form");
   if (adminUserForm) {
     adminUserForm.addEventListener("submit", async (event) => {
@@ -1225,7 +1288,7 @@ function bindShellEvents() {
           body: JSON.stringify(payload),
         });
         await loadUsers();
-        setFlash("success", `Usuário cadastrado com senha inicial ${data.default_password}.`);
+        setFlash("success", `UsuÃ¡rio cadastrado com senha inicial ${data.default_password}.`);
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1258,7 +1321,7 @@ function bindShellEvents() {
           state.user = { ...state.user, ...data.user };
         }
         closeUserModal();
-        setFlash("success", "Usuário atualizado com sucesso.");
+        setFlash("success", "UsuÃ¡rio atualizado com sucesso.");
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1283,7 +1346,7 @@ function bindShellEvents() {
         if (String(state.user?.id) === String(data.user.id)) {
           state.user = { ...state.user, ...data.user };
         }
-        setFlash("success", `Usuário ${data.user.is_active ? "ativado" : "desativado"} com sucesso.`);
+        setFlash("success", `UsuÃ¡rio ${data.user.is_active ? "ativado" : "desativado"} com sucesso.`);
         render();
       } catch (error) {
         setFlash("error", error.message);
@@ -1295,11 +1358,11 @@ function bindShellEvents() {
     button.addEventListener("click", async () => {
       const user = state.users.find((item) => String(item.id) === String(button.dataset.userDelete));
       if (!user) return;
-      if (!window.confirm(`Apagar o usuário ${user.full_name}?`)) return;
+      if (!window.confirm(`Apagar o usuÃ¡rio ${user.full_name}?`)) return;
       try {
         await api(`/api/admin/users/${user.id}`, { method: "DELETE" });
         await Promise.all([loadUsers(), loadOverview(), loadAnalysis(), loadHistory()]);
-        setFlash("success", "Usuário apagado com sucesso.");
+        setFlash("success", "UsuÃ¡rio apagado com sucesso.");
         render();
       } catch (error) {
         setFlash("error", error.message);
