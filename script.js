@@ -39,7 +39,10 @@ async function api(path, options = {}) {
   if (!(options.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   const response = await fetch(path, { headers, credentials: "same-origin", ...options });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Erro inesperado");
+  if (!response.ok) {
+    const message = [data.error, data.details].filter(Boolean).join(": ");
+    throw new Error(message || "Erro inesperado");
+  }
   return data;
 }
 
