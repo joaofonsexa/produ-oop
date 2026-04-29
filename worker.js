@@ -735,6 +735,31 @@ function normalizeNuvidioTag(value) {
   return normalizeComparable(value);
 }
 
+function pickFirstFilled(row, keys) {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== null && value !== undefined && String(value).trim()) return String(value).trim();
+  }
+  return "";
+}
+
+function resolve0800OperatorRaw(row) {
+  return pickFirstFilled(row, [
+    "usuario_de_abertura_da_ocorrencia",
+    "usuario_abertura_ocorrencia",
+    "usuario_abertura",
+    "usuario",
+    "operador",
+    "atendente",
+    "nome_do_operador",
+    "nome_operador",
+    "agente",
+    "email_do_atendente",
+    "email",
+    "login",
+  ]);
+}
+
 async function runPythonScript(args) {
   const modules = await nodeModules();
   const pythonPath = "C:\\Users\\joao.fonseca.KRCONSULTORIA\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe";
@@ -873,12 +898,15 @@ function import0800Rows(db, users, rows, sourceName) {
   const errors = [];
   rows.forEach((row, index) => {
     try {
+      const rawOperator = resolve0800OperatorRaw(row);
       const user = matchUser(users, {
-        nome: row.usuario_de_abertura_da_ocorrencia,
-        usuario: row.usuario_de_abertura_da_ocorrencia,
-        plataforma_0800: row.usuario_de_abertura_da_ocorrencia,
+        nome: rawOperator,
+        usuario: rawOperator,
+        login: rawOperator,
+        plataforma_0800: rawOperator,
+        id_0800: rawOperator,
       });
-      if (!user) throw new Error("Operador do 0800 nao encontrado no cadastro.");
+      if (!user) throw new Error(`Operador do 0800 nao encontrado no cadastro: ${rawOperator || "sem identificador"}`);
       const metricDate = parseDate(row.data_abertura_ocorrencia);
       const key = `${user.id}::${metricDate}`;
       const current = aggregates.get(key) || {
