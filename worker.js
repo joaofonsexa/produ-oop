@@ -987,7 +987,30 @@ async function handleRequest(request, env = {}) {
 }
 
 export default {
-  fetch: (request, env) => handleRequest(request, env),
+  fetch: async (request, env) => {
+    try {
+      return await handleRequest(request, env);
+    } catch (error) {
+      console.error("Worker error", error);
+      const url = new URL(request.url);
+      if (url.pathname.startsWith("/api/")) {
+        return jsonResponse(
+          {
+            error: "Erro interno do worker",
+            details: error?.message || String(error),
+          },
+          500,
+        );
+      }
+      return new Response(
+        `Erro interno do worker: ${error?.message || String(error)}`,
+        {
+          status: 500,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        },
+      );
+    }
+  },
 };
 
 const isLocalNodeRuntime =
