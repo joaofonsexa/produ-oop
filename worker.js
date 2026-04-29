@@ -712,6 +712,7 @@ function detectImportSchema(row, fileName = "") {
   if (hasFields(row, ["motivo", "numero_do_protocolo", "data_abertura_ocorrencia", "usuario_de_abertura_da_ocorrencia"])) return "0800";
   if (hasFields(row, ["protocolo", "data_abreviada", "email_do_atendente", "tag"])) return "nuvidio";
   if (hasFields(row, ["usuario_nuvidio", "nuvidio_aprovadas", "nuvidio_reprovadas", "nuvidio_sem_acao", "data"])) return "nuvidio_summary";
+  if (hasFields(row, ["usuario_0800", "0800_aprovadas", "0800_reprovadas", "0800_pendenciadas", "0800_sem_acao", "data"])) return "0800_summary";
   if (lowerName.includes("0800")) return "0800";
   if (lowerName.includes("nuvidio")) return "nuvidio";
   return "unknown";
@@ -1041,9 +1042,16 @@ function registerImportLog(db, userId, sourceName, processed, rejected) {
   });
 }
 
-function buildBaseTemplateCsv(users = []) {
-  const header = "usuario_nuvidio,nuvidio_aprovadas,nuvidio_reprovadas,nuvidio_sem_acao,data";
+function buildBaseTemplateCsv(users = [], model = "nuvidio") {
+  const is0800 = String(model || "").toLowerCase() === "0800";
+  const header = is0800
+    ? "usuario_0800,0800_aprovadas,0800_reprovadas,0800_pendenciadas,0800_sem_acao,data"
+    : "usuario_nuvidio,nuvidio_aprovadas,nuvidio_reprovadas,nuvidio_sem_acao,data";
   const rows = users.map((user) => {
+    if (is0800) {
+      const id0800 = String(user.platform_0800_id || user.login || "").replaceAll('"', '""');
+      return `"${id0800}",0,0,0,0,2026-01-01`;
+    }
     const nuvidio = String(user.nuvidio_id || user.login || "").replaceAll('"', '""');
     return `"${nuvidio}",0,0,0,2026-01-01`;
   });
@@ -1074,6 +1082,48 @@ function buildManualValues(operation, tag, quantity) {
   else if (normalizedTag.includes("reprova")) values.calls_nuvidio_rejected = qty;
   else values.calls_nuvidio_no_action = qty;
   return values;
+}
+
+function import0800SummaryRows(db, users, rows, sourceName) {
+  let processed = 0;
+  let rejected = 0;
+  const errors = [];
+
+  rows.forEach((row, index) => {
+    try {
+      const user = matchUser(users, {
+        usuario: row.usuario_0800,
+        plataforma_0800: row.usuario_0800,
+        id_0800: row.usuario_0800,
+        login: row.usuario_0800,
+      });
+      if (!user) throw new Error("Operador do 0800 não encontrado no cadastro.");
+      const metricDate = parseDate(row.data);
+      const approved = toInt(row["0800_aprovadas"]);
+      const rejectedValue = toInt(row["0800_reprovadas"]);
+      const pending = toInt(row["0800_pendenciadas"]);
+      const noAction = toInt(row["0800_sem_acao"]);
+      upsertDailyMetric(
+        db,
+        user.id,
+        metricDate,
+        {
+          production_0800: approved + rejectedValue + pending + noAction,
+          calls_0800_approved: approved,
+          calls_0800_rejected: rejectedValue,
+          calls_0800_pending: pending,
+          calls_0800_no_action: noAction,
+        },
+        sourceName,
+      );
+      processed += 1;
+    } catch (error) {
+      rejected += 1;
+      errors.push({ row: index + 2, error: error.message });
+    }
+  });
+
+  return { processed, rejected, errors };
 }
 
 function buildOverview(db, user, url) {
@@ -1492,13 +1542,14 @@ async function handleApi(request, url, db, env = {}) {
   if (url.pathname === "/api/admin/import/template" && request.method === "GET") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
+    const model = String(url.searchParams.get("model") || "nuvidio").toLowerCase();
     const operators = db.users.filter((user) => user.is_active && user.role === "operator");
-    const csv = buildBaseTemplateCsv(operators);
+    const csv = buildBaseTemplateCsv(operators, model);
     return new Response(csv, {
       status: 200,
       headers: {
-        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "content-disposition": 'attachment; filename="modelo-base-operacional.xlsx"',
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="modelo-base-${model === "0800" ? "0800" : "nuvidio"}.csv"`,
       },
     });
   }
@@ -1675,6 +1726,7 @@ async function handleApi(request, url, db, env = {}) {
     if (auth.error) return auth.error;
     const form = await request.formData();
     const file = form.get("file");
+    const model = String(form.get("model") || "").toLowerCase();
     if (!(file instanceof File)) {
       return jsonResponse({ error: "Arquivo nao enviado" }, 400);
     }
@@ -1685,11 +1737,16 @@ async function handleApi(request, url, db, env = {}) {
     const rows = parseCsv(text);
     if (!rows.length) return jsonResponse({ error: "A planilha esta vazia." }, 400);
     const first = rows[0];
-    const schema = detectImportSchema(first, file.name);
+    const schema = model === "0800"
+      ? "0800_summary"
+      : model === "nuvidio"
+        ? "nuvidio_summary"
+        : detectImportSchema(first, file.name);
     let outcome;
     if (schema === "normalized") outcome = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
     else if (schema === "0800") outcome = import0800Rows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
     else if (schema === "nuvidio") outcome = importNuvidioRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    else if (schema === "0800_summary") outcome = import0800SummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
     else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
     else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
     const { processed, rejected, errors } = outcome;

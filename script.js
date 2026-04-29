@@ -735,6 +735,29 @@ function analysisTemplate() {
   const maxEffectiveness = Math.max(...trend.map((item) => Number(item.effectiveness || 0)), 1);
   const qualityMonths = model.qualityMonths;
   const maxQuality = Math.max(...qualityMonths.map((item) => Number(item.score || 0)), 10);
+  const historyRows = state.history?.history || [];
+  const byDate0800 = new Map();
+  const byDateNuvidio = new Map();
+  historyRows.forEach((row) => {
+    const date = row.metric_date;
+    if (!date) return;
+    byDate0800.set(date, {
+      date,
+      production: Number(row.production_0800 || 0),
+      effectiveness: calcOperationEffectiveness(row, "0800"),
+    });
+    byDateNuvidio.set(date, {
+      date,
+      production: Number(row.production_nuvidio || 0),
+      effectiveness: calcOperationEffectiveness(row, "nuvidio"),
+    });
+  });
+  const trend0800 = [...byDate0800.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const trendNuvidio = [...byDateNuvidio.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const maxProd0800 = Math.max(...trend0800.map((item) => Number(item.production || 0)), 1);
+  const maxEff0800 = Math.max(...trend0800.map((item) => Number(item.effectiveness || 0)), 1);
+  const maxProdNuvidio = Math.max(...trendNuvidio.map((item) => Number(item.production || 0)), 1);
+  const maxEffNuvidio = Math.max(...trendNuvidio.map((item) => Number(item.effectiveness || 0)), 1);
   return `
     <section class="section">
       <div class="two-col">
@@ -762,15 +785,30 @@ function analysisTemplate() {
         <div class="section">
           <div class="hero-grid">
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">Produção</span><h3>Série diária</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">0800</span><h3>Produção diária</h3></div></div>
               <div class="chart">
-                ${trend.length ? trend.map((item) => `<div class="chart-col"><span class="chart-value">${integer(item.production)}</span><div class="column" style="height:${Math.max(12, (item.production / maxProduction) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trend0800.length ? trend0800.map((item) => `<div class="chart-col"><span class="chart-value">${integer(item.production)}</span><div class="column" style="height:${Math.max(12, (item.production / maxProd0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">Efetividade</span><h3>Série diária</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">0800</span><h3>Efetividade diária</h3></div></div>
               <div class="chart">
-                ${trend.length ? trend.map((item) => `<div class="chart-col"><span class="chart-value">${percent(item.effectiveness)}</span><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEffectiveness) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trend0800.length ? trend0800.map((item) => `<div class="chart-col"><span class="chart-value">${percent(item.effectiveness)}</span><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEff0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+              </div>
+            </article>
+          </div>
+
+          <div class="hero-grid">
+            <article class="panel">
+              <div class="panel-head"><div><span class="eyebrow">Nuvidio</span><h3>Produção diária</h3></div></div>
+              <div class="chart">
+                ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col"><span class="chart-value">${integer(item.production)}</span><div class="column" style="height:${Math.max(12, (item.production / maxProdNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+              </div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><div><span class="eyebrow">Nuvidio</span><h3>Efetividade diária</h3></div></div>
+              <div class="chart">
+                ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col"><span class="chart-value">${percent(item.effectiveness)}</span><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEffNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
           </div>
@@ -867,6 +905,12 @@ function adminTemplate() {
           <div class="panel-head"><div><span class="eyebrow">Base operacional</span><h3>Carga por planilha</h3></div></div>
           <form id="base-import-form" class="section">
             <div class="info-box">Baixe o modelo, preencha e anexe o arquivo CSV para importar a base.</div>
+            <label>Modelo da planilha
+              <select name="model" id="base-model-select">
+                <option value="nuvidio">Nuvidio</option>
+                <option value="0800">0800</option>
+              </select>
+            </label>
             <label>Arquivo base (CSV)<input type="file" name="file" accept=".csv" required></label>
             <div class="action-grid">
               <button class="btn-secondary" type="button" id="download-base-template">Baixar modelo</button>
@@ -1255,7 +1299,9 @@ function bindShellEvents() {
   const downloadBaseTemplate = document.getElementById("download-base-template");
   if (downloadBaseTemplate) {
     downloadBaseTemplate.addEventListener("click", () => {
-      window.location.href = "/api/admin/import/template";
+      const modelSelect = document.getElementById("base-model-select");
+      const model = modelSelect ? modelSelect.value : "nuvidio";
+      window.location.href = `/api/admin/import/template?model=${encodeURIComponent(model)}`;
     });
   }
 
