@@ -978,9 +978,9 @@ function contentType(fileName) {
 }
 
 async function handleRequest(request, env = {}) {
-  const db = await ensureStorage(env);
   const url = new URL(request.url);
   if (url.pathname.startsWith("/api/")) {
+    const db = await ensureStorage(env);
     return handleApi(request, url, db, env);
   }
   return serveStatic(request, env);
