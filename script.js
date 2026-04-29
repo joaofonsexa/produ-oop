@@ -885,7 +885,7 @@ function analysisTemplate() {
                   <div class="tag-split-row">
                     <div class="tag-split-head">
                       <span>${item.label}</span>
-                      <strong>${integer(item.value)} (${item.share.toFixed(1)}%)</strong>
+                      <strong>${integer(item.value)} (${Math.round(item.share)}%)</strong>
                     </div>
                     <div class="tag-split-track">
                       <div class="tag-split-fill ${item.tone}" style="width:${Math.max(item.share, item.value ? 2 : 0)}%"></div>
@@ -901,7 +901,7 @@ function analysisTemplate() {
                   <div class="tag-split-row">
                     <div class="tag-split-head">
                       <span>${item.label}</span>
-                      <strong>${integer(item.value)} (${item.share.toFixed(1)}%)</strong>
+                      <strong>${integer(item.value)} (${Math.round(item.share)}%)</strong>
                     </div>
                     <div class="tag-split-track">
                       <div class="tag-split-fill ${item.tone}" style="width:${Math.max(item.share, item.value ? 2 : 0)}%"></div>
