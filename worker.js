@@ -1189,14 +1189,23 @@ function buildAnalysis(db, user, url) {
 function buildHistory(db, user, url) {
   const start = url.searchParams.get("start") || shiftDate(-29);
   const end = url.searchParams.get("end") || todayIso();
-  const requestedUserId = Number(url.searchParams.get("user_id") || user.id);
+  const requestedRawUserId = String(url.searchParams.get("user_id") || user.id).trim().toLowerCase();
+  const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
+  const requestedUserId = Number(requestedRawUserId || user.id);
   const targetUserId = user.role === "manager" ? requestedUserId : user.id;
   const history = db.dailyMetrics
-    .filter((row) => row.user_id === targetUserId && row.metric_date >= start && row.metric_date <= end)
+    .filter((row) => {
+      if (row.metric_date < start || row.metric_date > end) return false;
+      if (includeAllUsers) return true;
+      return row.user_id === targetUserId;
+    })
     .sort((a, b) => b.metric_date.localeCompare(a.metric_date))
     .map((row) => ({ ...row, effectiveness: calculateEffectiveness(row) }));
   const quality = db.qualityScores
-    .filter((item) => item.user_id === targetUserId)
+    .filter((item) => {
+      if (includeAllUsers) return true;
+      return item.user_id === targetUserId;
+    })
     .sort((a, b) => b.reference_month.localeCompare(a.reference_month));
   return { history, quality };
 }

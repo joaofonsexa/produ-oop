@@ -94,9 +94,13 @@ function initials(name) {
   return String(name || "KR").split(" ").filter(Boolean).slice(0, 2).map((item) => item[0]).join("").toUpperCase();
 }
 
-function average(values) {
-  if (!values.length) return 0;
-  return values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length;
+function average(values, options = {}) {
+  const ignoreZero = Boolean(options.ignoreZero);
+  const numericValues = values
+    .map((value) => Number(value || 0))
+    .filter((value) => Number.isFinite(value) && (!ignoreZero || value !== 0));
+  if (!numericValues.length) return 0;
+  return numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length;
 }
 
 function isManager() {
@@ -313,8 +317,8 @@ function buildOverviewModel() {
   const previous = trend[trend.length - 2];
   return {
     totalAttended: trend.reduce((sum, item) => sum + Number(item.production || 0), 0),
-    avgProduction: average(trend.map((item) => item.production)),
-    avgEffectiveness: average(trend.map((item) => item.effectiveness)),
+    avgProduction: average(trend.map((item) => item.production), { ignoreZero: true }),
+    avgEffectiveness: average(trend.map((item) => item.effectiveness), { ignoreZero: true }),
     avgQuality: average(quality.map((item) => item.score)),
     latest,
     daysTracked: trend.length,
@@ -330,6 +334,19 @@ function buildAnalysisModel() {
   const filteredRanking = selectedUser === "all" ? ranking : ranking.filter((item) => String(item.user_id) === String(selectedUser));
   const trend = state.overview?.trend || [];
   const qualityMonths = (state.history?.quality || []).slice().sort((a, b) => a.reference_month.localeCompare(b.reference_month));
+  const status0800 = (state.history?.history || []).reduce((acc, row) => {
+    acc.approved += Number(row.calls_0800_approved || 0);
+    acc.pending += Number(row.calls_0800_pending || 0);
+    acc.rejected += Number(row.calls_0800_rejected || 0);
+    acc.noAction += Number(row.calls_0800_no_action || 0);
+    return acc;
+  }, { approved: 0, pending: 0, rejected: 0, noAction: 0 });
+  const statusNuvidio = (state.history?.history || []).reduce((acc, row) => {
+    acc.approved += Number(row.calls_nuvidio_approved || 0);
+    acc.rejected += Number(row.calls_nuvidio_rejected || 0);
+    acc.noAction += Number(row.calls_nuvidio_no_action || 0);
+    return acc;
+  }, { approved: 0, pending: 0, rejected: 0, noAction: 0 });
   const status = (state.history?.history || []).reduce((acc, row) => {
     if (state.filters.operation === "all" || state.filters.operation === "0800") {
       acc.approved += Number(row.calls_0800_approved || 0);
@@ -344,14 +361,43 @@ function buildAnalysisModel() {
     }
     return acc;
   }, { approved: 0, pending: 0, rejected: 0, noAction: 0 });
+  const statusTotal = status.approved + status.pending + status.rejected + status.noAction;
+  const statusBreakdown = [
+    { key: "approved", label: "Aprovado", value: status.approved, tone: "green" },
+    { key: "rejected", label: "Reprovado", value: status.rejected, tone: "red" },
+    { key: "pending", label: "Pendenciado", value: status.pending, tone: "amber" },
+    { key: "noAction", label: "Sem ação", value: status.noAction, tone: "blue" },
+  ].map((item) => ({
+    ...item,
+    share: statusTotal ? (item.value / statusTotal) * 100 : 0,
+  }));
+  const buildStatusBreakdown = (bucket) => {
+    const total = bucket.approved + bucket.pending + bucket.rejected + bucket.noAction;
+    const breakdown = [
+      { key: "approved", label: "Aprovado", value: bucket.approved, tone: "green" },
+      { key: "rejected", label: "Reprovado", value: bucket.rejected, tone: "red" },
+      { key: "pending", label: "Pendenciado", value: bucket.pending, tone: "amber" },
+      { key: "noAction", label: "Sem ação", value: bucket.noAction, tone: "blue" },
+    ].map((item) => ({
+      ...item,
+      share: total ? (item.value / total) * 100 : 0,
+    }));
+    return { total, breakdown };
+  };
+  const tags0800 = buildStatusBreakdown(status0800);
+  const tagsNuvidio = buildStatusBreakdown(statusNuvidio);
   return {
     trend,
     qualityMonths,
     filteredRanking,
     status,
+    statusTotal,
+    statusBreakdown,
+    tags0800,
+    tagsNuvidio,
     summary: {
-      production: average(filteredRanking.map((item) => item.avg_production)),
-      effectiveness: average(filteredRanking.map((item) => item.effectiveness)),
+      production: average(filteredRanking.map((item) => item.avg_production), { ignoreZero: true }),
+      effectiveness: average(filteredRanking.map((item) => item.effectiveness), { ignoreZero: true }),
     },
   };
 }
@@ -431,7 +477,9 @@ async function loadAnalysis() {
 }
 
 async function loadHistory() {
-  const userId = isManager() ? state.filters.historyUserId || state.user.id : state.user.id;
+  const userId = isManager() && state.filters.analysisUserId === "all"
+    ? "all"
+    : (isManager() ? state.filters.historyUserId || state.user.id : state.user.id);
   state.history = await api(`/api/history?user_id=${userId}&start=${state.filters.start}&end=${state.filters.end}`);
 }
 
@@ -828,6 +876,41 @@ function analysisTemplate() {
               </div>
             </article>
           </div>
+
+          <div class="hero-grid">
+            <article class="panel">
+              <div class="panel-head"><div><span class="eyebrow">Tags · 0800</span><h3>Divisão por tags</h3></div></div>
+              <div class="tag-split">
+                ${model.tags0800.breakdown.some((item) => item.value > 0) ? model.tags0800.breakdown.map((item) => `
+                  <div class="tag-split-row">
+                    <div class="tag-split-head">
+                      <span>${item.label}</span>
+                      <strong>${integer(item.value)} (${item.share.toFixed(1)}%)</strong>
+                    </div>
+                    <div class="tag-split-track">
+                      <div class="tag-split-fill ${item.tone}" style="width:${Math.max(item.share, item.value ? 2 : 0)}%"></div>
+                    </div>
+                  </div>
+                `).join("") : `<div class="empty">Sem dados de tags no período.</div>`}
+              </div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><div><span class="eyebrow">Tags · Nuvidio</span><h3>Divisão por tags</h3></div></div>
+              <div class="tag-split">
+                ${model.tagsNuvidio.breakdown.some((item) => item.value > 0) ? model.tagsNuvidio.breakdown.map((item) => `
+                  <div class="tag-split-row">
+                    <div class="tag-split-head">
+                      <span>${item.label}</span>
+                      <strong>${integer(item.value)} (${item.share.toFixed(1)}%)</strong>
+                    </div>
+                    <div class="tag-split-track">
+                      <div class="tag-split-fill ${item.tone}" style="width:${Math.max(item.share, item.value ? 2 : 0)}%"></div>
+                    </div>
+                  </div>
+                `).join("") : `<div class="empty">Sem dados de tags no período.</div>`}
+              </div>
+            </article>
+          </div>
         </div>
       </div>
     </section>
@@ -1177,9 +1260,9 @@ function bindShellEvents() {
       const operatorUsers = getOperatorUsers();
       const firstOperatorId = operatorUsers[0] ? String(operatorUsers[0].id) : "";
       state.filters.analysisUserId = event.target.value;
-      state.filters.historyUserId = event.target.value === "all" ? firstOperatorId : event.target.value;
-      state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || "";
-      if (event.target.value !== "all") await loadHistory();
+      state.filters.historyUserId = event.target.value === "all" ? "all" : event.target.value;
+      state.filters.historyQuery = event.target.value === "all" ? "" : (getUserLabelById(state.filters.historyUserId) || "");
+      await loadHistory();
       render();
     });
   }
