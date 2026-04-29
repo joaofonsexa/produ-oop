@@ -65,6 +65,16 @@ const isLocalNodeRuntime =
 let nodeModulesPromise;
 let storageCache = null;
 
+function decodeDataUriBase64(dataUri) {
+  const [, base64 = ""] = String(dataUri || "").split(",", 2);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
 async function nodeModules() {
   if (!isLocalNodeRuntime) return null;
   if (!nodeModulesPromise) {
@@ -1503,6 +1513,15 @@ async function serveStatic(request, env = {}) {
       return new Response(STYLES_CSS, {
         status: 200,
         headers: { "content-type": "text/css; charset=utf-8" },
+      });
+    }
+    if (pathname === "/logos_KR-02.png") {
+      return new Response(decodeDataUriBase64(FAVICON_DATA), {
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+          "cache-control": "public, max-age=86400",
+        },
       });
     }
     return new Response("Not found", { status: 404 });
