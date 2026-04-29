@@ -646,13 +646,18 @@ function matchUserByName(users, name) {
 }
 
 function parseCsv(text, maxRows = Number.POSITIVE_INFINITY) {
+  const sanitizedText = String(text || "").replace(/^\uFEFF/, "");
+  const firstLine = sanitizedText.split(/\r?\n/, 1)[0] || "";
+  const semicolonCount = (firstLine.match(/;/g) || []).length;
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const separator = semicolonCount > commaCount ? ";" : ",";
   const rows = [];
   let current = "";
   let row = [];
   let inQuotes = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const next = text[i + 1];
+  for (let i = 0; i < sanitizedText.length; i += 1) {
+    const char = sanitizedText[i];
+    const next = sanitizedText[i + 1];
     if (char === '"') {
       if (inQuotes && next === '"') {
         current += '"';
@@ -660,7 +665,7 @@ function parseCsv(text, maxRows = Number.POSITIVE_INFINITY) {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === "," && !inQuotes) {
+    } else if (char === separator && !inQuotes) {
       row.push(current);
       current = "";
     } else if ((char === "\n" || char === "\r") && !inQuotes) {
@@ -1045,15 +1050,15 @@ function registerImportLog(db, userId, sourceName, processed, rejected) {
 function buildBaseTemplateCsv(users = [], model = "nuvidio") {
   const is0800 = String(model || "").toLowerCase() === "0800";
   const header = is0800
-    ? "usuario_0800,0800_aprovadas,0800_reprovadas,0800_pendenciadas,0800_sem_acao,data"
-    : "usuario_nuvidio,nuvidio_aprovadas,nuvidio_reprovadas,nuvidio_sem_acao,data";
+    ? "Usuário 0800;0800 Aprovadas;0800 Reprovadas;0800 Pendenciadas;0800 Sem ação;Data"
+    : "Usuário Nuvidio;Nuvidio Aprovadas;Nuvidio Reprovadas;Nuvidio Sem ação;Data";
   const rows = users.map((user) => {
     if (is0800) {
       const id0800 = String(user.platform_0800_id || user.login || "").replaceAll('"', '""');
-      return `"${id0800}",0,0,0,0,2026-01-01`;
+      return `"${id0800}";0;0;0;0;2026-01-01`;
     }
     const nuvidio = String(user.nuvidio_id || user.login || "").replaceAll('"', '""');
-    return `"${nuvidio}",0,0,0,2026-01-01`;
+    return `"${nuvidio}";0;0;0;2026-01-01`;
   });
   return [header, ...rows].join("\n");
 }
@@ -1435,10 +1440,10 @@ async function handleApi(request, url, db, env = {}) {
     if (!isNode) {
       const operators = db.users.filter((user) => user.is_active && user.role === "operator");
       const csv = [
-        "Nome do Operador,Monitoria 1,Monitoria 2,Monitoria 3,Monitoria 4",
-        ...operators.map((user) => `"${String(user.full_name || "").replaceAll('"', '""')}",,,,`),
+        "Nome do Operador;Monitoria 1;Monitoria 2;Monitoria 3;Monitoria 4",
+        ...operators.map((user) => `"${String(user.full_name || "").replaceAll('"', '""')}";;;;`),
       ].join("\n");
-      return new Response(csv, {
+      return new Response(`\uFEFF${csv}`, {
         status: 200,
         headers: {
           "content-type": "text/csv; charset=utf-8",
@@ -1545,7 +1550,7 @@ async function handleApi(request, url, db, env = {}) {
     const model = String(url.searchParams.get("model") || "nuvidio").toLowerCase();
     const operators = db.users.filter((user) => user.is_active && user.role === "operator");
     const csv = buildBaseTemplateCsv(operators, model);
-    return new Response(csv, {
+    return new Response(`\uFEFF${csv}`, {
       status: 200,
       headers: {
         "content-type": "text/csv; charset=utf-8",
