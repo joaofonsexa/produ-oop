@@ -1,1 +1,7 @@
-_worker.js
+data/
+tools/
+README.md
+sample-import.csv
+.gitignore
+worker.js
+wrangler.jsonc

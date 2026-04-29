@@ -1,30 +1,20 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "portal-resultados-operador",
-  "compatibility_date": "2026-04-16",
-  "pages_build_output_dir": ".",
-  "compatibility_flags": [
-    "nodejs_compat"
+  "name": "pulse-ops",
+  "main": "worker.js",
+  "compatibility_date": "2026-04-29",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "APP_STORE",
+      "id": "SUBSTITUA_PELO_ID_DO_KV",
+      "preview_id": "SUBSTITUA_PELO_PREVIEW_ID_DO_KV"
+    }
   ],
   "vars": {
-    // URL base da sua Central do Operador, sem barra no final.
-    "AUTH_API_BASE": "https://baseconhecimentokra.pages.dev",
-    // Deve casar com o campo iss do token gerado pela Central.
-    "SSO_EXPECTED_ISSUER": "https://baseconhecimentokra.pages.dev",
-    // Deve casar com o campo aud do token SSO.
-    "SSO_EXPECTED_AUDIENCE": "https://testepordu.pages.dev"
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "prod_db",
-      "database_id": "1eb253fa-43f9-4f7b-9db2-725f21c417d5"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "IMPORTS_BUCKET",
-      "bucket_name": "r2prod"
-    }
-  ]
+    "SECRET_KEY": "troque-esta-chave-em-producao"
+  }
 }

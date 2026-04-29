@@ -1,1929 +1,1013 @@
-﻿const CORS_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-headers": "content-type"
+const SESSION_NAME = "pulse_session";
+const DB_PATH = "./data/db.json";
+const KV_KEY = "pulse_ops_db";
+const SECRET_KEY = "pulse-ops-local-secret";
+const STATIC_FILES = {
+  "/": "index.html",
+  "/index.html": "index.html",
+  "/styles.css": "styles.css",
+  "/script.js": "script.js",
+  "/logos_KR-02.png": "logos_KR-02.png",
 };
 
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      ...CORS_HEADERS,
-      "content-type": "application/json; charset=utf-8"
-    }
-  });
-}
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
 
-function binaryResponse(stream, contentType = "application/octet-stream", status = 200) {
-  return new Response(stream, {
-    status,
-    headers: {
-      ...CORS_HEADERS,
-      "content-type": contentType
-    }
-  });
-}
+let nodeModulesPromise;
+let storageCache = null;
 
-function decodeBase64ToBytes(value) {
-  const binary = atob(String(value || ""));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
+async function nodeModules() {
+  if (!isNode) return null;
+  if (!nodeModulesPromise) {
+    nodeModulesPromise = Promise.all([
+      import("node:fs/promises"),
+      import("node:path"),
+      import("node:http"),
+      import("node:crypto"),
+      import("node:url"),
+      import("node:child_process"),
+    ]).then(([fs, path, http, crypto, url, childProcess]) => ({
+      fs,
+      path,
+      http,
+      crypto,
+      fileURLToPath: url.fileURLToPath,
+      execFile: childProcess.execFile,
+    }));
   }
-  return bytes;
+  return nodeModulesPromise;
 }
 
-function safeFileName(name) {
-  return String(name || "import.xlsx").replace(/[^a-zA-Z0-9._-]/g, "_");
+function nowIso() {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-function sanitizeOperationType(value) {
-  return String(value || "").trim().toLowerCase() === "0800" ? "0800" : "nuvidio";
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-function sanitizeSyncOperationType(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (raw === "0800") return "0800";
-  if (raw === "nuvidio") return "nuvidio";
-  if (raw === "all" || raw === "ambos" || raw === "todas") return "all";
-  return "all";
+function monthRef(dateValue) {
+  return String(dateValue).slice(0, 7);
 }
 
-function sanitizeR2Kind(value) {
-  const kind = String(value || "").trim().toLowerCase();
-  if (kind === "parsed") return "parsed";
-  return "source";
-}
-
-function buildR2BaseKey(operationType, r2Kind, fileName) {
-  const safeName = safeFileName(fileName || (r2Kind === "parsed" ? "base.parsed.csv" : "base.xlsx"));
-  if (r2Kind === "parsed") {
-    return `bases/${operationType}/parsed/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
-  }
-  return `bases/${operationType}/source/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
-}
-
-function getAuthBase(env) {
-  return String(env.AUTH_API_BASE || env.CENTRAL_AUTH_BASE || "").trim().replace(/\/+$/, "");
-}
-
-function normalizeLooseKey(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]/g, "")
+function normalizeHeader(value) {
+  return String(value ?? "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replaceAll(" ", "_")
+    .replaceAll("-", "_")
+    .replaceAll("/", "_")
+    .replaceAll(".", "")
+    .replaceAll("ã", "a")
+    .replaceAll("á", "a")
+    .replaceAll("â", "a")
+    .replaceAll("é", "e")
+    .replaceAll("ê", "e")
+    .replaceAll("í", "i")
+    .replaceAll("ó", "o")
+    .replaceAll("ô", "o")
+    .replaceAll("õ", "o")
+    .replaceAll("ú", "u")
+    .replaceAll("ç", "c");
 }
 
-function collectStringFields(source, bucket = []) {
-  if (!source || typeof source !== "object") return bucket;
-  for (const [key, value] of Object.entries(source)) {
-    if (typeof value === "string" && value.trim()) {
-      bucket.push({ key: normalizeLooseKey(key), value: value.trim() });
-      continue;
-    }
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      collectStringFields(value, bucket);
-    }
-  }
-  return bucket;
+function toInt(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  const text = String(value).trim().replace(",", ".");
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
 }
 
-function findUserFieldByHeuristics(source, matcher) {
-  const entries = collectStringFields(source, []);
-  const found = entries.find((entry) => matcher(entry.key, entry.value));
-  return found?.value || "";
+function toFloat(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  const text = String(value).trim().replace(",", ".");
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getSsoConfig(env, requestUrl) {
-  const url = new URL(requestUrl);
-  const expectedAudience = String(env.SSO_EXPECTED_AUDIENCE || url.origin).trim();
-  const expectedIssuer = String(env.SSO_EXPECTED_ISSUER || getAuthBase(env)).trim();
-  const sharedSecret = String(env.SSO_SHARED_SECRET || "").trim();
-  return { expectedAudience, expectedIssuer, sharedSecret };
-}
-
-function base64UrlToBytes(value) {
-  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
-  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
-  const binary = atob(normalized + padding);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function base64UrlDecodeJson(value) {
-  const bytes = base64UrlToBytes(value);
-  const text = new TextDecoder().decode(bytes);
-  return JSON.parse(text);
-}
-
-async function importHmacKey(sharedSecret) {
-  const keyData = new TextEncoder().encode(sharedSecret);
-  return crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
-}
-
-async function verifyJwtHs256(token, sharedSecret) {
-  const parts = String(token || "").split(".");
-  if (parts.length !== 3) {
-    throw new Error("Formato de token invalido.");
-  }
-
-  const [headerB64, payloadB64, signatureB64] = parts;
-  const header = base64UrlDecodeJson(headerB64);
-  const payload = base64UrlDecodeJson(payloadB64);
-
-  if (String(header?.alg || "") !== "HS256") {
-    throw new Error("Algoritmo do token nao suportado.");
-  }
-
-  const key = await importHmacKey(sharedSecret);
-  const data = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
-  const signature = base64UrlToBytes(signatureB64);
-  const valid = await crypto.subtle.verify("HMAC", key, signature, data);
-  if (!valid) {
-    throw new Error("Assinatura do token invalida.");
-  }
-
-  return payload;
-}
-
-function normalizeDateKey(value) {
-  const raw = String(value || "").trim();
+function parseDate(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return todayIso();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  return "";
-}
-
-function normalizeOperationType(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (raw === "0800") return "0800";
-  if (raw === "nuvidio") return "nuvidio";
-  return "nuvidio";
-}
-
-async function migrateResultsTableToOperationGranularity(db) {
-  const schema = await db
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operator_results_daily' LIMIT 1")
-    .first();
-  const tableSql = String(schema?.sql || "");
-  const usesOldUnique = tableSql.includes("UNIQUE(user_id, result_date)") && !tableSql.includes("UNIQUE(user_id, result_date, operation_type)");
-  if (!usesOldUnique) return;
-
-  await db.prepare("DROP TABLE IF EXISTS operator_results_daily_v2").run();
-  await db.prepare(
-    `CREATE TABLE operator_results_daily_v2 (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      user_name TEXT NOT NULL DEFAULT '',
-      username TEXT NOT NULL DEFAULT '',
-      result_date TEXT NOT NULL,
-      operation_type TEXT NOT NULL DEFAULT '',
-      approved_count REAL NOT NULL DEFAULT 0,
-      reproved_count REAL NOT NULL DEFAULT 0,
-      pending_count REAL NOT NULL DEFAULT 0,
-      no_action_count REAL NOT NULL DEFAULT 0,
-      production_total REAL NOT NULL DEFAULT 0,
-      effectiveness REAL NOT NULL DEFAULT 0,
-      quality_score REAL NOT NULL DEFAULT 0,
-      updated_by_id TEXT NOT NULL DEFAULT '',
-      updated_by_name TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(user_id, result_date, operation_type)
-    )`
-  ).run();
-
-  await db.prepare(
-    `INSERT INTO operator_results_daily_v2 (
-      id, user_id, user_name, username, result_date, operation_type,
-      approved_count, reproved_count, pending_count, no_action_count,
-      production_total, effectiveness, quality_score,
-      updated_by_id, updated_by_name, updated_at, created_at
-    )
-    SELECT
-      (user_id || '__' || result_date || '__' || lower(CASE WHEN trim(operation_type) = '' THEN 'nuvidio' ELSE operation_type END)) AS id,
-      user_id,
-      user_name,
-      username,
-      result_date,
-      lower(CASE WHEN trim(operation_type) = '' THEN 'nuvidio' ELSE operation_type END) AS operation_type,
-      COALESCE(approved_count, 0),
-      COALESCE(reproved_count, 0),
-      COALESCE(pending_count, 0),
-      COALESCE(no_action_count, 0),
-      COALESCE(production_total, 0),
-      COALESCE(effectiveness, 0),
-      COALESCE(quality_score, 0),
-      COALESCE(updated_by_id, ''),
-      COALESCE(updated_by_name, ''),
-      COALESCE(updated_at, datetime('now')),
-      COALESCE(created_at, datetime('now'))
-    FROM operator_results_daily`
-  ).run();
-
-  await db.prepare("DROP TABLE operator_results_daily").run();
-  await db.prepare("ALTER TABLE operator_results_daily_v2 RENAME TO operator_results_daily").run();
-}
-
-async function ensureResultsTable(db) {
-  await db.prepare(
-    `CREATE TABLE IF NOT EXISTS operator_results_daily (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      user_name TEXT NOT NULL DEFAULT '',
-      username TEXT NOT NULL DEFAULT '',
-      result_date TEXT NOT NULL,
-      operation_type TEXT NOT NULL DEFAULT '',
-      approved_count REAL NOT NULL DEFAULT 0,
-      reproved_count REAL NOT NULL DEFAULT 0,
-      pending_count REAL NOT NULL DEFAULT 0,
-      no_action_count REAL NOT NULL DEFAULT 0,
-      production_total REAL NOT NULL DEFAULT 0,
-      effectiveness REAL NOT NULL DEFAULT 0,
-      quality_score REAL NOT NULL DEFAULT 0,
-      updated_by_id TEXT NOT NULL DEFAULT '',
-      updated_by_name TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(user_id, result_date, operation_type)
-    )`
-  ).run();
-  try {
-    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN operation_type TEXT NOT NULL DEFAULT ''").run();
-  } catch {}
-  try {
-    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN approved_count REAL NOT NULL DEFAULT 0").run();
-  } catch {}
-  try {
-    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN reproved_count REAL NOT NULL DEFAULT 0").run();
-  } catch {}
-  try {
-    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN pending_count REAL NOT NULL DEFAULT 0").run();
-  } catch {}
-  try {
-    await db.prepare("ALTER TABLE operator_results_daily ADD COLUMN no_action_count REAL NOT NULL DEFAULT 0").run();
-  } catch {}
-  await migrateResultsTableToOperationGranularity(db);
-}
-
-async function ensureSsoReplayTable(db) {
-  await db.prepare(
-    `CREATE TABLE IF NOT EXISTS sso_consumed_tokens (
-      jti TEXT PRIMARY KEY,
-      expires_at INTEGER NOT NULL,
-      consumed_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`
-  ).run();
-}
-
-async function ensureSystemSettingsTable(db) {
-  await db.prepare(
-    `CREATE TABLE IF NOT EXISTS system_settings (
-      setting_key TEXT PRIMARY KEY,
-      value_text TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_by_id TEXT NOT NULL DEFAULT '',
-      updated_by_name TEXT NOT NULL DEFAULT ''
-    )`
-  ).run();
-}
-
-async function ensureR2InsightsSnapshotTable(db) {
-  await db.prepare(
-    `CREATE TABLE IF NOT EXISTS r2_insights_snapshot (
-      snapshot_key TEXT PRIMARY KEY,
-      views_json TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`
-  ).run();
-}
-
-async function readR2InsightsSnapshot(db) {
-  await ensureR2InsightsSnapshotTable(db);
-  const row = await db
-    .prepare("SELECT views_json, updated_at FROM r2_insights_snapshot WHERE snapshot_key = ? LIMIT 1")
-    .bind("latest")
-    .first();
-  if (!row?.views_json) return null;
-  try {
-    const views = JSON.parse(String(row.views_json || "{}"));
-    if (!views || typeof views !== "object") return null;
-    return {
-      views,
-      updatedAt: String(row.updated_at || "")
-    };
-  } catch {
-    return null;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split("/");
+    return `${year}-${month}-${day}`;
   }
+  if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split("-");
+    return `${year}-${month}-${day}`;
+  }
+  throw new Error(`Data invalida: ${raw}`);
 }
 
-async function writeR2InsightsSnapshot(db, views) {
-  await ensureR2InsightsSnapshotTable(db);
-  const payload = views && typeof views === "object" ? views : {};
-  const now = new Date().toISOString();
-  await db
-    .prepare(
-      `INSERT INTO r2_insights_snapshot (snapshot_key, views_json, updated_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(snapshot_key) DO UPDATE SET
-         views_json = excluded.views_json,
-         updated_at = excluded.updated_at`
-    )
-    .bind("latest", JSON.stringify(payload), now)
-    .run();
-  return { ok: true, updatedAt: now };
+function isValidMonthRef(value) {
+  return /^\d{4}-\d{2}$/.test(String(value || "").trim());
 }
 
-function normalizeMaintenanceStatus(raw = {}) {
+function normalizeComparable(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function serializeUser(user) {
   return {
-    enabled: Boolean(raw?.enabled),
-    message: String(raw?.message || "O portal esta temporariamente em manutencao. Tente novamente em alguns minutos."),
-    updatedAt: String(raw?.updatedAt || ""),
-    updatedById: String(raw?.updatedById || ""),
-    updatedByName: String(raw?.updatedByName || "")
+    id: user.id,
+    full_name: user.full_name,
+    login: user.login,
+    role: user.role,
+    platform_0800_id: user.platform_0800_id,
+    nuvidio_id: user.nuvidio_id,
+    is_active: user.is_active,
   };
 }
 
-async function readSystemMaintenanceStatus(db) {
-  await ensureSystemSettingsTable(db);
-  const row = await db
-    .prepare("SELECT value_text FROM system_settings WHERE setting_key = ? LIMIT 1")
-    .bind("maintenance_mode")
-    .first();
-  if (!row?.value_text) {
-    return normalizeMaintenanceStatus({ enabled: false });
-  }
-
-  try {
-    const parsed = JSON.parse(String(row.value_text || "{}"));
-    return normalizeMaintenanceStatus(parsed);
-  } catch {
-    return normalizeMaintenanceStatus({ enabled: false });
-  }
+function calculateEffectiveness(metric) {
+  const actionable =
+    toInt(metric.calls_0800_approved) +
+    toInt(metric.calls_0800_rejected) +
+    toInt(metric.calls_0800_pending) +
+    toInt(metric.calls_nuvidio_approved) +
+    toInt(metric.calls_nuvidio_rejected);
+  const total = actionable + toInt(metric.calls_0800_no_action) + toInt(metric.calls_nuvidio_no_action);
+  if (!total) return 0;
+  return Number(((actionable / total) * 100).toFixed(2));
 }
 
-async function updateSystemMaintenanceStatus(db, payload = {}) {
-  await ensureSystemSettingsTable(db);
-  const nextStatus = normalizeMaintenanceStatus({
-    enabled: Boolean(payload?.enabled),
-    message: String(payload?.message || "").trim(),
-    updatedAt: new Date().toISOString(),
-    updatedById: String(payload?.updatedById || "").trim(),
-    updatedByName: String(payload?.updatedByName || "").trim()
-  });
-
-  await db
-    .prepare(
-      `INSERT INTO system_settings (setting_key, value_text, updated_at, updated_by_id, updated_by_name)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(setting_key) DO UPDATE SET
-         value_text = excluded.value_text,
-         updated_at = excluded.updated_at,
-         updated_by_id = excluded.updated_by_id,
-         updated_by_name = excluded.updated_by_name`
-    )
-    .bind(
-      "maintenance_mode",
-      JSON.stringify(nextStatus),
-      nextStatus.updatedAt,
-      nextStatus.updatedById,
-      nextStatus.updatedByName
-    )
-    .run();
-
-  return nextStatus;
+async function hashPassword(password) {
+  const salt = randomHex(16);
+  const hash = await digestHex(`${salt}:${password}`);
+  return `${salt}$${hash}`;
 }
 
-async function markSsoTokenAsConsumed(db, jti, expSeconds) {
-  await ensureSsoReplayTable(db);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  await db.prepare("DELETE FROM sso_consumed_tokens WHERE expires_at < ?").bind(nowSeconds).run();
-  await db
-    .prepare("INSERT INTO sso_consumed_tokens (jti, expires_at, consumed_at) VALUES (?, ?, datetime('now'))")
-    .bind(jti, expSeconds)
-    .run();
+async function verifyPassword(password, storedHash) {
+  const [salt, hash] = String(storedHash || "").split("$");
+  if (!salt || !hash) return false;
+  const candidate = await digestHex(`${salt}:${password}`);
+  return timingSafeEqual(hash, candidate);
 }
 
-function buildRecord(userId, rows) {
-  const entries = (rows || []).map((row) => ({
-    date: row.result_date,
-    operationType: String(row.operation_type || ""),
-    approvedCount: Number(row.approved_count || 0),
-    reprovedCount: Number(row.reproved_count || 0),
-    pendingCount: Number(row.pending_count || 0),
-    noActionCount: Number(row.no_action_count || 0),
-    productionTotal: Number(row.production_total || 0),
-    effectiveness: Number(row.effectiveness || 0),
-    qualityScore: Number(row.quality_score || 0),
-    updatedById: row.updated_by_id || "",
-    updatedByName: row.updated_by_name || "",
-    updatedAt: row.updated_at || row.created_at || ""
-  }));
-
-  if (!entries.length) return null;
-  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const latest = entries[entries.length - 1];
-  const productionAverage = entries.reduce((sum, entry) => sum + Number(entry.productionTotal || 0), 0) / entries.length;
-  const firstRow = rows[0] || {};
-
-  return {
-    userId,
-    userName: firstRow.user_name || "",
-    username: firstRow.username || "",
-    entries,
-    daysCount: entries.length,
-    productionAverage,
-    productionTotal: latest.productionTotal,
-    effectiveness: latest.effectiveness,
-    qualityScore: latest.qualityScore,
-    updatedAt: latest.updatedAt,
-    updatedById: latest.updatedById,
-    updatedByName: latest.updatedByName
-  };
+async function digestHex(input) {
+  const data = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function fetchCentral(env, pathname, options = {}) {
-  const authBase = getAuthBase(env);
-  if (!authBase) {
-    throw new Error("AUTH_API_BASE nao configurado.");
+function randomHex(length) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
+  return result === 0;
+}
 
-  const response = await fetch(`${authBase}${pathname}`, options);
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error || "Falha ao consultar a Central do Operador.");
-  }
+async function signSession(payload) {
+  const raw = JSON.stringify(payload);
+  const signature = await digestHex(`${SECRET_KEY}:${raw}`);
+  return `${btoa(raw)}.${signature}`;
+}
+
+function resolveSecretKey(env) {
+  return String(env?.SECRET_KEY || SECRET_KEY);
+}
+
+async function signSessionWithEnv(payload, env) {
+  const raw = JSON.stringify(payload);
+  const signature = await digestHex(`${resolveSecretKey(env)}:${raw}`);
+  return `${btoa(raw)}.${signature}`;
+}
+
+async function verifySession(token, env) {
+  if (!token || !token.includes(".")) return null;
+  const [rawBase64, signature] = token.split(".");
+  const raw = atob(rawBase64);
+  const expected = await digestHex(`${resolveSecretKey(env)}:${raw}`);
+  if (!timingSafeEqual(signature, expected)) return null;
+  const payload = JSON.parse(raw);
+  if (!payload.expires_at || new Date(payload.expires_at) < new Date()) return null;
   return payload;
 }
 
-function sanitizeUser(user) {
-  let nuvidioUsername = String(
-    user?.nuvidioUsername ??
-    user?.usuarioNuvidio ??
-    user?.usernameNuvidio ??
-    user?.nuvidio_user ??
-    user?.nuvidio_login ??
-    user?.usuario_nuvidio ??
-    ""
-  ).trim();
-  let line0800Username = String(
-    user?.line0800Username ??
-    user?.usuario0800 ??
-    user?.username0800 ??
-    user?.["0800Username"] ??
-    user?.["0800_user"] ??
-    user?.["0800_login"] ??
-    user?.usuario_0800 ??
-    ""
-  ).trim();
-
-  if (!nuvidioUsername) {
-    nuvidioUsername = findUserFieldByHeuristics(user, (key) => (
-      key.includes("nuvidio") && (key.includes("usuario") || key.includes("username") || key.includes("login") || key.includes("user"))
-    ));
-  }
-  if (!line0800Username) {
-    line0800Username = findUserFieldByHeuristics(user, (key) => (
-      key.includes("0800") && (key.includes("usuario") || key.includes("username") || key.includes("login") || key.includes("user"))
-    ));
-  }
+function seedState() {
   return {
-    id: String(user?.id || ""),
-    name: String(user?.name || ""),
-    username: String(user?.username || ""),
-    nuvidioUsername,
-    line0800Username,
-    role: String(user?.role || "operador"),
-    accessLevel: String(user?.accessLevel || "")
+    counters: {
+      users: 2,
+      dailyMetrics: 1,
+      qualityScores: 1,
+      importLogs: 1,
+    },
+    users: [
+      {
+        id: 1,
+        full_name: "Administrador",
+        login: "admin",
+        password_hash: null,
+        role: "manager",
+        platform_0800_id: "GESTOR-001",
+        nuvidio_id: "NUVIDIO-001",
+        is_active: true,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+    ],
+    dailyMetrics: [],
+    qualityScores: [],
+    importLogs: [],
   };
 }
 
-async function resolveOperators(env) {
-  const payload = await fetchCentral(env, "/api/users", { method: "GET" });
-  const users = Array.isArray(payload?.users) ? payload.users : [];
-  return users
-    .map(sanitizeUser)
-    .filter((user) => user.id && user.role !== "gestor")
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
-}
-
-async function readRecord(db, userId) {
-  await ensureResultsTable(db);
-  const rows = await db
-    .prepare("SELECT * FROM operator_results_daily WHERE user_id = ? ORDER BY result_date ASC, updated_at ASC")
-    .bind(userId)
-    .all();
-  return buildRecord(userId, rows.results || []);
-}
-
-async function upsertOperatorResult(db, payload) {
-  const userId = String(payload?.userId || "").trim();
-  const userName = String(payload?.userName || "").trim();
-  const username = String(payload?.username || "").trim();
-  const date = normalizeDateKey(payload?.date);
-  const operationType = normalizeOperationType(payload?.operationType);
-  const approvedCount = Number(payload?.approvedCount ?? 0);
-  const reprovedCount = Number(payload?.reprovedCount ?? 0);
-  const pendingCount = Number(payload?.pendingCount ?? 0);
-  const noActionCount = Number(payload?.noActionCount ?? 0);
-  const productionTotal = Number(payload?.productionTotal);
-  const effectiveness = Number(payload?.effectiveness);
-  const qualityScore = Number(payload?.qualityScore);
-  const updatedById = String(payload?.updatedById || "").trim();
-  const updatedByName = String(payload?.updatedByName || "").trim();
-
-  if (
-    !userId ||
-    !date ||
-    !Number.isFinite(productionTotal) ||
-    !Number.isFinite(effectiveness) ||
-    !Number.isFinite(qualityScore) ||
-    !Number.isFinite(approvedCount) ||
-    !Number.isFinite(reprovedCount) ||
-    !Number.isFinite(pendingCount) ||
-    !Number.isFinite(noActionCount)
-  ) {
-    return { ok: false, error: "Payload invalido para resultado do operador." };
+async function ensureStorage(env = {}) {
+  if (env?.APP_STORE) {
+    const raw = await env.APP_STORE.get(KV_KEY);
+    if (raw) return JSON.parse(raw);
+    const seeded = seedState();
+    seeded.users[0].password_hash = await hashPassword("admin123");
+    await persistStorage(seeded, env);
+    return seeded;
   }
-
-  await ensureResultsTable(db);
-  await db.prepare(
-    `INSERT INTO operator_results_daily (
-      id, user_id, user_name, username, result_date, operation_type,
-      approved_count, reproved_count, pending_count, no_action_count,
-      production_total, effectiveness, quality_score,
-      updated_by_id, updated_by_name, updated_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(user_id, result_date, operation_type) DO UPDATE SET
-      user_name = excluded.user_name,
-      username = excluded.username,
-      approved_count = excluded.approved_count,
-      reproved_count = excluded.reproved_count,
-      pending_count = excluded.pending_count,
-      no_action_count = excluded.no_action_count,
-      production_total = excluded.production_total,
-      effectiveness = excluded.effectiveness,
-      quality_score = excluded.quality_score,
-      updated_by_id = excluded.updated_by_id,
-      updated_by_name = excluded.updated_by_name,
-      updated_at = excluded.updated_at`
-  )
-    .bind(
-      `${userId}__${date}__${operationType}`,
-      userId,
-      userName,
-      username,
-      date,
-      operationType,
-      approvedCount,
-      reprovedCount,
-      pendingCount,
-      noActionCount,
-      productionTotal,
-      effectiveness,
-      qualityScore,
-      updatedById,
-      updatedByName,
-      new Date().toISOString()
-    )
-    .run();
-
-  return { ok: true, userId };
-}
-
-async function deleteOperatorResult(db, payload) {
-  const userId = String(payload?.userId || "").trim();
-  const date = normalizeDateKey(payload?.date);
-  const operationTypeRaw = String(payload?.operationType || "").trim();
-  const operationType = operationTypeRaw ? normalizeOperationType(operationTypeRaw) : "";
-  if (!userId || !date) {
-    return { ok: false, error: "Informe userId e date para excluir o lancamento." };
-  }
-
-  await ensureResultsTable(db);
-  const result = operationType
-    ? await db
-      .prepare("DELETE FROM operator_results_daily WHERE user_id = ? AND result_date = ? AND operation_type = ?")
-      .bind(userId, date, operationType)
-      .run()
-    : await db
-      .prepare("DELETE FROM operator_results_daily WHERE user_id = ? AND result_date = ?")
-      .bind(userId, date)
-      .run();
-
-  const deleted = Number(result?.meta?.changes || 0);
-  if (!deleted) {
-    return { ok: false, error: "Nenhum lancamento encontrado para exclusao nessa data." };
-  }
-
-  return { ok: true, userId, date, deleted };
-}
-
-async function deleteAllOperatorResults(db) {
-  await ensureResultsTable(db);
-  const result = await db.prepare("DELETE FROM operator_results_daily").run();
-  const deleted = Number(result?.meta?.changes || 0);
-  return { ok: true, deleted };
-}
-
-async function readAllRecords(db) {
-  await ensureResultsTable(db);
-  const rows = await db
-    .prepare("SELECT * FROM operator_results_daily ORDER BY user_id ASC, result_date ASC, updated_at ASC")
-    .all();
-
-  const byUser = new Map();
-  for (const row of rows.results || []) {
-    const userId = String(row.user_id || "").trim();
-    if (!userId) continue;
-    const list = byUser.get(userId) || [];
-    list.push(row);
-    byUser.set(userId, list);
-  }
-
-  const records = [];
-  for (const [userId, entries] of byUser.entries()) {
-    const record = buildRecord(userId, entries);
-    if (record) records.push(record);
-  }
-  return records;
-}
-
-function normalizeCsvText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function normalizeOperatorToken(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9@]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-function parseCsvSemicolon(content) {
-  const source = String(content || "").replace(/^\uFEFF/, "");
-  if (!source.trim()) return [];
-
-  const matrix = [];
-  let row = [];
-  let cell = "";
-  let quoted = false;
-
-  const pushCell = () => {
-    row.push(cell);
-    cell = "";
-  };
-  const pushRow = () => {
-    // ignora linha 100% vazia
-    const hasValue = row.some((item) => String(item || "").trim().length > 0);
-    if (hasValue) matrix.push(row);
-    row = [];
-  };
-
-  for (let i = 0; i < source.length; i += 1) {
-    const ch = source[i];
-    const next = source[i + 1];
-
-    if (ch === "\"") {
-      if (quoted && next === "\"") {
-        cell += "\"";
-        i += 1;
-        continue;
-      }
-      quoted = !quoted;
-      continue;
+  if (storageCache) return storageCache;
+  if (isNode) {
+    const { fs, path } = await nodeModules();
+    await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+    try {
+      const raw = await fs.readFile(DB_PATH, "utf8");
+      storageCache = JSON.parse(raw);
+    } catch {
+      storageCache = seedState();
+      storageCache.users[0].password_hash = await hashPassword("admin123");
+      await persistStorage(storageCache, env);
     }
-
-    if (!quoted && ch === ";") {
-      pushCell();
-      continue;
-    }
-
-    if (!quoted && (ch === "\n" || ch === "\r")) {
-      if (ch === "\r" && next === "\n") i += 1;
-      pushCell();
-      pushRow();
-      continue;
-    }
-
-    cell += ch;
+  } else {
+    storageCache = seedState();
+    storageCache.users[0].password_hash = await hashPassword("admin123");
   }
-  pushCell();
-  pushRow();
+  return storageCache;
+}
 
-  if (!matrix.length) return [];
-  const header = (matrix[0] || []).map((item, idx) => {
-    const text = String(item || "").trim();
-    return text || `coluna_${idx + 1}`;
+async function persistStorage(db, env = {}) {
+  if (env?.APP_STORE) {
+    await env.APP_STORE.put(KV_KEY, JSON.stringify(db));
+    return;
+  }
+  if (!isNode || !db) {
+    storageCache = db;
+    return;
+  }
+  storageCache = db;
+  const { fs } = await nodeModules();
+  await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
+}
+
+function nextId(db, key) {
+  const id = db.counters[key];
+  db.counters[key] += 1;
+  return id;
+}
+
+function jsonResponse(payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...headers,
+    },
   });
-
-  const rows = [];
-  for (let i = 1; i < matrix.length; i += 1) {
-    const line = matrix[i] || [];
-    const obj = {};
-    for (let col = 0; col < header.length; col += 1) {
-      obj[header[col]] = String(line[col] ?? "").trim();
-    }
-    rows.push(obj);
-  }
-  return rows;
 }
 
-function getRowValueByHeader(row, aliases = []) {
-  const keys = Object.keys(row || {});
-  for (const alias of aliases) {
-    const normAlias = normalizeCsvText(alias);
-    const found = keys.find((key) => {
-      const normKey = normalizeCsvText(key);
-      if (!normKey || !normAlias) return false;
-      if (normKey === normAlias) return true;
-      if (normKey.includes(normAlias) || normAlias.includes(normKey)) return true;
-      return false;
-    });
-    if (found) return String(row[found] || "").trim();
-  }
-  return "";
+async function getCurrentUser(request, db, env) {
+  const cookieHeader = request.headers.get("cookie") || "";
+  const token = parseCookies(cookieHeader)[SESSION_NAME];
+  if (!token) return null;
+  const session = await verifySession(token, env);
+  if (!session) return null;
+  return db.users.find((user) => user.id === session.user_id && user.is_active) || null;
 }
 
-function resolveOperatorNameFromRow(row, aliases = []) {
-  const explicit = getRowValueByHeader(row, aliases);
-  if (explicit) return explicit;
-  const keys = Object.keys(row || {});
-  const guessedKey = keys.find((key) => {
-    const norm = normalizeCsvText(key);
+function parseCookies(cookieHeader) {
+  return cookieHeader
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .reduce((acc, item) => {
+      const index = item.indexOf("=");
+      if (index === -1) return acc;
+      acc[item.slice(0, index)] = decodeURIComponent(item.slice(index + 1));
+      return acc;
+    }, {});
+}
+
+async function requireAuth(request, db, env) {
+  const user = await getCurrentUser(request, db, env);
+  if (!user) {
+    return { error: jsonResponse({ error: "Nao autenticado" }, 401) };
+  }
+  return { user };
+}
+
+async function requireManager(request, db, env) {
+  const auth = await requireAuth(request, db, env);
+  if (auth.error) return auth;
+  if (auth.user.role !== "manager") {
+    return { error: jsonResponse({ error: "Acesso negado" }, 403) };
+  }
+  return auth;
+}
+
+function matchUser(users, row) {
+  const identifiers = {
+    name: String(row.nome || row.operador || "").trim().toLowerCase(),
+    login: String(row.login || row.usuario || "").trim().toLowerCase(),
+    id0800: String(row.id_0800 || row.usuario_0800 || row.plataforma_0800 || "").trim().toLowerCase(),
+    idNuvidio: String(row.id_nuvidio || row.usuario_nuvidio || row.plataforma_nuvidio || "").trim().toLowerCase(),
+  };
+  return users.find((user) => {
     return (
-      norm.includes("atendente") ||
-      norm.includes("analista") ||
-      norm.includes("operador") ||
-      norm.includes("funcionario") ||
-      norm.includes("usuario") ||
-      norm.includes("login") ||
-      norm.includes("emaildoatendente")
+      (identifiers.id0800 && String(user.platform_0800_id || "").trim().toLowerCase() === identifiers.id0800) ||
+      (identifiers.idNuvidio && String(user.nuvidio_id || "").trim().toLowerCase() === identifiers.idNuvidio) ||
+      (identifiers.login && String(user.login || "").trim().toLowerCase() === identifiers.login) ||
+      (identifiers.name && String(user.full_name || "").trim().toLowerCase() === identifiers.name)
     );
   });
-  if (!guessedKey) return "";
-  const raw = String(row[guessedKey] || "").trim();
-  if (!raw) return "";
-  const emailMatch = raw.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/);
-  if (emailMatch) return raw.split("@")[0];
-  return raw;
 }
 
-function buildOperatorAliasMap(operators = [], operationType = "nuvidio") {
-  const map = new Map();
-  (operators || []).forEach((operator) => {
-    const laneAlias = operationType === "0800"
-      ? String(operator?.line0800Username || "")
-      : String(operator?.nuvidioUsername || "");
-    const aliases = [
-      laneAlias,
-      String(operator?.username || ""),
-      String(operator?.name || "")
-    ].filter(Boolean);
-    aliases.forEach((alias) => {
-      const normalized = normalizeOperatorToken(alias);
-      if (!normalized) return;
-      if (!map.has(normalized)) {
-        map.set(normalized, String(operator?.name || operator?.username || alias || "Operador"));
+function matchUserByName(users, name) {
+  const target = normalizeComparable(name);
+  if (!target) return null;
+  return users.find((user) => normalizeComparable(user.full_name) === target) || null;
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let current = "";
+  let row = [];
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
       }
-      if (normalized.includes("@")) {
-        const local = normalized.split("@")[0];
-        if (local && !map.has(local)) {
-          map.set(local, String(operator?.name || operator?.username || alias || "Operador"));
-        }
+    } else if (char === "," && !inQuotes) {
+      row.push(current);
+      current = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(current);
+      if (row.some((cell) => cell.length)) rows.push(row);
+      row = [];
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current.length || row.length) {
+    row.push(current);
+    if (row.some((cell) => cell.length)) rows.push(row);
+  }
+  if (!rows.length) return [];
+  const headers = rows[0].map((header) => normalizeHeader(header));
+  return rows.slice(1).map((cells) => {
+    const entry = {};
+    headers.forEach((header, index) => {
+      entry[header] = cells[index] ?? "";
+    });
+    return entry;
+  });
+}
+
+async function runPythonScript(args) {
+  const modules = await nodeModules();
+  const pythonPath = "C:\\Users\\joao.fonseca.KRCONSULTORIA\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe";
+  return await new Promise((resolve, reject) => {
+    modules.execFile(pythonPath, args, { cwd: process.cwd(), encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr?.trim() || error.message));
+        return;
       }
+      resolve(stdout);
     });
   });
-  return map;
 }
 
-function resolveOperatorFromAliasMap(rawValue, aliasMap = new Map()) {
-  const raw = String(rawValue || "").trim();
-  if (!raw) return "";
-  const normalized = normalizeOperatorToken(raw);
-  if (!normalized) return raw;
-  const mapped = aliasMap.get(normalized) || aliasMap.get(normalized.split("@")[0]);
-  return mapped || raw;
-}
-
-function parseNumberLoose(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return NaN;
-  const normalized = raw.replace(/\./g, "").replace(",", ".");
-  const numeric = Number(normalized);
-  return Number.isFinite(numeric) ? numeric : NaN;
-}
-
-function parseDurationSeconds(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return NaN;
-  if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
-  const match = raw.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
-  if (!match) return NaN;
-  const [, h, m, s] = match;
-  return (Number(h) * 3600) + (Number(m) * 60) + Number(s);
-}
-
-function parseDateToIso(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const ddmmyyyy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (ddmmyyyy) {
-    const day = String(ddmmyyyy[1]).padStart(2, "0");
-    const month = String(ddmmyyyy[2]).padStart(2, "0");
-    const year = String(ddmmyyyy[3]);
-    return `${year}-${month}-${day}`;
+async function generateQualityTemplate(users) {
+  const { fs, path } = await nodeModules();
+  const tempDir = path.join(process.cwd(), "data", "tmp");
+  await fs.mkdir(tempDir, { recursive: true });
+  const stamp = Date.now();
+  const jsonPath = path.join(tempDir, `quality-users-${stamp}.json`);
+  const outputPath = path.join(tempDir, `modelo-monitoria-${stamp}.xlsx`);
+  const scriptPath = path.join(process.cwd(), "tools", "quality_xlsx.py");
+  await fs.writeFile(jsonPath, JSON.stringify(users.map((user) => user.full_name), null, 2), "utf8");
+  try {
+    await runPythonScript([scriptPath, "export", jsonPath, outputPath]);
+    return await fs.readFile(outputPath);
+  } finally {
+    await fs.unlink(jsonPath).catch(() => {});
+    await fs.unlink(outputPath).catch(() => {});
   }
-  const short = raw.split(/[ T]/)[0];
-  const shortMatch = short.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (shortMatch) {
-    const day = String(shortMatch[1]).padStart(2, "0");
-    const month = String(shortMatch[2]).padStart(2, "0");
-    const year = String(shortMatch[3]);
-    return `${year}-${month}-${day}`;
+}
+
+async function parseQualityWorkbook(file) {
+  const { fs, path } = await nodeModules();
+  const tempDir = path.join(process.cwd(), "data", "tmp");
+  await fs.mkdir(tempDir, { recursive: true });
+  const stamp = Date.now();
+  const inputPath = path.join(tempDir, `quality-upload-${stamp}.xlsx`);
+  const scriptPath = path.join(process.cwd(), "tools", "quality_xlsx.py");
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await fs.writeFile(inputPath, buffer);
+  try {
+    const stdout = await runPythonScript([scriptPath, "import", inputPath]);
+    return JSON.parse(stdout);
+  } finally {
+    await fs.unlink(inputPath).catch(() => {});
   }
-  return "";
 }
 
-function normalizeStatusBucket(value) {
-  const text = normalizeCsvText(value);
-  if (!text) return "semAcao";
-  if (text.includes("aprovad")) return "aprovadas";
-  if (text.includes("cancelad")) return "reprovadas";
-  if (text.includes("reprovad")) return "reprovadas";
-  if (text.includes("pendenc")) return "pendenciadas";
-  if (text.includes("sem acao") || text.includes("semacao")) return "semAcao";
-  return "semAcao";
+function upsertDailyMetric(db, userId, metricDate, values, sourceName) {
+  let metric = db.dailyMetrics.find((item) => item.user_id === userId && item.metric_date === metricDate);
+  if (!metric) {
+    metric = {
+      id: nextId(db, "dailyMetrics"),
+      user_id: userId,
+      metric_date: metricDate,
+      production: 0,
+      calls_0800_approved: 0,
+      calls_0800_rejected: 0,
+      calls_0800_pending: 0,
+      calls_0800_no_action: 0,
+      calls_nuvidio_approved: 0,
+      calls_nuvidio_rejected: 0,
+      calls_nuvidio_no_action: 0,
+      import_source: sourceName,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    db.dailyMetrics.push(metric);
+  }
+  Object.assign(metric, values, {
+    import_source: sourceName ?? metric.import_source,
+    updated_at: nowIso(),
+  });
+  return metric;
 }
 
-function pushTopCounter(map, key) {
-  const normalized = String(key || "").trim();
-  if (!normalized) return;
-  map.set(normalized, Number(map.get(normalized) || 0) + 1);
+function buildOverview(db, user, url) {
+  const dateValue = url.searchParams.get("date") || todayIso();
+  const start = url.searchParams.get("start") || shiftDate(-29);
+  const end = url.searchParams.get("end") || todayIso();
+  const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
+  const todayRows = scopedMetrics.filter((metric) => metric.metric_date === dateValue);
+  const monthRows = db.qualityScores.filter((score) => score.reference_month === monthRef(dateValue) && (user.role === "manager" || score.user_id === user.id));
+  const trendRows = scopedMetrics
+    .filter((metric) => metric.metric_date >= start && metric.metric_date <= end)
+    .sort((a, b) => a.metric_date.localeCompare(b.metric_date));
+  const cards = {
+    production: todayRows.reduce((sum, row) => sum + toInt(row.production), 0),
+    effectiveness: average(todayRows.map(calculateEffectiveness)),
+    quality: average(monthRows.map((item) => toFloat(item.score))),
+  };
+  const trendMap = new Map();
+  for (const row of trendRows) {
+    const current = trendMap.get(row.metric_date) || { date: row.metric_date, production: 0, effectivenessParts: [] };
+    current.production += toInt(row.production);
+    current.effectivenessParts.push(calculateEffectiveness(row));
+    trendMap.set(row.metric_date, current);
+  }
+  const trend = [...trendMap.values()].map((item) => ({
+    date: item.date,
+    production: item.production,
+    effectiveness: average(item.effectivenessParts),
+  }));
+  const operators = todayRows.map((row) => ({
+    name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+    production: row.production,
+    effectiveness: calculateEffectiveness(row),
+  }));
+  return { cards, trend, operators };
 }
 
-function mapToTopList(counterMap, maxItems = 5) {
-  return [...counterMap.entries()]
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, maxItems);
+function buildAnalysis(db, user, url) {
+  const start = url.searchParams.get("start") || shiftDate(-29);
+  const end = url.searchParams.get("end") || todayIso();
+  const users = db.users.filter((entry) => entry.is_active && (user.role === "manager" || entry.id === user.id));
+  const ranking = users.map((entry) => {
+    const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
+    const quality = db.qualityScores.find((score) => score.user_id === entry.id && score.reference_month === monthRef(end));
+    return {
+      user_id: entry.id,
+      name: entry.full_name,
+      avg_production: metrics.length ? Number((metrics.reduce((sum, row) => sum + toInt(row.production), 0) / metrics.length).toFixed(2)) : 0,
+      total_production: metrics.reduce((sum, row) => sum + toInt(row.production), 0),
+      effectiveness: average(metrics.map(calculateEffectiveness)),
+      quality: toFloat(quality?.score),
+      active_days: metrics.length,
+    };
+  }).sort((a, b) => b.total_production - a.total_production || a.name.localeCompare(b.name));
+  return { ranking, period: { start, end } };
 }
 
-function aggregateNuvidio(rows, options = {}) {
-  const statuses = { aprovadas: 0, reprovadas: 0, semAcao: 0 };
-  const subtags = new Map();
-  const atendentes = new Map();
-  const tmaByOperator = new Map();
-  const aliasMap = options?.aliasMap instanceof Map ? options.aliasMap : new Map();
-  let total = 0;
-  let waitSum = 0;
-  let waitCount = 0;
-  let tmaSum = 0;
-  let tmaCount = 0;
+function buildHistory(db, user, url) {
+  const start = url.searchParams.get("start") || shiftDate(-29);
+  const end = url.searchParams.get("end") || todayIso();
+  const requestedUserId = Number(url.searchParams.get("user_id") || user.id);
+  const targetUserId = user.role === "manager" ? requestedUserId : user.id;
+  const history = db.dailyMetrics
+    .filter((row) => row.user_id === targetUserId && row.metric_date >= start && row.metric_date <= end)
+    .sort((a, b) => b.metric_date.localeCompare(a.metric_date))
+    .map((row) => ({ ...row, effectiveness: calculateEffectiveness(row) }));
+  const quality = db.qualityScores
+    .filter((item) => item.user_id === targetUserId)
+    .sort((a, b) => b.reference_month.localeCompare(a.reference_month));
+  return { history, quality };
+}
 
-  for (const row of rows) {
-    total += 1;
-    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Tag"]));
-    if (status === "aprovadas") statuses.aprovadas += 1;
-    else if (status === "reprovadas") statuses.reprovadas += 1;
-    else statuses.semAcao += 1;
+function average(values) {
+  if (!values.length) return 0;
+  return Number((values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length).toFixed(2));
+}
 
-    const wait = parseNumberLoose(getRowValueByHeader(row, ["Espera em segundos"]));
-    if (Number.isFinite(wait)) {
-      waitSum += wait;
-      waitCount += 1;
+function shiftDate(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function cloudQualityUnsupported() {
+  return jsonResponse({
+    error: "No Cloudflare, a monitoria em XLSX ainda precisa ser processada localmente. Use CSV ou integre uma rotina externa antes do deploy final.",
+  }, 501);
+}
+
+async function handleApi(request, url, db, env = {}) {
+  if (url.pathname === "/api/auth/me" && request.method === "GET") {
+    const user = await getCurrentUser(request, db, env);
+    return jsonResponse({ user: user ? serializeUser(user) : null });
+  }
+
+  if (url.pathname === "/api/auth/login" && request.method === "POST") {
+    const payload = await request.json();
+    const user = db.users.find((entry) => entry.login === String(payload.login || "").trim() && entry.is_active);
+    if (!user || !(await verifyPassword(String(payload.password || ""), user.password_hash))) {
+      return jsonResponse({ error: "Credenciais invalidas" }, 401);
+    }
+    const token = await signSessionWithEnv({
+      user_id: user.id,
+      expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+    }, env);
+    return jsonResponse(
+      { user: serializeUser(user) },
+      200,
+      { "set-cookie": `${SESSION_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax` },
+    );
+  }
+
+  if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+    return jsonResponse({ ok: true }, 200, {
+      "set-cookie": `${SESSION_NAME}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`,
+    });
+  }
+
+  if (url.pathname === "/api/auth/password" && request.method === "POST") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    const payload = await request.json();
+    const currentPassword = String(payload.current_password || "");
+    const newPassword = String(payload.new_password || "").trim();
+    const confirmPassword = String(payload.confirm_password || "").trim();
+
+    if (!(await verifyPassword(currentPassword, auth.user.password_hash))) {
+      return jsonResponse({ error: "Senha atual invalida" }, 400);
+    }
+    if (newPassword.length < 4) {
+      return jsonResponse({ error: "A nova senha deve ter pelo menos 4 caracteres" }, 400);
+    }
+    if (newPassword !== confirmPassword) {
+      return jsonResponse({ error: "A confirmacao da senha nao confere" }, 400);
     }
 
-    const tmaRaw = getRowValueByHeader(row, ["TMA", "Duracao em segundos"]);
-    const tma = parseDurationSeconds(tmaRaw);
-    if (Number.isFinite(tma)) {
-      tmaSum += tma;
-      tmaCount += 1;
+    auth.user.password_hash = await hashPassword(newPassword);
+    auth.user.updated_at = nowIso();
+    await persistStorage(db, env);
+    return jsonResponse({ ok: true });
+  }
+
+  if (url.pathname === "/api/dashboard/overview" && request.method === "GET") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    return jsonResponse(buildOverview(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/analysis" && request.method === "GET") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    return jsonResponse(buildAnalysis(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/history" && request.method === "GET") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    return jsonResponse(buildHistory(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/admin/users" && request.method === "GET") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    return jsonResponse({ users: db.users.map(serializeUser) });
+  }
+
+  if (url.pathname === "/api/admin/users" && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const payload = await request.json();
+    const required = ["full_name", "login", "password", "role"];
+    const missing = required.filter((field) => !String(payload[field] || "").trim());
+    if (missing.length) {
+      return jsonResponse({ error: `Campos obrigatorios: ${missing.join(", ")}` }, 400);
+    }
+    if (!["operator", "manager"].includes(payload.role)) {
+      return jsonResponse({ error: "Perfil invalido" }, 400);
+    }
+    if (db.users.some((entry) => entry.login === String(payload.login).trim())) {
+      return jsonResponse({ error: "Login ja cadastrado" }, 409);
+    }
+    const user = {
+      id: nextId(db, "users"),
+      full_name: String(payload.full_name).trim(),
+      login: String(payload.login).trim(),
+      password_hash: await hashPassword(String(payload.password)),
+      role: payload.role,
+      platform_0800_id: String(payload.platform_0800_id || "").trim(),
+      nuvidio_id: String(payload.nuvidio_id || "").trim(),
+      is_active: true,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    db.users.push(user);
+    await persistStorage(db, env);
+    return jsonResponse({ user: serializeUser(user) }, 201);
+  }
+
+  if (url.pathname.startsWith("/api/admin/users/") && request.method === "PUT") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const userId = Number(url.pathname.split("/").pop());
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) return jsonResponse({ error: "Usuario nao encontrado" }, 404);
+    const payload = await request.json();
+    if (payload.role && !["operator", "manager"].includes(payload.role)) {
+      return jsonResponse({ error: "Perfil invalido" }, 400);
+    }
+    if (payload.login && db.users.some((entry) => entry.login === String(payload.login).trim() && entry.id !== user.id)) {
+      return jsonResponse({ error: "Login ja cadastrado" }, 409);
+    }
+    user.full_name = String(payload.full_name || user.full_name).trim();
+    user.login = String(payload.login || user.login).trim();
+    user.role = payload.role || user.role;
+    user.platform_0800_id = String(payload.platform_0800_id ?? user.platform_0800_id).trim();
+    user.nuvidio_id = String(payload.nuvidio_id ?? user.nuvidio_id).trim();
+    user.updated_at = nowIso();
+    if (String(payload.password || "").trim()) {
+      user.password_hash = await hashPassword(String(payload.password).trim());
+    }
+    await persistStorage(db, env);
+    return jsonResponse({ user: serializeUser(user) });
+  }
+
+  if (url.pathname === "/api/admin/quality" && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const payload = await request.json();
+    const userId = Number(payload.user_id);
+    if (!userId || !String(payload.reference_month || "").trim()) {
+      return jsonResponse({ error: "user_id e reference_month sao obrigatorios" }, 400);
+    }
+    let score = db.qualityScores.find((item) => item.user_id === userId && item.reference_month === payload.reference_month);
+    if (!score) {
+      score = {
+        id: nextId(db, "qualityScores"),
+        user_id: userId,
+        reference_month: payload.reference_month,
+        score: toFloat(payload.score),
+        notes: String(payload.notes || "").trim(),
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      db.qualityScores.push(score);
+    } else {
+      score.score = toFloat(payload.score);
+      score.notes = String(payload.notes || "").trim();
+      score.updated_at = nowIso();
+    }
+    await persistStorage(db, env);
+    return jsonResponse({ quality: score });
+  }
+
+  if (url.pathname === "/api/admin/quality/template" && request.method === "GET") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    if (!isNode) {
+      const operators = db.users.filter((user) => user.is_active && user.role === "operator");
+      const csv = [
+        "Nome do Operador,Monitoria 1,Monitoria 2,Monitoria 3,Monitoria 4",
+        ...operators.map((user) => `"${String(user.full_name || "").replaceAll('"', '""')}",,,,`),
+      ].join("\n");
+      return new Response(csv, {
+        status: 200,
+        headers: {
+          "content-type": "text/csv; charset=utf-8",
+          "content-disposition": 'attachment; filename="modelo-monitoria.csv"',
+        },
+      });
+    }
+    const operators = db.users.filter((user) => user.is_active && user.role === "operator");
+    const buffer = await generateQualityTemplate(operators);
+    return new Response(buffer, {
+      status: 200,
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-disposition": 'attachment; filename="modelo-monitoria.xlsx"',
+      },
+    });
+  }
+
+  if (url.pathname === "/api/admin/quality/import" && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const form = await request.formData();
+    const file = form.get("file");
+    const referenceMonth = String(form.get("reference_month") || "").trim();
+    if (!(file instanceof File)) {
+      return jsonResponse({ error: "Arquivo de monitoria nao enviado" }, 400);
+    }
+    if (!isValidMonthRef(referenceMonth)) {
+      return jsonResponse({ error: "Informe o mes de referencia no formato AAAA-MM" }, 400);
+    }
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".csv")) {
+      return jsonResponse({ error: "Use um arquivo XLSX ou CSV para a monitoria" }, 400);
     }
 
-    pushTopCounter(subtags, getRowValueByHeader(row, ["Subtag"]));
-    const atendente = resolveOperatorFromAliasMap(resolveOperatorNameFromRow(row, [
-      "Email do atendente",
-      "Atendente",
-      "Analista",
-      "Usuario de Abertura da Ocorrencia",
-      "UsuÃ¡rio de Abertura da OcorrÃªncia",
-      "Funcionario",
-      "FuncionÃ¡rio",
-      "Operador",
-      "Usuario",
-      "UsuÃ¡rio"
-    ]), aliasMap);
-    if (atendente) {
-      atendentes.set(atendente, Number(atendentes.get(atendente) || 0) + 1);
-      if (Number.isFinite(tma)) {
-        const current = tmaByOperator.get(atendente) || { sum: 0, count: 0 };
-        current.sum += tma;
-        current.count += 1;
-        tmaByOperator.set(atendente, current);
+    if (!isNode && lowerName.endsWith(".xlsx")) {
+      return cloudQualityUnsupported();
+    }
+
+    const rows = lowerName.endsWith(".csv")
+      ? parseCsv(await file.text()).map((row) => ({
+          name: row.nome_do_operador || row.nome_operador || row.operador || row.nome || "",
+          monitoria_1: row.monitoria_1 ?? "",
+          monitoria_2: row.monitoria_2 ?? "",
+          monitoria_3: row.monitoria_3 ?? "",
+          monitoria_4: row.monitoria_4 ?? "",
+        }))
+      : await parseQualityWorkbook(file);
+    const operators = db.users.filter((user) => user.is_active && user.role === "operator");
+    const errors = [];
+    let processed = 0;
+
+    for (const row of rows) {
+      try {
+        const user = matchUserByName(operators, row.name);
+        if (!user) throw new Error(`Operador nao encontrado: ${row.name}`);
+        const monitorias = [row.monitoria_1, row.monitoria_2, row.monitoria_3, row.monitoria_4];
+        const validMonitorias = monitorias.filter((value) => value !== null && value !== undefined && value !== "");
+        for (const value of validMonitorias) {
+          const numeric = toFloat(value);
+          if (numeric < 0 || numeric > 100) throw new Error(`Monitoria fora da faixa 0-100 para ${row.name}`);
+        }
+        const scoreValue = validMonitorias.length
+          ? Number((validMonitorias.reduce((sum, value) => sum + toFloat(value), 0) / validMonitorias.length).toFixed(2))
+          : 0;
+
+        let score = db.qualityScores.find((item) => item.user_id === user.id && item.reference_month === referenceMonth);
+        if (!score) {
+          score = {
+            id: nextId(db, "qualityScores"),
+            user_id: user.id,
+            reference_month: referenceMonth,
+            score: scoreValue,
+            notes: "",
+            monitoria_1: row.monitoria_1,
+            monitoria_2: row.monitoria_2,
+            monitoria_3: row.monitoria_3,
+            monitoria_4: row.monitoria_4,
+            created_at: nowIso(),
+            updated_at: nowIso(),
+          };
+          db.qualityScores.push(score);
+        } else {
+          score.score = scoreValue;
+          score.monitoria_1 = row.monitoria_1;
+          score.monitoria_2 = row.monitoria_2;
+          score.monitoria_3 = row.monitoria_3;
+          score.monitoria_4 = row.monitoria_4;
+          score.updated_at = nowIso();
+        }
+        processed += 1;
+      } catch (error) {
+        errors.push(error.message);
       }
     }
+
+    await persistStorage(db, env);
+    return jsonResponse({ processed, rejected: errors.length, errors: errors.slice(0, 20) });
   }
 
-  const producaoPorOperador = [...atendentes.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
+  if (url.pathname.startsWith("/api/admin/daily-metrics/") && request.method === "PUT") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const metricId = Number(url.pathname.split("/").pop());
+    const metric = db.dailyMetrics.find((entry) => entry.id === metricId);
+    if (!metric) return jsonResponse({ error: "Registro nao encontrado" }, 404);
+    const payload = await request.json();
+    metric.production = toInt(payload.production ?? metric.production);
+    metric.calls_0800_approved = toInt(payload.calls_0800_approved ?? metric.calls_0800_approved);
+    metric.calls_0800_rejected = toInt(payload.calls_0800_rejected ?? metric.calls_0800_rejected);
+    metric.calls_0800_pending = toInt(payload.calls_0800_pending ?? metric.calls_0800_pending);
+    metric.calls_0800_no_action = toInt(payload.calls_0800_no_action ?? metric.calls_0800_no_action);
+    metric.calls_nuvidio_approved = toInt(payload.calls_nuvidio_approved ?? metric.calls_nuvidio_approved);
+    metric.calls_nuvidio_rejected = toInt(payload.calls_nuvidio_rejected ?? metric.calls_nuvidio_rejected);
+    metric.calls_nuvidio_no_action = toInt(payload.calls_nuvidio_no_action ?? metric.calls_nuvidio_no_action);
+    metric.updated_at = nowIso();
+    await persistStorage(db, env);
+    return jsonResponse({ metric: { ...metric, effectiveness: calculateEffectiveness(metric) } });
+  }
 
-  const tmaMedioPorAnalista = [...tmaByOperator.entries()]
-    .map(([name, stats]) => ({
-      name,
-      avgTmaSeconds: Number(stats?.count || 0) > 0 ? Number(stats.sum || 0) / Number(stats.count || 1) : 0
-    }))
-    .sort((a, b) => b.avgTmaSeconds - a.avgTmaSeconds)
-    .slice(0, 10);
-
-  return {
-    totalAtendimentos: total,
-    statuses,
-    avgWaitSeconds: waitCount ? (waitSum / waitCount) : 0,
-    avgTmaSeconds: tmaCount ? (tmaSum / tmaCount) : 0,
-    topSubtags: mapToTopList(subtags, 5),
-    topAtendentes: producaoPorOperador.slice(0, 5),
-    producaoPorOperador,
-    tmaMedioPorAnalista
-  };
-}
-
-function aggregate0800(rows, options = {}) {
-  const statuses = { aprovadas: 0, reprovadas: 0, pendenciadas: 0, semAcao: 0 };
-  const subMotivos = new Map();
-  const analistas = new Map();
-  const aliasMap = options?.aliasMap instanceof Map ? options.aliasMap : new Map();
-  let total = 0;
-  let daysSum = 0;
-  let daysCount = 0;
-  let fcrYes = 0;
-  let fcrTotal = 0;
-
-  for (const row of rows) {
-    total += 1;
-    const status = normalizeStatusBucket(getRowValueByHeader(row, ["Motivo"]));
-    if (status === "aprovadas") statuses.aprovadas += 1;
-    else if (status === "reprovadas") statuses.reprovadas += 1;
-    else if (status === "pendenciadas") statuses.pendenciadas += 1;
-    else statuses.semAcao += 1;
-
-    const days = parseNumberLoose(getRowValueByHeader(row, ["Dias Para Resolucao", "Dias Para ResoluÃ§Ã£o"]));
-    if (Number.isFinite(days)) {
-      daysSum += days;
-      daysCount += 1;
+  if (url.pathname === "/api/admin/import" && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const form = await request.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) {
+      return jsonResponse({ error: "Arquivo nao enviado" }, 400);
     }
-
-    const fcr = normalizeCsvText(getRowValueByHeader(row, ["FCR (Sim / Nao)", "FCR (Sim / NÃ£o)", "FCR"]));
-    if (fcr) {
-      fcrTotal += 1;
-      if (fcr.startsWith("sim")) fcrYes += 1;
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      return jsonResponse({ error: "No formato atual, use CSV para o teste local." }, 400);
     }
-
-    pushTopCounter(subMotivos, getRowValueByHeader(row, ["Sub-Motivo", "Sub Motivo"]));
-    pushTopCounter(analistas, resolveOperatorFromAliasMap(resolveOperatorNameFromRow(row, [
-      "Usuario de Abertura da Ocorrencia",
-      "UsuÃ¡rio de Abertura da OcorrÃªncia",
-      "Analista",
-      "Funcionario",
-      "FuncionÃ¡rio",
-      "Operador",
-      "Usuario",
-      "UsuÃ¡rio"
-    ]), aliasMap));
-  }
-
-  const producaoPorOperador = [...analistas.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
-
-  return {
-    totalOcorrencias: total,
-    statuses,
-    avgResolutionDays: daysCount ? (daysSum / daysCount) : 0,
-    fcrSimRate: fcrTotal ? ((fcrYes * 100) / fcrTotal) : 0,
-    topSubMotivos: mapToTopList(subMotivos, 5),
-    topAnalistas: producaoPorOperador.slice(0, 5),
-    producaoPorOperador
-  };
-}
-
-async function listAllR2Objects(bucket) {
-  const files = [];
-  let cursor = undefined;
-  let truncated = true;
-  while (truncated) {
-    const page = await bucket.list({ limit: 1000, cursor });
-    files.push(...(page.objects || []));
-    truncated = Boolean(page.truncated);
-    cursor = page.cursor;
-  }
-  return files;
-}
-
-async function resolveR2SourceFiles(bucket) {
-  const objects = await listAllR2Objects(bucket);
-  const keyRaw = (obj) => String(obj?.key || "").trim().toLowerCase();
-  const isCsvLike = (obj) => {
-    const key = keyRaw(obj);
-    return key.endsWith(".csv") || key.endsWith(".txt");
-  };
-  const pickLatest = (pool, matcher) => {
-    return pool
-      .filter((obj) => matcher(keyRaw(obj), normalizeCsvText(obj.key || "")))
-      .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
-  };
-  const csvObjects = objects.filter(isCsvLike);
-
-  const line0800 =
-    pickLatest(csvObjects, (key) => key.includes("bases/0800/parsed/")) ||
-    pickLatest(csvObjects, (key) => key.includes("bases/0800/base/")) ||
-    null;
-  const nuvidio =
-    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/parsed/")) ||
-    pickLatest(csvObjects, (key) => key.includes("bases/nuvidio/base/")) ||
-    null;
-  return { line0800, nuvidio };
-}
-
-async function resolveR2LatestBaseFiles(bucket) {
-  const objects = await listAllR2Objects(bucket);
-  const keyRaw = (obj) => String(obj?.key || "").trim().toLowerCase();
-  const pickLatest = (matcher) => {
-    return objects
-      .filter((obj) => matcher(keyRaw(obj)))
-      .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
-  };
-  const line0800 = pickLatest((key) => key.includes("bases/0800/base/")) || null;
-  const nuvidio = pickLatest((key) => key.includes("bases/nuvidio/base/")) || null;
-  return { line0800, nuvidio };
-}
-
-async function resolveR2LatestXlsxSources(bucket) {
-  const objects = await listAllR2Objects(bucket);
-  const keyRaw = (obj) => String(obj?.key || "").trim().toLowerCase();
-  const isXlsx = (obj) => keyRaw(obj).endsWith(".xlsx");
-  const pickLatest = (pool, matcher) => {
-    return pool
-      .filter((obj) => matcher(keyRaw(obj), normalizeCsvText(obj.key || "")))
-      .sort((a, b) => new Date(String(b.uploaded || 0)).getTime() - new Date(String(a.uploaded || 0)).getTime())[0] || null;
-  };
-  const xlsxObjects = objects.filter(isXlsx);
-
-  const line0800 =
-    pickLatest(xlsxObjects, (key) => key.includes("bases/0800/source/")) ||
-    pickLatest(xlsxObjects, (key) => key.includes("bases/0800/")) ||
-    null;
-  const nuvidio =
-    pickLatest(xlsxObjects, (key) => key.includes("bases/nuvidio/source/")) ||
-    pickLatest(xlsxObjects, (key) => key.includes("bases/nuvidio/")) ||
-    null;
-  return { line0800, nuvidio };
-}
-
-async function ensureR2BaseFolders(bucket) {
-  const keys = [
-    "bases/nuvidio/base/.keep",
-    "bases/0800/base/.keep"
-  ];
-  for (const key of keys) {
-    await bucket.put(key, "keep", {
-      httpMetadata: { contentType: "text/plain; charset=utf-8" },
-      customMetadata: { source: "portal", kind: "folder-marker" }
+    const text = await file.text();
+    const rows = parseCsv(text);
+    if (!rows.length) return jsonResponse({ error: "A planilha esta vazia." }, 400);
+    const required = [
+      "data",
+      "producao",
+      "0800_aprovado",
+      "0800_cancelada",
+      "0800_pendenciada",
+      "0800_sem_acao",
+      "nuvidio_aprovada",
+      "nuvidio_reprovada",
+      "nuvidio_sem_acao",
+    ];
+    const first = rows[0];
+    const missing = required.filter((field) => !(field in first));
+    if (missing.length) {
+      return jsonResponse({ error: `Colunas obrigatorias ausentes: ${missing.join(", ")}` }, 400);
+    }
+    let processed = 0;
+    let rejected = 0;
+    const errors = [];
+    rows.forEach((row, index) => {
+      try {
+        const user = matchUser(db.users.filter((entry) => entry.is_active), row);
+        if (!user) throw new Error("Operador nao encontrado para os identificadores informados.");
+        upsertDailyMetric(
+          db,
+          user.id,
+          parseDate(row.data),
+          {
+            production: toInt(row.producao),
+            calls_0800_approved: toInt(row["0800_aprovado"]),
+            calls_0800_rejected: toInt(row["0800_cancelada"]),
+            calls_0800_pending: toInt(row["0800_pendenciada"]),
+            calls_0800_no_action: toInt(row["0800_sem_acao"]),
+            calls_nuvidio_approved: toInt(row["nuvidio_aprovada"]),
+            calls_nuvidio_rejected: toInt(row["nuvidio_reprovada"]),
+            calls_nuvidio_no_action: toInt(row["nuvidio_sem_acao"]),
+          },
+          file.name,
+        );
+        processed += 1;
+      } catch (error) {
+        rejected += 1;
+        errors.push({ row: index + 2, error: error.message });
+      }
     });
-  }
-  return { ok: true, keys };
-}
-
-async function readCsvFromR2Object(bucket, objectMeta) {
-  if (!objectMeta?.key) return [];
-  const key = String(objectMeta.key || "").trim().toLowerCase();
-  if (!(key.endsWith(".csv") || key.endsWith(".txt"))) return [];
-  const object = await bucket.get(objectMeta.key);
-  if (!object) return [];
-  const content = await object.text();
-  const semicolonRows = parseCsvSemicolon(content);
-  if (semicolonRows.length > 0) return semicolonRows;
-
-  // fallback para arquivos csv em virgula
-  const commaRows = parseCsvSemicolon(String(content || "").replace(/,/g, ";"));
-  return commaRows;
-}
-
-async function buildR2Insights(env) {
-  const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-  if (!bucket) {
-    return { views: null, sources: null };
-  }
-
-  const files = await resolveR2SourceFiles(bucket);
-  const nuvidioRows = await readCsvFromR2Object(bucket, files.nuvidio);
-  const line0800Rows = await readCsvFromR2Object(bucket, files.line0800);
-
-  let operators = [];
-  try {
-    operators = await resolveOperators(env);
-  } catch {
-    operators = [];
-  }
-  const nuvidioAliasMap = buildOperatorAliasMap(operators, "nuvidio");
-  const line0800AliasMap = buildOperatorAliasMap(operators, "0800");
-
-  return {
-    views: {
-      nuvidio: aggregateNuvidio(nuvidioRows, { aliasMap: nuvidioAliasMap }),
-      line0800: aggregate0800(line0800Rows, { aliasMap: line0800AliasMap })
-    },
-    sources: {
-      nuvidio: files.nuvidio?.key || "",
-      line0800: files.line0800?.key || ""
-    }
-  };
-}
-
-function computeEffectiveness(operationType, counts) {
-  const approved = Number(counts?.approved || 0);
-  const reproved = Number(counts?.reproved || 0);
-  const pending = Number(counts?.pending || 0);
-  const noAction = Number(counts?.noAction || 0);
-  const total = approved + reproved + pending + noAction;
-  if (total <= 0) {
-    return { total: 0, effectiveness: 0 };
-  }
-  const effective = operationType === "0800"
-    ? (approved + reproved + pending)
-    : (approved + reproved);
-  return {
-    total,
-    effectiveness: (effective / total) * 100
-  };
-}
-
-async function syncOperatorResultsFromR2(env, operationTypeInput, options = {}) {
-  const operationType = sanitizeOperationType(operationTypeInput);
-  const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-  if (!bucket) return { ok: false, error: "R2 nao configurado." };
-
-  const files = await resolveR2SourceFiles(bucket);
-  const targetFile = operationType === "0800" ? files.line0800 : files.nuvidio;
-  if (!targetFile?.key) {
-    return { ok: false, error: `Nao achei base em bases/${operationType}/base/ (aceito .xlsx ou .csv).` };
-  }
-
-  const rows = await readCsvFromR2Object(bucket, targetFile);
-  if (!rows.length) {
-    return {
-      ok: false,
-      error: `Arquivo base vazio ou invalido (${targetFile.key}). Use CSV em bases/${operationType}/base/.`
-    };
-  }
-
-  const operators = await resolveOperators(env);
-  const aliasMap = buildOperatorAliasMap(operators, operationType);
-  const aggregates = new Map();
-  const dateSet = new Set();
-
-  for (const row of rows) {
-    const dateRaw = operationType === "0800"
-      ? getRowValueByHeader(row, [
-        "Data Abertura Ocorrencia",
-        "Data Abertura Ocorrência",
-        "Data Abertura OcorrÃªncia",
-        "Data Abertura",
-        "Data"
-      ])
-      : getRowValueByHeader(row, [
-        "Data Abreviada",
-        "Data",
-        "Data de Abertura"
-      ]);
-    const date = parseDateToIso(dateRaw);
-    if (!date) continue;
-
-    const userRaw = operationType === "0800"
-      ? getRowValueByHeader(row, [
-        "Usuario de Abertura da Ocorrencia",
-        "Usuário de Abertura da Ocorrência",
-        "UsuÃ¡rio de Abertura da OcorrÃªncia",
-        "Usuario 0800",
-        "Usuário 0800",
-        "Usuario",
-        "Operador"
-      ])
-      : getRowValueByHeader(row, [
-        "Email do atendente",
-        "Usuario Nuvidio",
-        "Usuário Nuvidio",
-        "Atendente",
-        "Usuario",
-        "Operador"
-      ]);
-    const userName = resolveOperatorFromAliasMap(userRaw, aliasMap);
-    const userToken = normalizeOperatorToken(userRaw);
-    const mappedOperator = operators.find((operator) => (
-      String(operator?.name || "").trim().toLowerCase() === String(userName || "").trim().toLowerCase() ||
-      normalizeOperatorToken(operationType === "0800" ? operator?.line0800Username : operator?.nuvidioUsername) === userToken ||
-      normalizeOperatorToken(operator?.username) === userToken
-    ));
-    if (!mappedOperator?.id) continue;
-
-    const statusRaw = operationType === "0800"
-      ? getRowValueByHeader(row, ["Motivo", "Tag", "Status"])
-      : getRowValueByHeader(row, ["Tag", "Motivo", "Status"]);
-    const bucketStatus = normalizeStatusBucket(statusRaw);
-    const key = `${mappedOperator.id}__${date}__${operationType}`;
-    if (!aggregates.has(key)) {
-      aggregates.set(key, {
-        userId: String(mappedOperator.id || ""),
-        userName: String(mappedOperator.name || ""),
-        username: String(mappedOperator.username || ""),
-        date,
-        operationType,
-        approved: 0,
-        reproved: 0,
-        pending: 0,
-        noAction: 0
-      });
-    }
-    const current = aggregates.get(key);
-    if (bucketStatus === "aprovadas") current.approved += 1;
-    else if (bucketStatus === "reprovadas") current.reproved += 1;
-    else if (bucketStatus === "pendenciadas") current.pending += 1;
-    else current.noAction += 1;
-    dateSet.add(date);
-  }
-
-  if (!aggregates.size) {
-    return { ok: false, error: "Nenhum registro com usuario mapeado foi encontrado na base." };
-  }
-
-  const allDates = [...dateSet].sort((a, b) => a.localeCompare(b));
-  const latestDate = allDates[allDates.length - 1] || "";
-  const fullSync = Boolean(options?.fullSync);
-  const selectedDate = String(options?.date || "").trim();
-  const targetDate = selectedDate || latestDate;
-  const items = [...aggregates.values()].filter((entry) => fullSync || entry.date === targetDate);
-  if (!items.length) {
-    return { ok: false, error: "Nenhum registro elegivel para sincronizacao (data alvo vazia)." };
-  }
-
-  const existingRows = await env.DB
-    .prepare("SELECT user_id, result_date, operation_type, quality_score FROM operator_results_daily")
-    .all();
-  const qualityMap = new Map();
-  for (const row of existingRows.results || []) {
-    const k = `${String(row.user_id || "")}__${String(row.result_date || "")}__${sanitizeOperationType(row.operation_type || "")}`;
-    qualityMap.set(k, Number(row.quality_score || 0));
-  }
-
-  let imported = 0;
-  for (const item of items) {
-    const metrics = computeEffectiveness(item.operationType, item);
-    const qualityKey = `${item.userId}__${item.date}__${item.operationType}`;
-    const qualityScore = Number(qualityMap.get(qualityKey) || 0);
-    const result = await upsertOperatorResult(env.DB, {
-      userId: item.userId,
-      userName: item.userName,
-      username: item.username,
-      date: item.date,
-      operationType: item.operationType,
-      approvedCount: item.approved,
-      reprovedCount: item.reproved,
-      pendingCount: item.operationType === "0800" ? item.pending : 0,
-      noActionCount: item.noAction,
-      productionTotal: metrics.total,
-      effectiveness: metrics.effectiveness,
-      qualityScore,
-      updatedById: "r2-sync",
-      updatedByName: "R2 Sync"
+    db.importLogs.push({
+      id: nextId(db, "importLogs"),
+      imported_by: auth.user.id,
+      source_name: file.name,
+      imported_at: nowIso(),
+      rows_processed: processed,
+      rows_rejected: rejected,
     });
-    if (result.ok) imported += 1;
+    await persistStorage(db, env);
+    return jsonResponse({ processed, rejected, errors: errors.slice(0, 20) });
   }
 
-  return {
-    ok: true,
-    imported,
-    totalMapped: aggregates.size,
-    operationType,
-    targetDate,
-    sourceKey: targetFile.key
-  };
+  return jsonResponse({ error: "Rota nao encontrada" }, 404);
 }
 
-async function syncOperatorResultsFromR2All(env, operationTypeInput, options = {}) {
-  const operationType = sanitizeSyncOperationType(operationTypeInput);
-  if (operationType === "0800" || operationType === "nuvidio") {
-    const single = await syncOperatorResultsFromR2(env, operationType, options);
-    return {
-      ok: Boolean(single?.ok),
-      operationType,
-      totalImported: Number(single?.imported || 0),
-      items: [single]
-    };
+async function serveStatic(request, env = {}) {
+  const pathname = new URL(request.url).pathname;
+  if (!isNode && env?.ASSETS) {
+    const assetResponse = await env.ASSETS.fetch(request);
+    if (assetResponse.status !== 404) return assetResponse;
+    if (pathname === "/" || !pathname.includes(".")) {
+      return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
+    }
+    return assetResponse;
   }
-
-  const ops = ["0800", "nuvidio"];
-  const items = [];
-  for (const op of ops) {
+  if (!isNode) {
+    return new Response("Not found", { status: 404 });
+  }
+  const { fs, path } = await nodeModules();
+  const directFile = STATIC_FILES[pathname];
+  const fallbackFile = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+  let fileName = directFile;
+  if (!fileName) {
+    const candidate = path.resolve(fallbackFile);
     try {
-      const result = await syncOperatorResultsFromR2(env, op, options);
-      items.push(result);
-    } catch (error) {
-      items.push({
-        ok: false,
-        operationType: op,
-        error: String(error?.message || "Falha ao sincronizar operacao.")
-      });
+      const stat = await fs.stat(candidate);
+      if (stat.isFile()) fileName = fallbackFile;
+    } catch {
+      fileName = null;
     }
   }
-
-  const totalImported = items.reduce((sum, item) => sum + Number(item?.imported || 0), 0);
-  const successCount = items.filter((item) => item?.ok).length;
-  return {
-    ok: successCount > 0,
-    operationType: "all",
-    totalImported,
-    items
-  };
+  if (!fileName) {
+    return new Response("Not found", { status: 404 });
+  }
+  const content = await fs.readFile(path.resolve(fileName));
+  const type = contentType(fileName);
+  return new Response(content, { status: 200, headers: { "content-type": type } });
 }
 
-async function verifySsoTokenAndBuildUser(env, requestUrl, token, db) {
-  const { sharedSecret, expectedIssuer, expectedAudience } = getSsoConfig(env, requestUrl);
-  if (!sharedSecret) {
-    throw new Error("SSO_SHARED_SECRET nao configurado.");
-  }
+function contentType(fileName) {
+  if (fileName.endsWith(".html")) return "text/html; charset=utf-8";
+  if (fileName.endsWith(".css")) return "text/css; charset=utf-8";
+  if (fileName.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (fileName.endsWith(".png")) return "image/png";
+  return "application/octet-stream";
+}
 
-  const payload = await verifyJwtHs256(token, sharedSecret);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const exp = Number(payload?.exp);
-  const iat = Number(payload?.iat);
-  const iss = String(payload?.iss || "");
-  const aud = String(payload?.aud || "");
-  const jti = String(payload?.jti || "");
-
-  if (!Number.isFinite(exp) || exp <= nowSeconds) {
-    throw new Error("Token expirado.");
+async function handleRequest(request, env = {}) {
+  const db = await ensureStorage(env);
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/api/")) {
+    return handleApi(request, url, db, env);
   }
-  if (!Number.isFinite(iat) || iat > nowSeconds + 30) {
-    throw new Error("Token com iat invalido.");
-  }
-  if (!jti) {
-    throw new Error("Token sem jti.");
-  }
-  if (expectedIssuer && iss !== expectedIssuer) {
-    throw new Error("Issuer invalido.");
-  }
-  if (expectedAudience && aud !== expectedAudience) {
-    throw new Error("Audience invalida.");
-  }
-
-  try {
-    await markSsoTokenAsConsumed(db, jti, exp);
-  } catch (error) {
-    const detail = String(error?.message || "");
-    if (detail.includes("UNIQUE")) {
-      throw new Error("Token SSO ja utilizado.");
-    }
-    throw error;
-  }
-
-  const id = String(payload?.id || payload?.sub || "").trim();
-  const name = String(payload?.name || "").trim();
-  const username = String(payload?.username || "").trim();
-  const role = String(payload?.role || "operador").trim();
-  const accessLevel = String(payload?.accessLevel || payload?.access_level || "").trim();
-
-  if (!id || !name || !username) {
-    throw new Error("Token sem dados obrigatorios do usuario.");
-  }
-
-  return {
-    user: { id, name, username, role, accessLevel },
-    payload
-  };
+  return serveStatic(request, env);
 }
 
 export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-
-    if (request.method === "OPTIONS") {
-      return jsonResponse({ ok: true }, 204);
-    }
-
-    if (!url.pathname.startsWith("/api/")) {
-      return env.ASSETS.fetch(request);
-    }
-
-    if (url.pathname === "/api/health") {
-      const ssoConfig = getSsoConfig(env, request.url);
-      return jsonResponse({
-        ok: true,
-        service: "portal-resultados-operador",
-        hasDB: Boolean(env.DB),
-        hasR2: Boolean(env.RESULTS_BUCKET || env.IMPORTS_BUCKET),
-        hasImportsBucket: Boolean(env.IMPORTS_BUCKET),
-        hasResultsBucket: Boolean(env.RESULTS_BUCKET),
-        hasImportR2: Boolean(env.IMPORTS_BUCKET),
-        authBaseConfigured: Boolean(getAuthBase(env)),
-        ssoSecretConfigured: Boolean(ssoConfig.sharedSecret),
-        ssoAudience: ssoConfig.expectedAudience || null,
-        ssoIssuer: ssoConfig.expectedIssuer || null
-      });
-    }
-
-    if (!env.DB) {
-      return jsonResponse({ ok: false, error: "D1 binding DB nao configurado." }, 500);
-    }
-
-    try {
-      if (url.pathname === "/api/login" && request.method === "POST") {
-        const body = await request.json();
-        const username = String(body?.username || "").trim();
-        const password = String(body?.password || "");
-        if (!username || !password) {
-          return jsonResponse({ ok: false, error: "Usuario e senha obrigatorios." }, 400);
-        }
-
-        const payload = await fetchCentral(env, "/api/login", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ username, password })
-        });
-
-        return jsonResponse({ ok: true, user: sanitizeUser(payload.user) });
-      }
-
-      if (url.pathname === "/api/sso/consume" && request.method === "POST") {
-        const body = await request.json();
-        const token = String(body?.token || "").trim();
-        if (!token) {
-          return jsonResponse({ ok: false, error: "Token SSO obrigatorio." }, 400);
-        }
-
-        const result = await verifySsoTokenAndBuildUser(env, request.url, token, env.DB);
-        return jsonResponse({
-          ok: true,
-          user: sanitizeUser(result.user),
-          exp: Number(result.payload.exp || 0)
-        });
-      }
-
-      if (url.pathname === "/api/operators" && request.method === "GET") {
-        const operators = await resolveOperators(env);
-        return jsonResponse({ ok: true, operators });
-      }
-
-      if (url.pathname === "/api/system-status" && request.method === "GET") {
-        const status = await readSystemMaintenanceStatus(env.DB);
-        return jsonResponse({ ok: true, status });
-      }
-
-      if (url.pathname === "/api/system-maintenance" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        const actorRole = String(body?.actorRole || "").trim().toLowerCase();
-        if (actorRole !== "gestor") {
-          return jsonResponse({ ok: false, error: "Somente gestor pode alterar o modo manutencao." }, 403);
-        }
-        const status = await updateSystemMaintenanceStatus(env.DB, body || {});
-        return jsonResponse({ ok: true, status });
-      }
-
-      if (url.pathname === "/api/results" && request.method === "GET") {
-        const userId = String(url.searchParams.get("userId") || "").trim();
-        if (!userId) {
-          return jsonResponse({ ok: false, error: "userId obrigatorio." }, 400);
-        }
-
-        const record = await readRecord(env.DB, userId);
-        return jsonResponse({ ok: true, record });
-      }
-
-      if (url.pathname === "/api/results/all" && request.method === "GET") {
-        const records = await readAllRecords(env.DB);
-        return jsonResponse({ ok: true, records });
-      }
-
-      if (url.pathname === "/api/r2-base-upload/multipart/init" && request.method === "POST") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-
-        const body = await request.json().catch(() => ({}));
-        const operationType = sanitizeOperationType(body?.operationType || "nuvidio");
-        const r2Kind = sanitizeR2Kind(body?.kind || "source");
-        const fileName = String(body?.fileName || "").trim() || (r2Kind === "parsed" ? "base.parsed.csv" : "base.xlsx");
-        const contentType = String(body?.contentType || (r2Kind === "parsed" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")).trim();
-        const key = buildR2BaseKey(operationType, r2Kind, fileName);
-
-        const upload = await bucket.createMultipartUpload(key, {
-          httpMetadata: { contentType },
-          customMetadata: {
-            source: "portal",
-            operationType,
-            kind: r2Kind
-          }
-        });
-
-        return jsonResponse({
-          ok: true,
-          key,
-          uploadId: upload.uploadId,
-          operationType,
-          kind: r2Kind
-        });
-      }
-
-      if (url.pathname === "/api/r2-base-upload/multipart/part" && request.method === "POST") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-        const key = String(url.searchParams.get("key") || "").trim();
-        const uploadId = String(url.searchParams.get("uploadId") || "").trim();
-        const partNumber = Number(url.searchParams.get("partNumber"));
-        if (!key || !uploadId || !Number.isInteger(partNumber) || partNumber < 1) {
-          return jsonResponse({ ok: false, error: "Informe key, uploadId e partNumber validos." }, 400);
-        }
-        if (!request.body) {
-          return jsonResponse({ ok: false, error: "Parte vazia." }, 400);
-        }
-
-        const upload = bucket.resumeMultipartUpload(key, uploadId);
-        const part = await upload.uploadPart(partNumber, request.body);
-        return jsonResponse({
-          ok: true,
-          key,
-          uploadId,
-          partNumber,
-          etag: String(part?.etag || "")
-        });
-      }
-
-      if (url.pathname === "/api/r2-base-upload/multipart/complete" && request.method === "POST") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-        const body = await request.json().catch(() => ({}));
-        const key = String(body?.key || "").trim();
-        const uploadId = String(body?.uploadId || "").trim();
-        const partsRaw = Array.isArray(body?.parts) ? body.parts : [];
-        const parts = partsRaw
-          .map((item) => ({
-            partNumber: Number(item?.partNumber),
-            etag: String(item?.etag || "")
-          }))
-          .filter((item) => Number.isInteger(item.partNumber) && item.partNumber > 0 && item.etag);
-        if (!key || !uploadId || !parts.length) {
-          return jsonResponse({ ok: false, error: "Informe key, uploadId e parts para concluir upload multipart." }, 400);
-        }
-
-        const upload = bucket.resumeMultipartUpload(key, uploadId);
-        await upload.complete(parts);
-        return jsonResponse({ ok: true, key, uploadId, parts: parts.length });
-      }
-
-      if (url.pathname === "/api/r2-base-upload" && request.method === "POST") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-
-        const operationType = sanitizeOperationType(
-          request.headers.get("x-operation-type") || url.searchParams.get("operationType") || "nuvidio"
-        );
-        const r2Kind = sanitizeR2Kind(
-          request.headers.get("x-r2-kind") || url.searchParams.get("kind") || "source"
-        );
-        const fileNameRaw = request.headers.get("x-file-name") || url.searchParams.get("fileName") || "base.csv";
-        const fileName = safeFileName(fileNameRaw || "base.csv");
-        const contentType = String(request.headers.get("content-type") || "text/csv").trim() || "text/csv";
-        const key = buildR2BaseKey(operationType, r2Kind, fileName);
-
-        if (!request.body) {
-          return jsonResponse({ ok: false, error: "Arquivo nao enviado no corpo da requisicao." }, 400);
-        }
-
-        await bucket.put(key, request.body, {
-          httpMetadata: { contentType },
-          customMetadata: {
-            source: "portal",
-            operationType,
-            kind: r2Kind
-          }
-        });
-
-        return jsonResponse({
-          ok: true,
-          key,
-          operationType,
-          kind: r2Kind
-        });
-      }
-
-      if (url.pathname === "/api/r2-insights" && request.method === "GET") {
-        const snapshot = await readR2InsightsSnapshot(env.DB);
-        if (snapshot?.views) {
-          const nuvProd = Number(snapshot?.views?.nuvidio?.producaoPorOperador?.length || 0);
-          const lineProd = Number(snapshot?.views?.line0800?.producaoPorOperador?.length || 0);
-          if (nuvProd > 0 || lineProd > 0) {
-            return jsonResponse({
-              ok: true,
-              views: snapshot.views,
-              sources: { mode: "snapshot" },
-              updatedAt: snapshot.updatedAt
-            });
-          }
-        }
-
-        const payload = await buildR2Insights(env);
-        if (payload?.views) {
-          await writeR2InsightsSnapshot(env.DB, payload.views);
-        }
-        return jsonResponse({ ok: true, views: payload.views, sources: payload.sources });
-      }
-
-      if (url.pathname === "/api/r2-insights/rebuild" && request.method === "POST") {
-        const payload = await buildR2Insights(env);
-        if (payload?.views) {
-          await writeR2InsightsSnapshot(env.DB, payload.views);
-        }
-        return jsonResponse({ ok: true, views: payload.views, sources: payload.sources });
-      }
-
-      if (url.pathname === "/api/r2-insights/snapshot" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        const views = body?.views;
-        if (!views || typeof views !== "object") {
-          return jsonResponse({ ok: false, error: "Envie views validas para atualizar o snapshot." }, 400);
-        }
-        const result = await writeR2InsightsSnapshot(env.DB, views);
-        return jsonResponse({ ok: true, updatedAt: result.updatedAt });
-      }
-
-      if (url.pathname === "/api/r2-source/latest" && request.method === "GET") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-        const files = await resolveR2LatestXlsxSources(bucket);
-        return jsonResponse({
-          ok: true,
-          sources: {
-            nuvidio: files.nuvidio
-              ? {
-                key: files.nuvidio.key || "",
-                size: Number(files.nuvidio.size || 0),
-                uploaded: String(files.nuvidio.uploaded || "")
-              }
-              : null,
-            line0800: files.line0800
-              ? {
-                key: files.line0800.key || "",
-                size: Number(files.line0800.size || 0),
-                uploaded: String(files.line0800.uploaded || "")
-              }
-              : null
-          }
-        });
-      }
-
-      if (url.pathname === "/api/r2-base/latest" && request.method === "GET") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-        const files = await resolveR2LatestBaseFiles(bucket);
-        return jsonResponse({
-          ok: true,
-          bases: {
-            nuvidio: files.nuvidio
-              ? {
-                key: files.nuvidio.key || "",
-                size: Number(files.nuvidio.size || 0),
-                uploaded: String(files.nuvidio.uploaded || "")
-              }
-              : null,
-            line0800: files.line0800
-              ? {
-                key: files.line0800.key || "",
-                size: Number(files.line0800.size || 0),
-                uploaded: String(files.line0800.uploaded || "")
-              }
-              : null
-          }
-        });
-      }
-
-      if (url.pathname === "/api/r2-base-folders/ensure" && request.method === "POST") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-        const result = await ensureR2BaseFolders(bucket);
-        return jsonResponse(result);
-      }
-
-      if (url.pathname === "/api/r2-source/download" && request.method === "GET") {
-        const bucket = env.IMPORTS_BUCKET || env.RESULTS_BUCKET;
-        if (!bucket) {
-          return jsonResponse({ ok: false, error: "Binding R2 nao configurado." }, 500);
-        }
-        const key = String(url.searchParams.get("key") || "").trim();
-        if (!key) {
-          return jsonResponse({ ok: false, error: "Informe a chave do arquivo no R2." }, 400);
-        }
-        const object = await bucket.get(key);
-        if (!object) {
-          return jsonResponse({ ok: false, error: "Arquivo nao encontrado no R2 para a chave informada." }, 404);
-        }
-        const contentType = String(
-          object.httpMetadata?.contentType ||
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ).trim();
-        return binaryResponse(object.body, contentType, 200);
-      }
-
-      if (url.pathname === "/api/r2-sync-results" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        const operationType = sanitizeSyncOperationType(body?.operationType || "all");
-        const fullSync = body?.fullSync === undefined ? true : Boolean(body?.fullSync);
-        const date = parseDateToIso(body?.date);
-
-        const result = await syncOperatorResultsFromR2All(env, operationType, {
-          fullSync,
-          date
-        });
-
-        if (!result?.ok) {
-          const firstError = result?.items?.find((item) => !item?.ok)?.error || "Nenhum registro sincronizado.";
-          return jsonResponse({
-            ok: false,
-            error: firstError,
-            result
-          }, 400);
-        }
-        return jsonResponse({ ok: true, result });
-      }
-
-      if (url.pathname === "/api/operator-results" && request.method === "POST") {
-        const body = await request.json();
-        const result = await upsertOperatorResult(env.DB, body || {});
-        if (!result.ok) {
-          return jsonResponse({ ok: false, error: result.error || "Payload invalido para resultado do operador." }, 400);
-        }
-        const record = await readRecord(env.DB, result.userId);
-        return jsonResponse({ ok: true, record });
-      }
-
-      if (url.pathname === "/api/operator-results/delete" && request.method === "POST") {
-        const body = await request.json();
-        const result = await deleteOperatorResult(env.DB, body || {});
-        if (!result.ok) {
-          return jsonResponse({ ok: false, error: result.error || "Nao foi possivel excluir o lancamento." }, 400);
-        }
-        const record = await readRecord(env.DB, result.userId);
-        return jsonResponse({ ok: true, deleted: result.deleted, record });
-      }
-
-      if (url.pathname === "/api/operator-results/delete-all" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        if (!body?.confirm) {
-          return jsonResponse({ ok: false, error: "Confirme a exclusao em lote para continuar." }, 400);
-        }
-        const result = await deleteAllOperatorResults(env.DB);
-        return jsonResponse({ ok: true, deleted: result.deleted });
-      }
-
-      if (url.pathname === "/api/operator-results/bulk" && request.method === "POST") {
-        const body = await request.json();
-        const items = Array.isArray(body?.items) ? body.items : [];
-        if (!items.length) {
-          return jsonResponse({ ok: false, error: "Envie ao menos um item para importacao em lote." }, 400);
-        }
-
-        let imported = 0;
-        const errors = [];
-        for (let index = 0; index < items.length; index += 1) {
-          const result = await upsertOperatorResult(env.DB, items[index]);
-          if (result.ok) {
-            imported += 1;
-          } else {
-            errors.push({ index, error: result.error || "Linha invalida" });
-          }
-        }
-
-        return jsonResponse({
-          ok: true,
-          imported,
-          failed: errors.length,
-          errors
-        });
-      }
-
-      if (url.pathname === "/api/import/remove-by-sheet" && request.method === "POST") {
-        const body = await request.json();
-        const items = Array.isArray(body?.items) ? body.items : [];
-        if (!items.length) {
-          return jsonResponse({ ok: false, error: "Envie ao menos um item para remocao em lote." }, 400);
-        }
-
-        let removed = 0;
-        const errors = [];
-        for (let index = 0; index < items.length; index += 1) {
-          const result = await deleteOperatorResult(env.DB, items[index]);
-          if (result.ok) {
-            removed += Number(result.deleted || 1);
-          } else {
-            errors.push({ index, error: result.error || "Linha invalida ou nao encontrada" });
-          }
-        }
-
-        return jsonResponse({
-          ok: true,
-          removed,
-          failed: errors.length,
-          errors
-        });
-      }
-
-      if (url.pathname === "/api/import/upload-and-process" && request.method === "POST") {
-        if (!env.IMPORTS_BUCKET) {
-          return jsonResponse({ ok: false, error: "Binding R2 IMPORTS_BUCKET nao configurado." }, 500);
-        }
-
-        const body = await request.json();
-        const items = Array.isArray(body?.items) ? body.items : [];
-        const fileBase64 = String(body?.fileBase64 || "");
-        const fileName = safeFileName(body?.fileName || "import.xlsx");
-        const mimeType = String(body?.mimeType || "application/octet-stream");
-        if (!items.length) {
-          return jsonResponse({ ok: false, error: "Nenhum item valido enviado para importacao." }, 400);
-        }
-        if (!fileBase64) {
-          return jsonResponse({ ok: false, error: "Arquivo da planilha nao enviado." }, 400);
-        }
-
-        const importKey = `imports/${Date.now()}-${crypto.randomUUID()}-${fileName}`;
-        let imported = 0;
-        const errors = [];
-        let uploadStored = false;
-        let removedFromR2 = false;
-
-        try {
-          const bytes = decodeBase64ToBytes(fileBase64);
-          await env.IMPORTS_BUCKET.put(importKey, bytes, {
-            httpMetadata: { contentType: mimeType }
-          });
-          uploadStored = true;
-
-          for (let index = 0; index < items.length; index += 1) {
-            const result = await upsertOperatorResult(env.DB, items[index]);
-            if (result.ok) {
-              imported += 1;
-            } else {
-              errors.push({ index, error: result.error || "Linha invalida" });
-            }
-          }
-        } finally {
-          if (uploadStored) {
-            await env.IMPORTS_BUCKET.delete(importKey);
-            removedFromR2 = true;
-          }
-        }
-
-        return jsonResponse({
-          ok: true,
-          imported,
-          failed: errors.length,
-          errors,
-          importKey,
-          removedFromR2
-        });
-      }
-
-      return jsonResponse({ ok: false, error: "Rota nao encontrada." }, 404);
-    } catch (error) {
-      return jsonResponse(
-        { ok: false, error: "Falha interna na API.", detail: String(error?.message || error) },
-        500
-      );
-    }
-  }
+  fetch: (request, env) => handleRequest(request, env),
 };
 
+if (isNode) {
+  const modules = await nodeModules();
+  const __filename = modules.fileURLToPath(import.meta.url);
+  if (process.argv[1] === __filename) {
+    const server = modules.http.createServer(async (req, res) => {
+      const bodyChunks = [];
+      req.on("data", (chunk) => bodyChunks.push(chunk));
+      req.on("end", async () => {
+        const body = Buffer.concat(bodyChunks);
+        const origin = `http://${req.headers.host}`;
+        const request = new Request(new URL(req.url, origin), {
+          method: req.method,
+          headers: req.headers,
+          body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
+        });
+        try {
+          const response = await handleRequest(request, {});
+          res.statusCode = response.status;
+          response.headers.forEach((value, key) => {
+            res.setHeader(key, value);
+          });
+          const arrayBuffer = await response.arrayBuffer();
+          res.end(Buffer.from(arrayBuffer));
+        } catch (error) {
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          res.end(JSON.stringify({ error: "Erro interno do servidor", details: error.message }));
+        }
+      });
+    });
+    const port = Number(process.env.PORT || 8787);
+    server.listen(port, () => {
+      console.log(`Pulse Ops disponível em http://localhost:${port}`);
+    });
+  }
+}
