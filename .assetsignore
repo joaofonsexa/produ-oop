@@ -6,3 +6,4 @@ sample-import.csv
 _worker.js
 worker.js
 wrangler.jsonc
+asset-bundle.js

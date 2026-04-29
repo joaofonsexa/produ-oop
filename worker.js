@@ -1,3 +1,5 @@
+import { SCRIPT_JS, STYLES_CSS } from "./asset-bundle.js";
+
 const SESSION_NAME = "pulse_session";
 const DB_PATH = "./data/db.json";
 const D1_STATE_ID = 1;
@@ -981,6 +983,18 @@ async function serveStatic(request, env = {}) {
       return new Response(INDEX_HTML, {
         status: 200,
         headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    if (pathname === "/script.js") {
+      return new Response(SCRIPT_JS, {
+        status: 200,
+        headers: { "content-type": "application/javascript; charset=utf-8" },
+      });
+    }
+    if (pathname === "/styles.css") {
+      return new Response(STYLES_CSS, {
+        status: 200,
+        headers: { "content-type": "text/css; charset=utf-8" },
       });
     }
     return env.ASSETS.fetch(request);
