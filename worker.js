@@ -1058,7 +1058,7 @@ export default {
         return jsonResponse(
           {
             error: "Erro interno do worker",
-            details: error?.message || String(error),
+            details: error?.stack || error?.message || String(error),
           },
           500,
         );
