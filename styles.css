@@ -394,6 +394,18 @@ body.theme-contrast .nav button.active {
   min-width: 320px;
 }
 
+.select-wrap select:disabled {
+  opacity: 1;
+  cursor: default;
+  pointer-events: none;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body.theme-contrast .select-wrap select:disabled {
+  background: rgba(248, 250, 252, 0.96);
+}
+
 .topbar-user-trigger,
 .topbar-actions .btn,
 .topbar-actions .toggle,

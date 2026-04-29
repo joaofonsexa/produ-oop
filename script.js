@@ -82,6 +82,13 @@ function isManager() {
   return state.user?.role === "manager";
 }
 
+function enforceOperatorScope() {
+  if (!state.user || isManager()) return;
+  state.filters.historyUserId = String(state.user.id);
+  state.filters.analysisUserId = String(state.user.id);
+  state.filters.historyQuery = state.user.full_name;
+}
+
 function getUserLabelById(userId) {
   return state.users.find((user) => String(user.id) === String(userId))?.full_name || "";
 }
@@ -325,6 +332,7 @@ async function boot() {
     if (state.user) {
       state.filters.historyUserId = String(state.user.id);
       if (!isManager()) state.filters.analysisUserId = String(state.user.id);
+      enforceOperatorScope();
       await loadAll();
       state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
       state.forcePasswordChange = Boolean(state.user.must_change_password);
@@ -381,6 +389,7 @@ function render() {
     bindLogin();
     return;
   }
+  enforceOperatorScope();
   app.innerHTML = shellTemplate();
   bindShellEvents();
 }
@@ -432,7 +441,7 @@ function shellTemplate() {
           </div>
           <div class="topbar-actions">
             <div class="select-wrap">
-              <select id="global-user-select">
+              <select id="global-user-select" ${isManager() ? "" : 'disabled aria-disabled="true"'}>
                 ${isManager() ? `
                   <option value="all" ${state.filters.analysisUserId === "all" ? "selected" : ""}>Todos os operadores</option>
                   ${state.users.map((user) => `<option value="${user.id}" ${String(user.id) === String(state.filters.analysisUserId) ? "selected" : ""}>${esc(user.full_name)}</option>`).join("")}
@@ -468,7 +477,7 @@ function shellTemplate() {
             ${state.forcePasswordChange ? "" : `<button class="icon-close" type="button" id="close-password-modal" aria-label="Fechar">×</button>`}
           </div>
           <form id="password-form" class="section compact-form">
-            ${state.forcePasswordChange ? `<div class="info-box">Para continuar, defina uma nova senha para substituir a senha padrão <strong>Trocar@01</strong>.</div>` : `<label>Senha atual<input name="current_password" type="password" required></label>`}
+            ${state.forcePasswordChange ? `<div class="info-box">Para continuar, defina uma nova senha.</div>` : `<label>Senha atual<input name="current_password" type="password" required></label>`}
             <label>Nova senha<input name="new_password" type="password" minlength="4" required></label>
             <label>Confirmar nova senha<input name="confirm_password" type="password" minlength="4" required></label>
             <div class="action-grid">
@@ -782,23 +791,13 @@ function adminTemplate() {
               <h3>Base principal</h3>
             </div>
           </div>
-          <div class="panel-head"><div><span class="eyebrow">Planilha por data</span><h3>Importação em massa</h3></div></div>
-          <form id="import-form" class="section">
-            <div class="form-grid">
-              <label>Operação
-                <select name="operation_hint">
-                  <option value="nuvidio">Nuvidio</option>
-                  <option value="0800">0800</option>
-                </select>
-              </label>
-              <label>Aba (opcional)<input name="sheet_name"></label>
-            </div>
-            <label>Arquivo<input type="file" name="file" accept=".csv" required></label>
+          <div class="panel-head"><div><span class="eyebrow">Base espelhada</span><h3>Atualiza&ccedil;&atilde;o pelo R2</h3></div></div>
+          <div class="section">
+            <div class="info-box">As planilhas operacionais ficam no bucket R2. Depois de enviar os arquivos para l&aacute;, basta atualizar os dados por aqui para sincronizar a base do portal.</div>
             <div class="action-grid">
-              <button class="btn" type="submit">Importar planilha</button>
-              <button class="btn-secondary" type="button" data-action="refresh-r2">Atualizar dados (R2)</button>
+              <button class="btn" type="button" data-action="refresh-r2">Atualizar dados (R2)</button>
             </div>
-          </form>
+          </div>
         </article>
         <article class="panel">
           <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Referência mensal</h3></div></div>
@@ -885,6 +884,7 @@ function bindLogin() {
       state.forcePasswordChange = Boolean(state.user.must_change_password);
       state.filters.historyUserId = String(state.user.id);
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
+      enforceOperatorScope();
       await loadAll();
       state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
       render();
@@ -1078,7 +1078,16 @@ function bindShellEvents() {
       localStorage.setItem("pulse-theme", state.theme);
       render();
     },
-    "refresh-r2": async () => setFlash("success", "Atualização do R2 acionada."),
+    "refresh-r2": async () => {
+      const data = await api("/api/admin/import/r2", { method: "POST" });
+      await Promise.all([loadOverview(), loadAnalysis(), loadHistory(), loadUsers()]);
+      const details = [];
+      if (data.processedFiles) details.push(`${data.processedFiles} arquivo(s)`);
+      if (data.processedRows || data.processedRows === 0) details.push(`${data.processedRows} registro(s)`);
+      if (data.rejectedRows) details.push(`${data.rejectedRows} rejeição(ões)`);
+      const warning = Array.isArray(data.skipped) && data.skipped.length ? ` Avisos: ${data.skipped.slice(0, 2).join(" | ")}` : "";
+      setFlash("success", `R2 atualizado: ${details.join(", ") || "sincroniza\u00E7\u00E3o conclu\u00EDda"}.${warning}`.trim());
+    },
   };
 
   document.querySelectorAll("[data-action]").forEach((button) => {
@@ -1092,24 +1101,6 @@ function bindShellEvents() {
       }
     });
   });
-
-  const importForm = document.getElementById("import-form");
-  if (importForm) {
-    importForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      try {
-        const response = await fetch("/api/admin/import", { method: "POST", body: form, credentials: "same-origin" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Erro ao importar");
-        await Promise.all([loadOverview(), loadAnalysis(), loadHistory(), loadUsers()]);
-        setFlash("success", `Importação concluída com ${data.processed} linhas.`);
-        render();
-      } catch (error) {
-        setFlash("error", error.message);
-      }
-    });
-  }
 
   const qualityUploadForm = document.getElementById("quality-upload-form");
   if (qualityUploadForm) {

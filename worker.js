@@ -186,7 +186,19 @@ function normalizeDbState(db) {
       updated_at: nowIso(),
     });
   }
-  db.dailyMetrics = db.dailyMetrics || [];
+  db.dailyMetrics = (db.dailyMetrics || []).map((metric) => {
+    const normalizedMetric = {
+      production_0800: 0,
+      production_nuvidio: 0,
+      ...metric,
+    };
+    if (normalizedMetric.production_0800 || normalizedMetric.production_nuvidio) {
+      normalizedMetric.production = toInt(normalizedMetric.production_0800) + toInt(normalizedMetric.production_nuvidio);
+    } else {
+      normalizedMetric.production = toInt(normalizedMetric.production);
+    }
+    return normalizedMetric;
+  });
   db.qualityScores = db.qualityScores || [];
   db.importLogs = db.importLogs || [];
   const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
@@ -476,6 +488,39 @@ function parseCsv(text) {
   });
 }
 
+function hasFields(row, fields) {
+  return fields.every((field) => field in row);
+}
+
+function detectImportSchema(row, fileName = "") {
+  const lowerName = String(fileName || "").toLowerCase();
+  const normalizedFields = [
+    "data",
+    "producao",
+    "0800_aprovado",
+    "0800_cancelada",
+    "0800_pendenciada",
+    "0800_sem_acao",
+    "nuvidio_aprovada",
+    "nuvidio_reprovada",
+    "nuvidio_sem_acao",
+  ];
+  if (hasFields(row, normalizedFields)) return "normalized";
+  if (hasFields(row, ["motivo", "numero_do_protocolo", "data_abertura_ocorrencia", "usuario_de_abertura_da_ocorrencia"])) return "0800";
+  if (hasFields(row, ["protocolo", "data_abreviada", "email_do_atendente", "tag"])) return "nuvidio";
+  if (lowerName.includes("0800")) return "0800";
+  if (lowerName.includes("nuvidio")) return "nuvidio";
+  return "unknown";
+}
+
+function normalize0800Reason(value) {
+  return normalizeComparable(value).toUpperCase();
+}
+
+function normalizeNuvidioTag(value) {
+  return normalizeComparable(value);
+}
+
 async function runPythonScript(args) {
   const modules = await nodeModules();
   const pythonPath = "C:\\Users\\joao.fonseca.KRCONSULTORIA\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe";
@@ -533,6 +578,8 @@ function upsertDailyMetric(db, userId, metricDate, values, sourceName) {
       user_id: userId,
       metric_date: metricDate,
       production: 0,
+      production_0800: 0,
+      production_nuvidio: 0,
       calls_0800_approved: 0,
       calls_0800_rejected: 0,
       calls_0800_pending: 0,
@@ -550,7 +597,176 @@ function upsertDailyMetric(db, userId, metricDate, values, sourceName) {
     import_source: sourceName ?? metric.import_source,
     updated_at: nowIso(),
   });
+  if ("production_0800" in values || "production_nuvidio" in values) {
+    metric.production = toInt(metric.production_0800) + toInt(metric.production_nuvidio);
+  } else if ("production" in values) {
+    metric.production = toInt(values.production);
+  }
   return metric;
+}
+
+function importNormalizedRows(db, users, rows, sourceName) {
+  const required = [
+    "data",
+    "producao",
+    "0800_aprovado",
+    "0800_cancelada",
+    "0800_pendenciada",
+    "0800_sem_acao",
+    "nuvidio_aprovada",
+    "nuvidio_reprovada",
+    "nuvidio_sem_acao",
+  ];
+  const first = rows[0] || {};
+  const missing = required.filter((field) => !(field in first));
+  if (missing.length) {
+    throw new Error(`Colunas obrigatorias ausentes: ${missing.join(", ")}`);
+  }
+  let processed = 0;
+  let rejected = 0;
+  const errors = [];
+  rows.forEach((row, index) => {
+    try {
+      const user = matchUser(users, row);
+      if (!user) throw new Error("Operador nao encontrado para os identificadores informados.");
+      upsertDailyMetric(
+        db,
+        user.id,
+        parseDate(row.data),
+        {
+          production: toInt(row.producao),
+          calls_0800_approved: toInt(row["0800_aprovado"]),
+          calls_0800_rejected: toInt(row["0800_cancelada"]),
+          calls_0800_pending: toInt(row["0800_pendenciada"]),
+          calls_0800_no_action: toInt(row["0800_sem_acao"]),
+          calls_nuvidio_approved: toInt(row["nuvidio_aprovada"]),
+          calls_nuvidio_rejected: toInt(row["nuvidio_reprovada"]),
+          calls_nuvidio_no_action: toInt(row["nuvidio_sem_acao"]),
+        },
+        sourceName,
+      );
+      processed += 1;
+    } catch (error) {
+      rejected += 1;
+      errors.push({ row: index + 2, error: error.message });
+    }
+  });
+  return { processed, rejected, errors };
+}
+
+function import0800Rows(db, users, rows, sourceName) {
+  const aggregates = new Map();
+  const errors = [];
+  rows.forEach((row, index) => {
+    try {
+      const user = matchUser(users, {
+        nome: row.usuario_de_abertura_da_ocorrencia,
+        usuario: row.usuario_de_abertura_da_ocorrencia,
+        plataforma_0800: row.usuario_de_abertura_da_ocorrencia,
+      });
+      if (!user) throw new Error("Operador do 0800 nao encontrado no cadastro.");
+      const metricDate = parseDate(row.data_abertura_ocorrencia);
+      const key = `${user.id}::${metricDate}`;
+      const current = aggregates.get(key) || {
+        userId: user.id,
+        metricDate,
+        production_0800: 0,
+        calls_0800_approved: 0,
+        calls_0800_rejected: 0,
+        calls_0800_pending: 0,
+        calls_0800_no_action: 0,
+      };
+      current.production_0800 += 1;
+      const reason = normalize0800Reason(row.motivo);
+      if (reason === "APROVADA" || reason === "APROVADO") current.calls_0800_approved += 1;
+      else if (reason === "CANCELADA" || reason === "REPROVADA") current.calls_0800_rejected += 1;
+      else if (reason === "PENDENCIADA" || reason === "PENDENCIADO") current.calls_0800_pending += 1;
+      else current.calls_0800_no_action += 1;
+      aggregates.set(key, current);
+    } catch (error) {
+      errors.push({ row: index + 2, error: error.message });
+    }
+  });
+
+  for (const aggregate of aggregates.values()) {
+    upsertDailyMetric(
+      db,
+      aggregate.userId,
+      aggregate.metricDate,
+      {
+        production_0800: aggregate.production_0800,
+        calls_0800_approved: aggregate.calls_0800_approved,
+        calls_0800_rejected: aggregate.calls_0800_rejected,
+        calls_0800_pending: aggregate.calls_0800_pending,
+        calls_0800_no_action: aggregate.calls_0800_no_action,
+      },
+      sourceName,
+    );
+  }
+
+  return { processed: aggregates.size, rejected: errors.length, errors };
+}
+
+function importNuvidioRows(db, users, rows, sourceName) {
+  const aggregates = new Map();
+  const errors = [];
+  rows.forEach((row, index) => {
+    try {
+      const user = matchUser(users, {
+        login: row.email_do_atendente,
+        usuario: row.email_do_atendente,
+        plataforma_nuvidio: row.email_do_atendente,
+        id_nuvidio: row.email_do_atendente,
+      });
+      if (!user) throw new Error("Operador da Nuvidio nao encontrado no cadastro.");
+      const metricDate = parseDate(row.data_abreviada);
+      const key = `${user.id}::${metricDate}`;
+      const current = aggregates.get(key) || {
+        userId: user.id,
+        metricDate,
+        production_nuvidio: 0,
+        calls_nuvidio_approved: 0,
+        calls_nuvidio_rejected: 0,
+        calls_nuvidio_no_action: 0,
+      };
+      current.production_nuvidio += 1;
+      const tag = normalizeNuvidioTag(row.tag);
+      if (tag === "aprovada" || tag === "aprovado") current.calls_nuvidio_approved += 1;
+      else if (tag === "reprovada" || tag === "reprovado") current.calls_nuvidio_rejected += 1;
+      else current.calls_nuvidio_no_action += 1;
+      aggregates.set(key, current);
+    } catch (error) {
+      errors.push({ row: index + 2, error: error.message });
+    }
+  });
+
+  for (const aggregate of aggregates.values()) {
+    upsertDailyMetric(
+      db,
+      aggregate.userId,
+      aggregate.metricDate,
+      {
+        production_nuvidio: aggregate.production_nuvidio,
+        calls_nuvidio_approved: aggregate.calls_nuvidio_approved,
+        calls_nuvidio_rejected: aggregate.calls_nuvidio_rejected,
+        calls_nuvidio_no_action: aggregate.calls_nuvidio_no_action,
+      },
+      sourceName,
+    );
+  }
+
+  return { processed: aggregates.size, rejected: errors.length, errors };
+}
+
+function registerImportLog(db, userId, sourceName, processed, rejected) {
+  db.importLogs.push({
+    id: nextId(db, "importLogs"),
+    imported_by: userId,
+    source_name: sourceName,
+    imported_at: nowIso(),
+    rows_processed: processed,
+    rows_rejected: rejected,
+  });
 }
 
 function buildOverview(db, user, url) {
@@ -958,6 +1174,82 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ metric: { ...metric, effectiveness: calculateEffectiveness(metric) } });
   }
 
+  if (url.pathname === "/api/admin/import/r2" && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    if (!env.IMPORTS_BUCKET || typeof env.IMPORTS_BUCKET.list !== "function") {
+      return jsonResponse({ error: "Bucket R2 nao configurado para este ambiente." }, 400);
+    }
+
+    const listing = await env.IMPORTS_BUCKET.list({ limit: 200 });
+    const objects = (listing.objects || [])
+      .filter((item) => /\.(csv|xlsx)$/i.test(item.key))
+      .sort((a, b) => new Date(b.uploaded || 0).getTime() - new Date(a.uploaded || 0).getTime());
+
+    if (!objects.length) {
+      return jsonResponse({ error: "Nenhum arquivo CSV ou XLSX encontrado no R2." }, 404);
+    }
+
+    const normalizedCandidate = objects.find((item) => /\.csv$/i.test(item.key) && /base|produc|resultado|consolid/i.test(item.key));
+    const latest0800 = objects.find((item) => /0800/i.test(item.key));
+    const latestNuvidio = objects.find((item) => /nuvidio/i.test(item.key));
+    const toProcess = normalizedCandidate ? [normalizedCandidate] : [latest0800, latestNuvidio].filter(Boolean);
+    const summary = {
+      processedFiles: 0,
+      processedRows: 0,
+      rejectedRows: 0,
+      files: [],
+      skipped: [],
+    };
+
+    for (const item of toProcess) {
+      const object = await env.IMPORTS_BUCKET.get(item.key);
+      if (!object) {
+        summary.skipped.push(`${item.key}: arquivo nao encontrado no bucket.`);
+        continue;
+      }
+
+      if (/\.xlsx$/i.test(item.key)) {
+        summary.skipped.push(`${item.key}: leitura automatica de XLSX no R2 ainda nao esta habilitada. Use CSV para a base operacional.`);
+        continue;
+      }
+
+      const text = await object.text();
+      const rows = parseCsv(text);
+      if (!rows.length) {
+        summary.skipped.push(`${item.key}: arquivo vazio.`);
+        continue;
+      }
+
+      const schema = detectImportSchema(rows[0], item.key);
+      let result;
+      if (schema === "normalized") result = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
+      else if (schema === "0800") result = import0800Rows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
+      else if (schema === "nuvidio") result = importNuvidioRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
+      else {
+        summary.skipped.push(`${item.key}: formato nao reconhecido para importacao automatica.`);
+        continue;
+      }
+
+      registerImportLog(db, auth.user.id, item.key, result.processed, result.rejected);
+      summary.processedFiles += 1;
+      summary.processedRows += result.processed;
+      summary.rejectedRows += result.rejected;
+      summary.files.push({
+        key: item.key,
+        schema,
+        processed: result.processed,
+        rejected: result.rejected,
+      });
+      result.errors.slice(0, 10).forEach((entry) => {
+        summary.skipped.push(`${item.key} linha ${entry.row}: ${entry.error}`);
+      });
+    }
+
+    await persistStorage(db, env);
+    return jsonResponse(summary);
+  }
+
   if (url.pathname === "/api/admin/import" && request.method === "POST") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
@@ -988,43 +1280,8 @@ async function handleApi(request, url, db, env = {}) {
     if (missing.length) {
       return jsonResponse({ error: `Colunas obrigatorias ausentes: ${missing.join(", ")}` }, 400);
     }
-    let processed = 0;
-    let rejected = 0;
-    const errors = [];
-    rows.forEach((row, index) => {
-      try {
-        const user = matchUser(db.users.filter((entry) => entry.is_active), row);
-        if (!user) throw new Error("Operador nao encontrado para os identificadores informados.");
-        upsertDailyMetric(
-          db,
-          user.id,
-          parseDate(row.data),
-          {
-            production: toInt(row.producao),
-            calls_0800_approved: toInt(row["0800_aprovado"]),
-            calls_0800_rejected: toInt(row["0800_cancelada"]),
-            calls_0800_pending: toInt(row["0800_pendenciada"]),
-            calls_0800_no_action: toInt(row["0800_sem_acao"]),
-            calls_nuvidio_approved: toInt(row["nuvidio_aprovada"]),
-            calls_nuvidio_rejected: toInt(row["nuvidio_reprovada"]),
-            calls_nuvidio_no_action: toInt(row["nuvidio_sem_acao"]),
-          },
-          file.name,
-        );
-        processed += 1;
-      } catch (error) {
-        rejected += 1;
-        errors.push({ row: index + 2, error: error.message });
-      }
-    });
-    db.importLogs.push({
-      id: nextId(db, "importLogs"),
-      imported_by: auth.user.id,
-      source_name: file.name,
-      imported_at: nowIso(),
-      rows_processed: processed,
-      rows_rejected: rejected,
-    });
+    const { processed, rejected, errors } = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    registerImportLog(db, auth.user.id, file.name, processed, rejected);
     await persistStorage(db, env);
     return jsonResponse({ processed, rejected, errors: errors.slice(0, 20) });
   }
