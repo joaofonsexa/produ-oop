@@ -199,6 +199,7 @@ body.theme-contrast .sidebar {
 .filter-card,
 .notice,
 .login-card {
+  position: relative;
   background: var(--panel);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -824,6 +825,30 @@ body.theme-contrast .select-wrap select:disabled {
 
 .chart-col .column.green { background: var(--green); }
 .chart-col .column.amber { background: var(--amber); }
+.chart-col .column.red { background: var(--red); }
+
+.analysis-point {
+  cursor: pointer;
+}
+
+.quality-months-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.quality-month-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 10px 6px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.quality-month-title {
+  display: inline-block;
+  font-size: 0.9rem;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
 
 .chart-col small {
   font-size: 0.62rem;
@@ -1206,6 +1231,39 @@ body.theme-contrast .modal-card {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.trend-tooltip {
+  position: absolute;
+  z-index: 40;
+  min-width: 280px;
+  max-width: 360px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(12, 16, 22, 0.96);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.trend-tooltip-title {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.trend-tooltip-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.76rem;
+  padding: 4px 0;
+}
+
+.trend-tooltip-line strong {
+  color: var(--text);
+  font-weight: 700;
 }
 
 .chart {

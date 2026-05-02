@@ -3,7 +3,14 @@
   appSettings: {
     maintenance_for_operators: false,
     maintenance_message: "Portal em manutenção. Tente novamente em instantes.",
+    metric_rules: {
+      production: { red_max: 70, amber_max: 100 },
+      effectiveness: { red_max: 70, amber_max: 90 },
+      quality: { red_max: 70, amber_max: 90 },
+    },
   },
+  dayTopCache: {},
+  analysisTopCache: {},
   route: "overview",
   overview: null,
   analysis: null,
@@ -173,6 +180,24 @@ function integer(value) {
 
 function percent(value) {
   return `${Math.round(Number(value || 0))}%`;
+}
+
+function metricRules() {
+  return state.appSettings?.metric_rules || {
+    production: { red_max: 70, amber_max: 100 },
+    effectiveness: { red_max: 70, amber_max: 90 },
+    quality: { red_max: 70, amber_max: 90 },
+  };
+}
+
+function metricTone(value, metricType) {
+  const numeric = Number(value || 0);
+  const rules = metricRules()[metricType] || { red_max: 70, amber_max: 90 };
+  const redMax = Number(rules.red_max);
+  const amberMax = Number(rules.amber_max);
+  if (numeric <= redMax) return "red";
+  if (numeric <= amberMax) return "amber";
+  return "green";
 }
 
 function initials(name) {
@@ -981,13 +1006,14 @@ function overviewTemplate() {
         </div>
         <div class="chart">
           ${trendRows.length ? trendRows.map((item) => `
-            <div class="chart-col">
+            <div class="chart-col trend-point" data-trend-date="${esc(item.date)}">
               <span class="chart-value">${integer(item.production)}</span>
-              <div class="column" style="height:${Math.max(14, (Number(item.production || 0) / maxTrendProduction) * 110)}px;"></div>
+              <div class="column ${metricTone(item.production, "production")}" style="height:${Math.max(14, (Number(item.production || 0) / maxTrendProduction) * 110)}px;"></div>
               <small>${shortDate(item.date)}</small>
             </div>
           `).join("") : `<div class="empty">Sem tendência disponível.</div>`}
         </div>
+        ${isManager() ? `<div class="trend-tooltip" id="trend-tooltip" hidden></div>` : ""}
       </article>
     </section>
   `;
@@ -1006,7 +1032,6 @@ function analysisTemplate() {
     Number(item.monitoria_4 || 0),
     Number(item.final_score || item.score || 0),
   ]), 10);
-  const latestQuality = qualityMonths[qualityMonths.length - 1] || null;
   const historyRows = state.history?.history || [];
   const byDate0800 = new Map();
   const byDateNuvidio = new Map();
@@ -1030,6 +1055,7 @@ function analysisTemplate() {
   const maxEff0800 = Math.max(...trend0800.map((item) => Number(item.effectiveness || 0)), 1);
   const maxProdNuvidio = Math.max(...trendNuvidio.map((item) => Number(item.production || 0)), 1);
   const maxEffNuvidio = Math.max(...trendNuvidio.map((item) => Number(item.effectiveness || 0)), 1);
+  const showAllOperatorsTop = isManager() && String(state.filters.analysisUserId) === "all";
   return `
     <section class="section">
       <div class="two-col">
@@ -1052,13 +1078,13 @@ function analysisTemplate() {
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">0800</span><h3>Produção diária</h3></div></div>
               <div class="chart">
-                ${trend0800.length ? trend0800.map((item) => `<div class="chart-col"><span class="chart-value">${integer(item.production)}</span><div class="column" style="height:${Math.max(12, (item.production / maxProd0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trend0800.length ? trend0800.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="production" data-operation="0800" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${integer(item.production)}</span><div class="column ${metricTone(item.production, "production")}" style="height:${Math.max(12, (item.production / maxProd0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">0800</span><h3>Efetividade diária</h3></div></div>
               <div class="chart">
-                ${trend0800.length ? trend0800.map((item) => `<div class="chart-col"><span class="chart-value">${percent(item.effectiveness)}</span><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEff0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trend0800.length ? trend0800.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="effectiveness" data-operation="0800" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${percent(item.effectiveness)}</span><div class="column ${metricTone(item.effectiveness, "effectiveness")}" style="height:${Math.max(12, (item.effectiveness / maxEff0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
           </div>
@@ -1067,13 +1093,13 @@ function analysisTemplate() {
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Nuvidio</span><h3>Produção diária</h3></div></div>
               <div class="chart">
-                ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col"><span class="chart-value">${integer(item.production)}</span><div class="column" style="height:${Math.max(12, (item.production / maxProdNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="production" data-operation="nuvidio" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${integer(item.production)}</span><div class="column ${metricTone(item.production, "production")}" style="height:${Math.max(12, (item.production / maxProdNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Nuvidio</span><h3>Efetividade diária</h3></div></div>
               <div class="chart">
-                ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col"><span class="chart-value">${percent(item.effectiveness)}</span><div class="column green" style="height:${Math.max(12, (item.effectiveness / maxEffNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="effectiveness" data-operation="nuvidio" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${percent(item.effectiveness)}</span><div class="column ${metricTone(item.effectiveness, "effectiveness")}" style="height:${Math.max(12, (item.effectiveness / maxEffNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
           </div>
@@ -1081,16 +1107,22 @@ function analysisTemplate() {
           <div class="hero-grid">
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Monitorias + média final</h3></div></div>
-              <div class="chart">
-                ${latestQuality ? [
-                  { label: "M1", value: Number(latestQuality.monitoria_1 || 0), tone: "" },
-                  { label: "M2", value: Number(latestQuality.monitoria_2 || 0), tone: "" },
-                  { label: "M3", value: Number(latestQuality.monitoria_3 || 0), tone: "" },
-                  { label: "M4", value: Number(latestQuality.monitoria_4 || 0), tone: "" },
-                  { label: "Final", value: Number(latestQuality.final_score || latestQuality.score || 0), tone: "amber" },
-                ].map((entry) => `<div class="chart-col"><span class="chart-value">${number(entry.value)}</span><div class="column ${entry.tone}" style="height:${Math.max(12, (entry.value / maxQuality) * 110)}px;"></div><small>${entry.label}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+              <div class="quality-months-wrap">
+                ${qualityMonths.length ? qualityMonths.map((monthItem) => `
+                  <div class="quality-month-block">
+                    <strong class="quality-month-title">${esc(formatMonthLabel(monthItem.reference_month).split(" de ")[0])}</strong>
+                    <div class="chart">
+                      ${[
+                        { label: "M1", value: Number(monthItem.monitoria_1 || 0), field: "m1" },
+                        { label: "M2", value: Number(monthItem.monitoria_2 || 0), field: "m2" },
+                        { label: "M3", value: Number(monthItem.monitoria_3 || 0), field: "m3" },
+                        { label: "M4", value: Number(monthItem.monitoria_4 || 0), field: "m4" },
+                        { label: "Final", value: Number(monthItem.final_score || monthItem.score || 0), field: "final" },
+                      ].map((entry) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="quality" data-operation="all" data-reference-month="${esc(monthItem.reference_month)}" data-quality-field="${entry.field}"` : ""}><span class="chart-value">${number(entry.value)}</span><div class="column ${metricTone(entry.value, "quality")}" style="height:${Math.max(12, (entry.value / maxQuality) * 110)}px;"></div><small>${entry.label}</small></div>`).join("")}
+                    </div>
+                  </div>
+                `).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
-              ${latestQuality ? `<div class="muted" style="margin-top:8px;">Referência: ${formatMonthLabel(latestQuality.reference_month)}</div>` : ""}
             </article>
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Resumo</span><h3>Consolidado</h3></div></div>
@@ -1137,6 +1169,7 @@ function analysisTemplate() {
           </div>
         </div>
       </div>
+      ${showAllOperatorsTop ? `<div class="trend-tooltip" id="analysis-metric-tooltip" hidden></div>` : ""}
     </section>
   `;
 }
@@ -1225,6 +1258,29 @@ function adminTemplate() {
             <label>Mensagem para operadores
               <input id="maintenance-message" value="${esc(state.appSettings.maintenance_message || "")}" maxlength="220">
             </label>
+            <div class="mini-grid">
+              <div class="mini-card">
+                <span class="muted">Produção</span>
+                <div class="form-grid">
+                  <label>Vermelho até <input type="number" id="metric-production-red" value="${Number(state.appSettings?.metric_rules?.production?.red_max ?? 70)}"></label>
+                  <label>Laranja até <input type="number" id="metric-production-amber" value="${Number(state.appSettings?.metric_rules?.production?.amber_max ?? 100)}"></label>
+                </div>
+              </div>
+              <div class="mini-card">
+                <span class="muted">Efetividade</span>
+                <div class="form-grid">
+                  <label>Vermelho até <input type="number" id="metric-effectiveness-red" value="${Number(state.appSettings?.metric_rules?.effectiveness?.red_max ?? 70)}"></label>
+                  <label>Laranja até <input type="number" id="metric-effectiveness-amber" value="${Number(state.appSettings?.metric_rules?.effectiveness?.amber_max ?? 90)}"></label>
+                </div>
+              </div>
+              <div class="mini-card">
+                <span class="muted">Qualidade</span>
+                <div class="form-grid">
+                  <label>Vermelho até <input type="number" id="metric-quality-red" value="${Number(state.appSettings?.metric_rules?.quality?.red_max ?? 70)}"></label>
+                  <label>Laranja até <input type="number" id="metric-quality-amber" value="${Number(state.appSettings?.metric_rules?.quality?.amber_max ?? 90)}"></label>
+                </div>
+              </div>
+            </div>
             <div class="action-grid">
               <button class="btn" type="submit">Salvar manutenção</button>
             </div>
@@ -1435,6 +1491,8 @@ function bindShellEvents() {
   const passwordModal = document.getElementById("password-modal");
   const userModal = document.getElementById("user-modal");
   const historyEditModal = document.getElementById("history-edit-modal");
+  const trendTooltip = document.getElementById("trend-tooltip");
+  const analysisMetricTooltip = document.getElementById("analysis-metric-tooltip");
 
   const closeProfileMenu = () => {
     if (!profileMenuPopover || !profileMenuTrigger) return;
@@ -1545,6 +1603,124 @@ function bindShellEvents() {
   if (historyEditModal) {
     historyEditModal.addEventListener("click", (event) => {
       if (event.target === historyEditModal) closeHistoryEditModal();
+    });
+  }
+
+  if (trendTooltip && isManager()) {
+    const trendPoints = document.querySelectorAll(".trend-point[data-trend-date]");
+    const showTrendTooltip = async (point, event) => {
+      const date = point?.dataset?.trendDate;
+      if (!date) return;
+      const key = String(date);
+      if (!state.dayTopCache[key]) {
+        state.dayTopCache[key] = { loading: true, top: [] };
+        try {
+          const response = await api(`/api/dashboard/day-top?date=${encodeURIComponent(key)}`);
+          state.dayTopCache[key] = { loading: false, top: response.top || [] };
+        } catch {
+          state.dayTopCache[key] = { loading: false, top: [] };
+        }
+      }
+      const bucket = state.dayTopCache[key];
+      const lines = bucket.loading
+        ? `<div class="trend-tooltip-line">Carregando...</div>`
+        : (bucket.top.length
+          ? bucket.top.map((item, idx) => `<div class="trend-tooltip-line"><strong>${idx + 1}. ${esc(item.name)}</strong><span>${integer(item.production)} · ${percent(item.effectiveness)}</span></div>`).join("")
+          : `<div class="trend-tooltip-line">Sem dados para ${esc(formatDateBr(key))}.</div>`);
+      trendTooltip.innerHTML = `
+        <div class="trend-tooltip-title">Top 10 · ${esc(formatDateBr(key))}</div>
+        ${lines}
+      `;
+      trendTooltip.hidden = false;
+      const rect = point.getBoundingClientRect();
+      const parentRect = point.closest(".panel")?.getBoundingClientRect() || rect;
+      trendTooltip.style.left = `${Math.max(16, rect.left - parentRect.left + 24)}px`;
+      trendTooltip.style.top = `${Math.max(12, rect.top - parentRect.top - 8)}px`;
+    };
+
+    trendPoints.forEach((point) => {
+      point.addEventListener("mouseenter", (event) => {
+        showTrendTooltip(point, event);
+      });
+      point.addEventListener("mousemove", (event) => {
+        showTrendTooltip(point, event);
+      });
+      point.addEventListener("mouseleave", () => {
+        trendTooltip.hidden = true;
+      });
+    });
+  }
+
+  if (analysisMetricTooltip && isManager() && String(state.filters.analysisUserId) === "all") {
+    const analysisPoints = document.querySelectorAll(".analysis-point[data-metric]");
+    const getAnalysisCacheKey = (dataset) => [
+      dataset.metric || "",
+      dataset.operation || "",
+      dataset.date || "",
+      dataset.referenceMonth || "",
+      dataset.qualityField || "",
+    ].join("|");
+    const formatMetricValue = (metric, value) => {
+      if (metric === "production") return integer(value);
+      if (metric === "effectiveness") return percent(value);
+      return number(value);
+    };
+    const metricLabel = (metric, operation, qualityField) => {
+      if (metric === "production") return `Top 10 Produção · ${operation === "0800" ? "0800" : "Nuvidio"}`;
+      if (metric === "effectiveness") return `Top 10 Efetividade · ${operation === "0800" ? "0800" : "Nuvidio"}`;
+      const map = { m1: "M1", m2: "M2", m3: "M3", m4: "M4", final: "Final" };
+      return `Top 10 Qualidade · ${map[qualityField] || "Final"}`;
+    };
+    const metricWhenLabel = (dataset) => {
+      if (dataset.metric === "quality") return formatMonthLabel(dataset.referenceMonth || "");
+      return formatDateBr(dataset.date || "");
+    };
+    const showAnalysisTooltip = async (point) => {
+      const { dataset } = point;
+      const key = getAnalysisCacheKey(dataset);
+      if (!key) return;
+      if (!state.analysisTopCache[key]) {
+        state.analysisTopCache[key] = { loading: true, top: [] };
+        const params = new URLSearchParams();
+        params.set("metric", dataset.metric || "");
+        if (dataset.operation) params.set("operation", dataset.operation);
+        if (dataset.date) params.set("date", dataset.date);
+        if (dataset.referenceMonth) params.set("reference_month", dataset.referenceMonth);
+        if (dataset.qualityField) params.set("quality_field", dataset.qualityField);
+        try {
+          const response = await api(`/api/dashboard/top-metric?${params.toString()}`);
+          state.analysisTopCache[key] = { loading: false, top: response.top || [] };
+        } catch {
+          state.analysisTopCache[key] = { loading: false, top: [] };
+        }
+      }
+      const bucket = state.analysisTopCache[key];
+      const lines = bucket.loading
+        ? `<div class="trend-tooltip-line">Carregando...</div>`
+        : (bucket.top.length
+          ? bucket.top.map((item, idx) => `<div class="trend-tooltip-line"><strong>${idx + 1}. ${esc(item.name)}</strong><span>${formatMetricValue(dataset.metric, item.value)}</span></div>`).join("")
+          : `<div class="trend-tooltip-line">Sem dados para ${esc(metricWhenLabel(dataset))}.</div>`);
+      analysisMetricTooltip.innerHTML = `
+        <div class="trend-tooltip-title">${esc(metricLabel(dataset.metric, dataset.operation, dataset.qualityField))}</div>
+        <div class="trend-tooltip-line"><span>${esc(metricWhenLabel(dataset))}</span></div>
+        ${lines}
+      `;
+      analysisMetricTooltip.hidden = false;
+      const rect = point.getBoundingClientRect();
+      const parentRect = point.closest(".panel")?.getBoundingClientRect() || rect;
+      analysisMetricTooltip.style.left = `${Math.max(16, rect.left - parentRect.left + 24)}px`;
+      analysisMetricTooltip.style.top = `${Math.max(12, rect.top - parentRect.top - 8)}px`;
+    };
+    analysisPoints.forEach((point) => {
+      point.addEventListener("mouseenter", () => {
+        showAnalysisTooltip(point);
+      });
+      point.addEventListener("mousemove", () => {
+        showAnalysisTooltip(point);
+      });
+      point.addEventListener("mouseleave", () => {
+        analysisMetricTooltip.hidden = true;
+      });
     });
   }
 
@@ -1990,6 +2166,12 @@ function bindShellEvents() {
       event.preventDefault();
       const maintenanceToggle = document.getElementById("maintenance-toggle");
       const maintenanceMessage = document.getElementById("maintenance-message");
+      const metricProductionRed = document.getElementById("metric-production-red");
+      const metricProductionAmber = document.getElementById("metric-production-amber");
+      const metricEffectivenessRed = document.getElementById("metric-effectiveness-red");
+      const metricEffectivenessAmber = document.getElementById("metric-effectiveness-amber");
+      const metricQualityRed = document.getElementById("metric-quality-red");
+      const metricQualityAmber = document.getElementById("metric-quality-amber");
       const submitButton = maintenanceForm.querySelector('button[type="submit"]');
       const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
@@ -1998,6 +2180,20 @@ function bindShellEvents() {
           body: JSON.stringify({
             maintenance_for_operators: Boolean(maintenanceToggle?.checked),
             maintenance_message: String(maintenanceMessage?.value || "").trim(),
+            metric_rules: {
+              production: {
+                red_max: Number(metricProductionRed?.value || 70),
+                amber_max: Number(metricProductionAmber?.value || 100),
+              },
+              effectiveness: {
+                red_max: Number(metricEffectivenessRed?.value || 70),
+                amber_max: Number(metricEffectivenessAmber?.value || 90),
+              },
+              quality: {
+                red_max: Number(metricQualityRed?.value || 70),
+                amber_max: Number(metricQualityAmber?.value || 90),
+              },
+            },
           }),
         });
         state.appSettings = response.app_settings || state.appSettings;

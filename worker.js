@@ -235,6 +235,11 @@ function normalizeDbState(db) {
   db.appSettings = {
     maintenance_for_operators: false,
     maintenance_message: "Portal em manutenção. Tente novamente em instantes.",
+    metric_rules: {
+      production: { red_max: 70, amber_max: 100 },
+      effectiveness: { red_max: 70, amber_max: 90 },
+      quality: { red_max: 70, amber_max: 90 },
+    },
     ...(db.appSettings || {}),
   };
   const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
@@ -512,16 +517,42 @@ function seedState() {
     appSettings: {
       maintenance_for_operators: false,
       maintenance_message: "Portal em manutenção. Tente novamente em instantes.",
+      metric_rules: {
+        production: { red_max: 70, amber_max: 100 },
+        effectiveness: { red_max: 70, amber_max: 90 },
+        quality: { red_max: 70, amber_max: 90 },
+      },
     },
   };
 }
 
 function serializeAppSettings(db) {
+  const fallback = {
+    production: { red_max: 70, amber_max: 100 },
+    effectiveness: { red_max: 70, amber_max: 90 },
+    quality: { red_max: 70, amber_max: 90 },
+  };
+  const sourceRules = db?.appSettings?.metric_rules || {};
+  const metricRules = {
+    production: {
+      red_max: Number(sourceRules?.production?.red_max ?? fallback.production.red_max),
+      amber_max: Number(sourceRules?.production?.amber_max ?? fallback.production.amber_max),
+    },
+    effectiveness: {
+      red_max: Number(sourceRules?.effectiveness?.red_max ?? fallback.effectiveness.red_max),
+      amber_max: Number(sourceRules?.effectiveness?.amber_max ?? fallback.effectiveness.amber_max),
+    },
+    quality: {
+      red_max: Number(sourceRules?.quality?.red_max ?? fallback.quality.red_max),
+      amber_max: Number(sourceRules?.quality?.amber_max ?? fallback.quality.amber_max),
+    },
+  };
   return {
     maintenance_for_operators: Boolean(db?.appSettings?.maintenance_for_operators),
     maintenance_message: String(
       db?.appSettings?.maintenance_message || "Portal em manutenção. Tente novamente em instantes.",
     ),
+    metric_rules: metricRules,
   };
 }
 
@@ -1215,6 +1246,83 @@ function buildOverview(db, user, url) {
   return { cards, trend, operators };
 }
 
+function buildDayTop(db, user, url) {
+  const date = String(url.searchParams.get("date") || todayIso()).trim();
+  const scoped = db.dailyMetrics.filter((row) => row.metric_date === date && (user.role === "manager" || row.user_id === user.id));
+  const top = scoped
+    .map((row) => {
+      const production0800 = toInt(row.production_0800);
+      const productionNuvidio = toInt(row.production_nuvidio);
+      const production = production0800 + productionNuvidio;
+      const eff0800 = calculateOperationEffectiveness(row, "0800");
+      const effNuvidio = calculateOperationEffectiveness(row, "nuvidio");
+      const effectiveness = averageIgnoreZero([eff0800, effNuvidio]);
+      return {
+        user_id: row.user_id,
+        name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+        production,
+        effectiveness,
+      };
+    })
+    .sort((a, b) => b.production - a.production || b.effectiveness - a.effectiveness || a.name.localeCompare(b.name))
+    .slice(0, 10);
+  return { date, top };
+}
+
+function buildMetricTop(db, user, url) {
+  const metric = String(url.searchParams.get("metric") || "production").trim().toLowerCase();
+  const operation = String(url.searchParams.get("operation") || "all").trim().toLowerCase();
+  const date = String(url.searchParams.get("date") || todayIso()).trim();
+  const referenceMonth = String(url.searchParams.get("reference_month") || monthRef(date)).trim();
+  const qualityField = String(url.searchParams.get("quality_field") || "final").trim().toLowerCase();
+
+  if (metric === "quality") {
+    const scopedQuality = db.qualityScores.filter((row) => row.reference_month === referenceMonth && (user.role === "manager" || row.user_id === user.id));
+    const resolveQualityValue = (row) => {
+      if (qualityField === "m1") return toFloat(row.monitoria_1);
+      if (qualityField === "m2") return toFloat(row.monitoria_2);
+      if (qualityField === "m3") return toFloat(row.monitoria_3);
+      if (qualityField === "m4") return toFloat(row.monitoria_4);
+      return toFloat(row.score);
+    };
+    const top = scopedQuality
+      .map((row) => ({
+        user_id: row.user_id,
+        name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+        value: resolveQualityValue(row),
+      }))
+      .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+      .slice(0, 10);
+    return { metric, operation: "all", date: null, reference_month: referenceMonth, top };
+  }
+
+  const scopedMetrics = db.dailyMetrics.filter((row) => row.metric_date === date && (user.role === "manager" || row.user_id === user.id));
+  const top = scopedMetrics
+    .map((row) => {
+      let value = 0;
+      if (metric === "production") {
+        if (operation === "0800") value = toInt(row.production_0800);
+        else if (operation === "nuvidio") value = toInt(row.production_nuvidio);
+        else value = toInt(row.production_0800) + toInt(row.production_nuvidio);
+      } else {
+        if (operation === "0800") value = calculateOperationEffectiveness(row, "0800");
+        else if (operation === "nuvidio") value = calculateOperationEffectiveness(row, "nuvidio");
+        else value = averageIgnoreZero([
+          calculateOperationEffectiveness(row, "0800"),
+          calculateOperationEffectiveness(row, "nuvidio"),
+        ]);
+      }
+      return {
+        user_id: row.user_id,
+        name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+        value,
+      };
+    })
+    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+    .slice(0, 10);
+  return { metric, operation, date, reference_month: null, top };
+}
+
 function buildAnalysis(db, user, url) {
   const start = url.searchParams.get("start") || shiftDate(-29);
   const end = url.searchParams.get("end") || todayIso();
@@ -1383,6 +1491,27 @@ async function handleApi(request, url, db, env = {}) {
       db.appSettings.maintenance_message = String(payload.maintenance_message || "").trim()
         || "Portal em manutenção. Tente novamente em instantes.";
     }
+    if (payload.metric_rules && typeof payload.metric_rules === "object") {
+      const toNumber = (value, fallbackValue) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallbackValue;
+      };
+      const current = serializeAppSettings(db).metric_rules;
+      db.appSettings.metric_rules = {
+        production: {
+          red_max: toNumber(payload.metric_rules?.production?.red_max, current.production.red_max),
+          amber_max: toNumber(payload.metric_rules?.production?.amber_max, current.production.amber_max),
+        },
+        effectiveness: {
+          red_max: toNumber(payload.metric_rules?.effectiveness?.red_max, current.effectiveness.red_max),
+          amber_max: toNumber(payload.metric_rules?.effectiveness?.amber_max, current.effectiveness.amber_max),
+        },
+        quality: {
+          red_max: toNumber(payload.metric_rules?.quality?.red_max, current.quality.red_max),
+          amber_max: toNumber(payload.metric_rules?.quality?.amber_max, current.quality.amber_max),
+        },
+      };
+    }
     await persistStorage(db, env);
     return jsonResponse({ app_settings: serializeAppSettings(db) });
   }
@@ -1394,6 +1523,24 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
     }
     return jsonResponse(buildOverview(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/dashboard/day-top" && request.method === "GET") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    if (isOperatorBlockedByMaintenance(auth.user, db)) {
+      return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
+    }
+    return jsonResponse(buildDayTop(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/dashboard/top-metric" && request.method === "GET") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    if (isOperatorBlockedByMaintenance(auth.user, db)) {
+      return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
+    }
+    return jsonResponse(buildMetricTop(db, auth.user, url));
   }
 
   if (url.pathname === "/api/analysis" && request.method === "GET") {
