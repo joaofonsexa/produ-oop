@@ -1223,16 +1223,11 @@ function alertsTemplate() {
     `;
   }
 
-  const summary = state.alerts.summary || { total: 0, critical: 0, high: 0, medium: 0 };
+  const summary = state.alerts.summary || { monitored: 0, total: 0, average_score: 0, max_score: 0 };
   const alerts = state.alerts.alerts || [];
   const selectedName = isManager() && state.filters.analysisUserId !== "all"
     ? (getOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador")
     : "Todos os operadores";
-  const severityMeta = {
-    critical: { label: "Crítico", pill: "red" },
-    high: { label: "Alto", pill: "amber" },
-    medium: { label: "Médio", pill: "blue" },
-  };
 
   return `
     <section class="section">
@@ -1259,14 +1254,14 @@ function alertsTemplate() {
           <div class="panel-head">
             <div>
               <span class="eyebrow">Resumo</span>
-              <h3>Mapa de atenção</h3>
+              <h3>Média da operação</h3>
             </div>
           </div>
           <div class="mini-grid">
-            <div class="mini-card"><span class="muted">Total</span><div class="metric-value">${integer(summary.total)}</div></div>
-            <div class="mini-card"><span class="muted">Críticos</span><div class="metric-value">${integer(summary.critical)}</div></div>
-            <div class="mini-card"><span class="muted">Altos</span><div class="metric-value">${integer(summary.high)}</div></div>
-            <div class="mini-card"><span class="muted">Médios</span><div class="metric-value">${integer(summary.medium)}</div></div>
+            <div class="mini-card"><span class="muted">Monitorados</span><div class="metric-value">${integer(summary.monitored)}</div></div>
+            <div class="mini-card"><span class="muted">Em alerta</span><div class="metric-value">${integer(summary.total)}</div></div>
+            <div class="mini-card"><span class="muted">Nota média</span><div class="metric-value">${number(summary.average_score)}</div></div>
+            <div class="mini-card"><span class="muted">Maior nota</span><div class="metric-value">${number(summary.max_score)}</div></div>
           </div>
         </article>
       </div>
@@ -1281,7 +1276,6 @@ function alertsTemplate() {
         ${alerts.length ? `
           <div class="alert-grid">
             ${alerts.map((item) => {
-              const meta = severityMeta[item.severity] || severityMeta.medium;
               return `
                 <article class="alert-card">
                   <div class="alert-card-head">
@@ -1289,9 +1283,13 @@ function alertsTemplate() {
                       <h4>${esc(item.name)}</h4>
                       <p>${esc(item.login)}</p>
                     </div>
-                    <span class="pill ${meta.pill}">${meta.label}</span>
+                    <span class="pill ${item.alert_tone}">Nota ${number(item.alert_score)} · ${esc(item.alert_label)}</span>
                   </div>
                   <div class="alert-metrics">
+                    <div class="mini-card">
+                      <span class="muted">Nota de alerta</span>
+                      <div class="metric-value">${number(item.alert_score)}</div>
+                    </div>
                     <div class="mini-card">
                       <span class="muted">Produção média</span>
                       <div class="metric-value">${integer(item.avg_production)}</div>

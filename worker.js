@@ -1742,8 +1742,25 @@ function buildAlerts(db, user, url) {
   for (const score of (db.qualityScores || []).slice().sort((a, b) => b.reference_month.localeCompare(a.reference_month) || b.updated_at.localeCompare(a.updated_at))) {
     if (!qualityByUser.has(score.user_id)) qualityByUser.set(score.user_id, score);
   }
-  const severityRank = { critical: 3, high: 2, medium: 1 };
   const alerts = [];
+  const scoredOperators = [];
+
+  function clampScore(value) {
+    return Math.max(0, Math.min(10, Number(value || 0)));
+  }
+
+  function toneFromScore(score) {
+    if (score >= 7) return "red";
+    if (score >= 4) return "amber";
+    return "green";
+  }
+
+  function labelFromScore(score) {
+    if (score >= 8.5) return "Crítico";
+    if (score >= 7) return "Alto";
+    if (score >= 4) return "Atenção";
+    return "Baixo";
+  }
 
   for (const entry of users) {
     const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
@@ -1766,69 +1783,84 @@ function buildAlerts(db, user, url) {
     const latestQuality = qualityByUser.get(entry.id) || null;
     const qualityScore = latestQuality ? toFloat(latestQuality.score) : 0;
     const reasons = [];
-    let severity = null;
+    const scoreParts = [];
 
-    if (avgProduction >= metricRules.production.amber_max && noActionShare >= 20) {
-      reasons.push({
-        tone: "red",
-        text: `Alta produção com sem ação elevado (${Math.round(noActionShare)}%).`,
-      });
-      severity = "critical";
-    } else if (noActionShare >= 25) {
-      reasons.push({
-        tone: "red",
-        text: `Volume de sem ação muito alto (${Math.round(noActionShare)}%).`,
-      });
-      severity = "critical";
-    } else if (noActionShare >= 15 && avgProduction >= metricRules.production.red_max) {
-      reasons.push({
-        tone: "amber",
-        text: `Sem ação acima do esperado para o volume produzido (${Math.round(noActionShare)}%).`,
-      });
-      severity = severity || "medium";
+    if (totalContacts > 0) {
+      let noActionRisk = 0;
+      if (noActionShare >= 25) noActionRisk = 10;
+      else if (noActionShare >= 20) noActionRisk = 8.5;
+      else if (noActionShare >= 15) noActionRisk = 6.5;
+      else if (noActionShare >= 10) noActionRisk = 4.5;
+      else if (noActionShare >= 5) noActionRisk = 2.5;
+
+      if (noActionRisk > 0 && avgProduction >= metricRules.production.amber_max) noActionRisk = clampScore(noActionRisk + 1);
+      else if (noActionRisk > 0 && avgProduction >= metricRules.production.red_max) noActionRisk = clampScore(noActionRisk + 0.5);
+
+      scoreParts.push(noActionRisk);
+      if (noActionRisk >= 7) {
+        reasons.push({
+          tone: "red",
+          text: `Sem ação muito alto para o volume lançado (${Math.round(noActionShare)}%).`,
+        });
+      } else if (noActionRisk >= 4) {
+        reasons.push({
+          tone: "amber",
+          text: `Sem ação acima do ideal (${Math.round(noActionShare)}%).`,
+        });
+      }
+
+      let effectivenessRisk = 0;
+      if (effectiveness <= metricRules.effectiveness.red_max) effectivenessRisk = 10;
+      else if (effectiveness <= metricRules.effectiveness.amber_max) effectivenessRisk = 6.5;
+      else if (effectiveness < 95) effectivenessRisk = 3;
+
+      scoreParts.push(effectivenessRisk);
+      if (effectivenessRisk >= 7) {
+        reasons.push({
+          tone: "red",
+          text: `Efetividade crítica (${Math.round(effectiveness)}%).`,
+        });
+      } else if (effectivenessRisk >= 4) {
+        reasons.push({
+          tone: "amber",
+          text: `Efetividade abaixo do ideal (${Math.round(effectiveness)}%).`,
+        });
+      }
     }
 
-    if (qualityScore > 0 && qualityScore <= metricRules.quality.red_max) {
-      reasons.push({
-        tone: "red",
-        text: `Qualidade em nível crítico (${Math.round(qualityScore)}).`,
-      });
-      severity = severityRank[severity || "medium"] >= severityRank.high ? severity : "high";
-    } else if (qualityScore > 0 && qualityScore <= metricRules.quality.amber_max) {
-      reasons.push({
-        tone: "amber",
-        text: `Qualidade em atenção (${Math.round(qualityScore)}).`,
-      });
-      severity = severity || "medium";
-    } else if (!latestQuality) {
-      reasons.push({
-        tone: "blue",
-        text: "Sem qualidade registrada para acompanhamento.",
-      });
-      severity = severity || "medium";
+    if (latestQuality) {
+      let qualityRisk = 0;
+      if (qualityScore <= metricRules.quality.red_max) qualityRisk = 10;
+      else if (qualityScore <= metricRules.quality.amber_max) qualityRisk = 6.5;
+      else if (qualityScore < 95) qualityRisk = 3;
+
+      scoreParts.push(qualityRisk);
+      if (qualityRisk >= 7) {
+        reasons.push({
+          tone: "red",
+          text: `Qualidade crítica (${Math.round(qualityScore)}).`,
+        });
+      } else if (qualityRisk >= 4) {
+        reasons.push({
+          tone: "amber",
+          text: `Qualidade em atenção (${Math.round(qualityScore)}).`,
+        });
+      }
     }
 
-    if (effectiveness > 0 && effectiveness <= metricRules.effectiveness.red_max) {
-      reasons.push({
-        tone: "red",
-        text: `Efetividade crítica (${Math.round(effectiveness)}%).`,
-      });
-      severity = severityRank[severity || "medium"] >= severityRank.high ? severity : "high";
-    } else if (effectiveness > 0 && effectiveness <= metricRules.effectiveness.amber_max) {
-      reasons.push({
-        tone: "amber",
-        text: `Efetividade abaixo do ideal (${Math.round(effectiveness)}%).`,
-      });
-      severity = severity || "medium";
-    }
-
-    if (!reasons.length) continue;
+    const availableScores = scoreParts.filter((value) => Number.isFinite(value));
+    if (!availableScores.length) continue;
+    const alertScore = Number((availableScores.reduce((sum, value) => sum + value, 0) / availableScores.length).toFixed(1));
+    scoredOperators.push(alertScore);
+    if (alertScore <= 0) continue;
 
     alerts.push({
       user_id: entry.id,
       name: entry.full_name,
       login: entry.login,
-      severity: severity || "medium",
+      alert_score: alertScore,
+      alert_tone: toneFromScore(alertScore),
+      alert_label: labelFromScore(alertScore),
       avg_production: Number(avgProduction.toFixed(2)),
       effectiveness: Number(effectiveness.toFixed(2)),
       quality: qualityScore,
@@ -1841,7 +1873,7 @@ function buildAlerts(db, user, url) {
   }
 
   alerts.sort((a, b) =>
-    severityRank[b.severity] - severityRank[a.severity]
+    b.alert_score - a.alert_score
     || b.no_action_share - a.no_action_share
     || a.quality - b.quality
     || b.avg_production - a.avg_production
@@ -1851,10 +1883,12 @@ function buildAlerts(db, user, url) {
   return {
     period: { start, end },
     summary: {
+      monitored: scoredOperators.length,
       total: alerts.length,
-      critical: alerts.filter((item) => item.severity === "critical").length,
-      high: alerts.filter((item) => item.severity === "high").length,
-      medium: alerts.filter((item) => item.severity === "medium").length,
+      average_score: scoredOperators.length
+        ? Number((scoredOperators.reduce((sum, value) => sum + value, 0) / scoredOperators.length).toFixed(1))
+        : 0,
+      max_score: alerts.length ? alerts[0].alert_score : 0,
     },
     alerts,
   };
