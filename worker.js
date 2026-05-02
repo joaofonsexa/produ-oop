@@ -184,7 +184,7 @@ function serializeUser(user) {
 function normalizeRouteForRole(route, role = "operator") {
   const safeRoute = String(route || "").trim();
   const allowed = role === "manager"
-    ? ["overview", "analysis", "history", "admin"]
+    ? ["overview", "analysis", "alerts", "history", "admin"]
     : ["overview", "analysis", "history"];
   return allowed.includes(safeRoute) ? safeRoute : "overview";
 }
@@ -1666,6 +1666,137 @@ function buildBootstrap(db, user, url) {
   };
 }
 
+function buildAlerts(db, user, url) {
+  const start = url.searchParams.get("start") || shiftDate(-29);
+  const end = url.searchParams.get("end") || todayIso();
+  const requestedRawUserId = String(url.searchParams.get("user_id") || "all").trim().toLowerCase();
+  const includeAllUsers = requestedRawUserId === "all";
+  const requestedUserId = Number(requestedRawUserId || 0);
+  const users = db.users.filter((entry) => entry.is_active && entry.role === "operator")
+    .filter((entry) => includeAllUsers || entry.id === requestedUserId);
+  const metricRules = serializeAppSettings(db).metric_rules;
+  const qualityByUser = new Map();
+  for (const score of (db.qualityScores || []).slice().sort((a, b) => b.reference_month.localeCompare(a.reference_month) || b.updated_at.localeCompare(a.updated_at))) {
+    if (!qualityByUser.has(score.user_id)) qualityByUser.set(score.user_id, score);
+  }
+  const severityRank = { critical: 3, high: 2, medium: 1 };
+  const alerts = [];
+
+  for (const entry of users) {
+    const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
+    const avgProduction = averageIgnoreZero(metrics.map((row) => toInt(row.production_0800) + toInt(row.production_nuvidio)));
+    const effectiveness = averageIgnoreZero(metrics.flatMap((row) => [
+      calculateOperationEffectiveness(row, "0800"),
+      calculateOperationEffectiveness(row, "nuvidio"),
+    ]));
+    const totalNoAction = metrics.reduce((sum, row) => sum + toInt(row.calls_0800_no_action) + toInt(row.calls_nuvidio_no_action), 0);
+    const totalActionable = metrics.reduce((sum, row) => (
+      sum
+      + toInt(row.calls_0800_approved)
+      + toInt(row.calls_0800_rejected)
+      + toInt(row.calls_0800_pending)
+      + toInt(row.calls_nuvidio_approved)
+      + toInt(row.calls_nuvidio_rejected)
+    ), 0);
+    const totalContacts = totalActionable + totalNoAction;
+    const noActionShare = totalContacts ? Number(((totalNoAction / totalContacts) * 100).toFixed(2)) : 0;
+    const latestQuality = qualityByUser.get(entry.id) || null;
+    const qualityScore = latestQuality ? toFloat(latestQuality.score) : 0;
+    const reasons = [];
+    let severity = null;
+
+    if (avgProduction >= metricRules.production.amber_max && noActionShare >= 20) {
+      reasons.push({
+        tone: "red",
+        text: `Alta produção com sem ação elevado (${Math.round(noActionShare)}%).`,
+      });
+      severity = "critical";
+    } else if (noActionShare >= 25) {
+      reasons.push({
+        tone: "red",
+        text: `Volume de sem ação muito alto (${Math.round(noActionShare)}%).`,
+      });
+      severity = "critical";
+    } else if (noActionShare >= 15 && avgProduction >= metricRules.production.red_max) {
+      reasons.push({
+        tone: "amber",
+        text: `Sem ação acima do esperado para o volume produzido (${Math.round(noActionShare)}%).`,
+      });
+      severity = severity || "medium";
+    }
+
+    if (qualityScore > 0 && qualityScore <= metricRules.quality.red_max) {
+      reasons.push({
+        tone: "red",
+        text: `Qualidade em nível crítico (${Math.round(qualityScore)}).`,
+      });
+      severity = severityRank[severity || "medium"] >= severityRank.high ? severity : "high";
+    } else if (qualityScore > 0 && qualityScore <= metricRules.quality.amber_max) {
+      reasons.push({
+        tone: "amber",
+        text: `Qualidade em atenção (${Math.round(qualityScore)}).`,
+      });
+      severity = severity || "medium";
+    } else if (!latestQuality) {
+      reasons.push({
+        tone: "blue",
+        text: "Sem qualidade registrada para acompanhamento.",
+      });
+      severity = severity || "medium";
+    }
+
+    if (effectiveness > 0 && effectiveness <= metricRules.effectiveness.red_max) {
+      reasons.push({
+        tone: "red",
+        text: `Efetividade crítica (${Math.round(effectiveness)}%).`,
+      });
+      severity = severityRank[severity || "medium"] >= severityRank.high ? severity : "high";
+    } else if (effectiveness > 0 && effectiveness <= metricRules.effectiveness.amber_max) {
+      reasons.push({
+        tone: "amber",
+        text: `Efetividade abaixo do ideal (${Math.round(effectiveness)}%).`,
+      });
+      severity = severity || "medium";
+    }
+
+    if (!reasons.length) continue;
+
+    alerts.push({
+      user_id: entry.id,
+      name: entry.full_name,
+      login: entry.login,
+      severity: severity || "medium",
+      avg_production: Number(avgProduction.toFixed(2)),
+      effectiveness: Number(effectiveness.toFixed(2)),
+      quality: qualityScore,
+      no_action_share: noActionShare,
+      total_contacts: totalContacts,
+      active_days: metrics.length,
+      latest_quality_month: latestQuality?.reference_month || "",
+      reasons,
+    });
+  }
+
+  alerts.sort((a, b) =>
+    severityRank[b.severity] - severityRank[a.severity]
+    || b.no_action_share - a.no_action_share
+    || a.quality - b.quality
+    || b.avg_production - a.avg_production
+    || a.name.localeCompare(b.name)
+  );
+
+  return {
+    period: { start, end },
+    summary: {
+      total: alerts.length,
+      critical: alerts.filter((item) => item.severity === "critical").length,
+      high: alerts.filter((item) => item.severity === "high").length,
+      medium: alerts.filter((item) => item.severity === "medium").length,
+    },
+    alerts,
+  };
+}
+
 function buildHistory(db, user, url) {
   const start = url.searchParams.get("start") || shiftDate(-29);
   const end = url.searchParams.get("end") || todayIso();
@@ -1873,6 +2004,12 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
     }
     return jsonResponse(buildAnalysis(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/alerts" && request.method === "GET") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    return jsonResponse(buildAlerts(db, auth.user, url));
   }
 
   if (url.pathname === "/api/bootstrap" && request.method === "GET") {

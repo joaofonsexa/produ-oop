@@ -14,6 +14,7 @@
   route: "overview",
   overview: null,
   analysis: null,
+  alerts: null,
   history: null,
   users: [],
   flash: null,
@@ -124,7 +125,12 @@ function clearFlash() {
 function refreshDashboardInBackground(successMessage = "") {
   if (successMessage) setFlash("success", successMessage);
   loadBootstrap()
-    .then(() => render())
+    .then(async () => {
+      if (state.route === "alerts" && isManager()) {
+        await loadAlerts();
+      }
+      render();
+    })
     .catch((error) => setFlash("error", error.message || "Falha ao atualizar os dados."));
 }
 
@@ -220,7 +226,7 @@ function isManager() {
 function normalizeRoute(route, role = state.user?.role) {
   const value = String(route || "").trim();
   const allowed = role === "manager"
-    ? ["overview", "analysis", "history", "admin"]
+    ? ["overview", "analysis", "alerts", "history", "admin"]
     : ["overview", "analysis", "history"];
   return allowed.includes(value) ? value : "overview";
 }
@@ -623,6 +629,9 @@ async function loadAll() {
     await loadUsers();
   }
   await loadBootstrap();
+  if (isManager() && state.route === "alerts") {
+    await loadAlerts();
+  }
 }
 
 async function loadOverview() {
@@ -656,6 +665,15 @@ async function loadBootstrap() {
   }
 }
 
+async function loadAlerts() {
+  if (!isManager()) {
+    state.alerts = null;
+    return;
+  }
+  const userId = state.filters.analysisUserId || "all";
+  state.alerts = await api(`/api/alerts?start=${state.filters.start}&end=${state.filters.end}&user_id=${encodeURIComponent(userId)}`);
+}
+
 async function loadUsers() {
   const response = await api("/api/admin/users");
   state.users = response.users;
@@ -669,6 +687,7 @@ function navMeta() {
   return {
     overview: "Visão geral",
     analysis: "Análises",
+    alerts: "Alertas",
     history: "Histórico",
     admin: "Gestão",
   };
@@ -744,6 +763,7 @@ function shellTemplate() {
   const titles = {
     overview: { title: isManager() ? "Visão da operação" : "Performance do operador", desc: "" },
     analysis: { title: "Análises", desc: "" },
+    alerts: { title: "Alertas", desc: "" },
     history: { title: "Histórico", desc: "" },
     admin: { title: "Gestão", desc: "" },
   };
@@ -768,7 +788,7 @@ function shellTemplate() {
           </div>
         </div>
         <nav class="nav">
-          ${Object.entries(navMeta()).filter(([key]) => key !== "admin" || isManager()).map(([key, label]) => `
+          ${Object.entries(navMeta()).filter(([key]) => (key !== "admin" && key !== "alerts") || isManager()).map(([key, label]) => `
             <button class="${state.route === key ? "active" : ""}" data-route="${key}">${label}</button>
           `).join("")}
         </nav>
@@ -932,6 +952,7 @@ function loginTemplate() {
 
 function renderPage() {
   if (state.route === "analysis") return analysisTemplate();
+  if (state.route === "alerts") return alertsTemplate();
   if (state.route === "history") return historyTemplate();
   if (state.route === "admin") return adminTemplate();
   return overviewTemplate();
@@ -1181,6 +1202,126 @@ function analysisTemplate() {
         </div>
       </div>
       ${showAllOperatorsTop ? `<div class="trend-tooltip" id="analysis-metric-tooltip" hidden></div>` : ""}
+    </section>
+  `;
+}
+
+function alertsTemplate() {
+  if (!state.alerts) {
+    return `
+      <section class="section">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Alertas</span>
+              <h3>Leitura de risco operacional</h3>
+            </div>
+          </div>
+          <div class="empty">Carregando alertas...</div>
+        </article>
+      </section>
+    `;
+  }
+
+  const summary = state.alerts.summary || { total: 0, critical: 0, high: 0, medium: 0 };
+  const alerts = state.alerts.alerts || [];
+  const selectedName = isManager() && state.filters.analysisUserId !== "all"
+    ? (getOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador")
+    : "Todos os operadores";
+  const severityMeta = {
+    critical: { label: "Crítico", pill: "red" },
+    high: { label: "Alto", pill: "amber" },
+    medium: { label: "Médio", pill: "blue" },
+  };
+
+  return `
+    <section class="section">
+      <div class="hero-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Monitoramento</span>
+              <h3>Operadores em alerta</h3>
+            </div>
+          </div>
+          <div class="mini-grid">
+            <div class="mini-card">
+              <span class="muted">Escopo</span>
+              <div class="metric-value">${esc(selectedName)}</div>
+            </div>
+            <div class="mini-card">
+              <span class="muted">Período</span>
+              <div class="metric-value">${esc(formatDateBr(state.alerts.period?.start || state.filters.start))} - ${esc(formatDateBr(state.alerts.period?.end || state.filters.end))}</div>
+            </div>
+          </div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Resumo</span>
+              <h3>Mapa de atenção</h3>
+            </div>
+          </div>
+          <div class="mini-grid">
+            <div class="mini-card"><span class="muted">Total</span><div class="metric-value">${integer(summary.total)}</div></div>
+            <div class="mini-card"><span class="muted">Críticos</span><div class="metric-value">${integer(summary.critical)}</div></div>
+            <div class="mini-card"><span class="muted">Altos</span><div class="metric-value">${integer(summary.high)}</div></div>
+            <div class="mini-card"><span class="muted">Médios</span><div class="metric-value">${integer(summary.medium)}</div></div>
+          </div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Prioridade</span>
+            <h3>Pontos de atenção por operador</h3>
+          </div>
+        </div>
+        ${alerts.length ? `
+          <div class="alert-grid">
+            ${alerts.map((item) => {
+              const meta = severityMeta[item.severity] || severityMeta.medium;
+              return `
+                <article class="alert-card">
+                  <div class="alert-card-head">
+                    <div>
+                      <h4>${esc(item.name)}</h4>
+                      <p>${esc(item.login)}</p>
+                    </div>
+                    <span class="pill ${meta.pill}">${meta.label}</span>
+                  </div>
+                  <div class="alert-metrics">
+                    <div class="mini-card">
+                      <span class="muted">Produção média</span>
+                      <div class="metric-value">${integer(item.avg_production)}</div>
+                    </div>
+                    <div class="mini-card">
+                      <span class="muted">Efetividade</span>
+                      <div class="metric-value">${percent(item.effectiveness)}</div>
+                    </div>
+                    <div class="mini-card">
+                      <span class="muted">Qualidade</span>
+                      <div class="metric-value">${item.quality ? number(item.quality) : "--"}</div>
+                    </div>
+                    <div class="mini-card">
+                      <span class="muted">Sem ação</span>
+                      <div class="metric-value">${percent(item.no_action_share)}</div>
+                    </div>
+                  </div>
+                  <div class="alert-reasons">
+                    ${item.reasons.map((reason) => `<div class="alert-reason ${reason.tone}">${esc(reason.text)}</div>`).join("")}
+                  </div>
+                  <div class="alert-footer">
+                    <span>Dias ativos: <strong>${integer(item.active_days)}</strong></span>
+                    <span>Última qualidade: <strong>${item.latest_quality_month ? esc(formatMonthLabel(item.latest_quality_month)) : "Sem registro"}</strong></span>
+                  </div>
+                </article>
+              `;
+            }).join("")}
+          </div>
+        ` : `<div class="empty">Nenhum operador em alerta no recorte atual.</div>`}
+      </article>
     </section>
   `;
 }
@@ -1757,8 +1898,13 @@ function bindShellEvents() {
     button.addEventListener("click", async () => {
       clearFlash();
       state.route = button.dataset.route;
+      if (state.route === "alerts") state.alerts = null;
       render();
       try {
+        if (state.route === "alerts" && isManager()) {
+          await loadAlerts();
+          render();
+        }
         await saveUserPreferences({ last_route: state.route });
       } catch (error) {
         setFlash("error", error.message || "Não foi possível salvar a aba atual.");
@@ -1779,12 +1925,16 @@ function bindShellEvents() {
   const globalUserSelect = document.getElementById("global-user-select");
   if (globalUserSelect && isManager()) {
     globalUserSelect.addEventListener("change", async (event) => {
-      const operatorUsers = getOperatorUsers();
-      const firstOperatorId = operatorUsers[0] ? String(operatorUsers[0].id) : "";
       state.filters.analysisUserId = event.target.value;
       state.filters.historyUserId = event.target.value === "all" ? "all" : event.target.value;
       state.filters.historyQuery = event.target.value === "all" ? "" : (getUserLabelById(state.filters.historyUserId) || "");
-      await loadHistory();
+      if (state.route === "alerts") {
+        state.alerts = null;
+        render();
+        await loadAlerts();
+      } else {
+        await loadHistory();
+      }
       render();
     });
   }
@@ -1819,8 +1969,13 @@ function bindShellEvents() {
           state.filters.historyQuery = getUserLabelById(resolvedUserId);
         }
       }
-      await loadHistory();
-      setFlash("success", "Histórico atualizado.");
+      if (state.route === "alerts") {
+        await loadAlerts();
+        setFlash("success", "Alertas atualizados.");
+      } else {
+        await loadHistory();
+        setFlash("success", "Histórico atualizado.");
+      }
     },
     "reset-analysis": async () => {
       state.filters.start = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
