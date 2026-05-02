@@ -473,6 +473,7 @@ body.theme-contrast .select-wrap select:disabled {
   align-items: center;
   justify-content: center;
   white-space: nowrap;
+  transition: transform 120ms ease, filter 120ms ease, opacity 120ms ease, box-shadow 180ms ease;
 }
 
 .btn {
@@ -497,6 +498,49 @@ body.theme-contrast .select-wrap select:disabled {
   padding: 0 14px;
   cursor: pointer;
   font-size: 0;
+}
+
+.btn:active,
+.btn-secondary:active,
+.btn-ghost:active,
+.toggle:active {
+  transform: translateY(1px) scale(0.99);
+  filter: brightness(0.96);
+}
+
+.btn:disabled,
+.btn-secondary:disabled,
+.btn-ghost:disabled,
+.toggle:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.btn.is-loading,
+.btn-secondary.is-loading,
+.btn-ghost.is-loading,
+.toggle.is-loading {
+  pointer-events: none;
+}
+
+.btn.is-loading::after,
+.btn-secondary.is-loading::after,
+.btn-ghost.is-loading::after,
+.toggle.is-loading::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  display: inline-block;
+  margin-left: 8px;
+  animation: button-spin 0.75s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes button-spin {
+  to { transform: rotate(360deg); }
 }
 
 .toggle::before {

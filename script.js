@@ -29,10 +29,15 @@ bootLoader.className = "boot-loader";
 bootLoader.innerHTML = `
   <div class="boot-loader-card">
     <div class="boot-loader-spinner"></div>
-    <strong>Carregando portal...</strong>
+    <strong id="boot-loader-message">Carregando portal...</strong>
   </div>
 `;
 document.body.appendChild(bootLoader);
+
+function setBootLoaderMessage(message) {
+  const label = document.getElementById("boot-loader-message");
+  if (label) label.textContent = message || "Carregando portal...";
+}
 
 function showBootLoader() {
   bootLoader.classList.add("visible");
@@ -57,6 +62,25 @@ function setFlash(type, message) {
 
 function clearFlash() {
   state.flash = null;
+}
+
+function setButtonProcessing(button, processing, processingText = "Processando...") {
+  if (!button) return () => {};
+  const originalText = button.textContent;
+  if (processing) {
+    button.disabled = true;
+    button.classList.add("is-loading");
+    if (processingText) button.textContent = processingText;
+  } else {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+    button.textContent = originalText;
+  }
+  return () => {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+    button.textContent = originalText;
+  };
 }
 
 async function api(path, options = {}) {
@@ -434,6 +458,7 @@ function renderOfflineHint() {
 }
 
 async function boot() {
+  setBootLoaderMessage("Carregando portal...");
   showBootLoader();
   applyTheme();
   if (window.location.protocol === "file:") {
@@ -1172,7 +1197,16 @@ function bindLogin() {
   document.getElementById("login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const originalButtonText = submitButton?.textContent || "Acessar";
     try {
+      clearFlash();
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Verificando credenciais...";
+      }
+      setBootLoaderMessage("Verificando credenciais...");
+      showBootLoader();
       const response = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ login: form.get("login"), password: form.get("password") }),
@@ -1180,18 +1214,30 @@ function bindLogin() {
       state.user = response.user;
       if (response.app_settings) state.appSettings = response.app_settings;
       applyUserPreferences();
-      clearFlash();
       state.forcePasswordChange = Boolean(state.user.must_change_password);
       state.filters.historyUserId = String(state.user.id);
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
       enforceOperatorScope();
-      if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
-        await loadAll();
-      }
-      state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
       render();
+      if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
+        loadAll()
+          .then(() => {
+            state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
+            render();
+          })
+          .catch((error) => {
+            setFlash("error", error.message || "Não foi possível carregar os dados iniciais.");
+          });
+      }
     } catch (error) {
       setFlash("error", error.message);
+    } finally {
+      hideBootLoader();
+      setBootLoaderMessage("Carregando portal...");
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalButtonText;
+      }
     }
   });
 }
@@ -1396,10 +1442,13 @@ function bindShellEvents() {
     const action = actionMap[button.dataset.action];
     if (!action) return;
     button.addEventListener("click", async () => {
+      const restoreButton = setButtonProcessing(button, true, "Processando...");
       try {
         await action();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   });
@@ -1594,6 +1643,8 @@ function bindShellEvents() {
       event.preventDefault();
       const maintenanceToggle = document.getElementById("maintenance-toggle");
       const maintenanceMessage = document.getElementById("maintenance-message");
+      const submitButton = maintenanceForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const response = await api("/api/admin/settings", {
           method: "PATCH",
@@ -1607,6 +1658,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }
