@@ -359,8 +359,10 @@ function calcOperationEffectiveness(row, operation) {
 function getScopedHistory() {
   const rows = state.history?.history || [];
   const operation = state.filters.operation;
+  const qualityByMonth = new Map((state.history?.quality || []).map((item) => [item.reference_month, item.score || 0]));
   return rows.flatMap((row) => {
     const list = [];
+    const qualityScore = qualityByMonth.get(String(row.metric_date || "").slice(0, 7)) || 0;
     if (operation === "all" || operation === "0800") {
       list.push({
         metricId: row.id,
@@ -369,7 +371,7 @@ function getScopedHistory() {
         operation: "0800",
         production: Number(row.production_0800 || 0),
         effectiveness: calcOperationEffectiveness(row, "0800"),
-        quality: findQualityForDate(row.metric_date),
+        quality: qualityScore,
         updatedAt: row.updated_at,
         calls_approved: Number(row.calls_0800_approved || 0),
         calls_rejected: Number(row.calls_0800_rejected || 0),
@@ -385,7 +387,7 @@ function getScopedHistory() {
         operation: "Nuvidio",
         production: Number(row.production_nuvidio || 0),
         effectiveness: calcOperationEffectiveness(row, "nuvidio"),
-        quality: findQualityForDate(row.metric_date),
+        quality: qualityScore,
         updatedAt: row.updated_at,
         calls_approved: Number(row.calls_nuvidio_approved || 0),
         calls_rejected: Number(row.calls_nuvidio_rejected || 0),
@@ -786,6 +788,34 @@ function shellTemplate() {
           </form>
         </div>
       </div>
+      <div class="modal-backdrop" id="history-edit-modal" hidden>
+        <div class="modal-card">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Histórico</span>
+              <h3>Editar lançamento</h3>
+            </div>
+            <button class="icon-close" type="button" id="close-history-edit-modal" aria-label="Fechar">×</button>
+          </div>
+          <form id="history-edit-form" class="section compact-form">
+            <input type="hidden" id="history-edit-metric-id" name="metric_id">
+            <input type="hidden" id="history-edit-operation" name="operation">
+            <div class="form-grid">
+              <label>Operador<input id="history-edit-operator" readonly></label>
+              <label>Data<input id="history-edit-date" readonly></label>
+              <label>Operação<input id="history-edit-operation-label" readonly></label>
+              <label>Aprovado<input type="number" min="0" step="1" id="history-edit-approved" name="approved" required></label>
+              <label>Reprovado<input type="number" min="0" step="1" id="history-edit-rejected" name="rejected" required></label>
+              <label class="history-edit-pending">Pendenciado<input type="number" min="0" step="1" id="history-edit-pending" name="pending"></label>
+              <label>Sem ação<input type="number" min="0" step="1" id="history-edit-no-action" name="no_action" required></label>
+            </div>
+            <div class="action-grid">
+              <button class="btn-secondary" type="button" id="cancel-history-edit-modal">Cancelar</button>
+              <button class="btn" type="submit">Salvar lançamento</button>
+            </div>
+          </form>
+        </div>
+      </div>
       ${flashTemplate()}
     </div>
   `;
@@ -830,6 +860,8 @@ function renderPage() {
 
 function overviewTemplate() {
   const model = buildOverviewModel();
+  const trendRows = state.overview?.trend || [];
+  const maxTrendProduction = Math.max(...trendRows.map((row) => Number(row.production || 0)), 1);
   const latestDate = formatDateBr(model.latest?.date || model.latest?.metric_date || "--");
   const latestProduction = model.latest ? integer(model.latest.production) : "--";
   const latestEffectiveness = model.latest ? percent(model.latest.effectiveness) : "--%";
@@ -905,9 +937,10 @@ function overviewTemplate() {
           </div>
         </div>
         <div class="chart">
-          ${(state.overview?.trend || []).length ? state.overview.trend.map((item) => `
+          ${trendRows.length ? trendRows.map((item) => `
             <div class="chart-col">
-              <div class="column" style="height:${Math.max(14, (Number(item.production || 0) / Math.max(...state.overview.trend.map((row) => Number(row.production || 0)), 1)) * 110)}px;"></div>
+              <span class="chart-value">${integer(item.production)}</span>
+              <div class="column" style="height:${Math.max(14, (Number(item.production || 0) / maxTrendProduction) * 110)}px;"></div>
               <small>${shortDate(item.date)}</small>
             </div>
           `).join("") : `<div class="empty">Sem tendência disponível.</div>`}
@@ -1062,6 +1095,7 @@ function historyTemplate() {
   const rows = getScopedHistory();
   const currentHistoryUser = getUserLabelById(state.filters.historyUserId);
   const showOperatorColumn = isManager() && (state.filters.historyUserId === "all" || !String(state.filters.historyQuery || "").trim());
+  const userNameById = new Map((state.users || []).map((user) => [String(user.id), user.full_name]));
   return `
     <section class="section">
       <article class="table-card">
@@ -1099,7 +1133,7 @@ function historyTemplate() {
             <tbody>
               ${rows.length ? rows.map((row) => `
                 <tr>
-                  ${showOperatorColumn ? `<td>${esc(state.users.find((user) => String(user.id) === String(row.userId))?.full_name || "—")}</td>` : ""}
+                  ${showOperatorColumn ? `<td>${esc(userNameById.get(String(row.userId)) || "—")}</td>` : ""}
                   <td>${esc(formatDateBr(row.date))}</td>
                   <td><span class="pill ${row.operation === "0800" ? "amber" : "blue"}">${esc(row.operation)}</span></td>
                   <td>${integer(row.production)}</td>
@@ -1318,6 +1352,7 @@ function bindShellEvents() {
   const profileMenuPopover = document.getElementById("profile-menu-popover");
   const passwordModal = document.getElementById("password-modal");
   const userModal = document.getElementById("user-modal");
+  const historyEditModal = document.getElementById("history-edit-modal");
 
   const closeProfileMenu = () => {
     if (!profileMenuPopover || !profileMenuTrigger) return;
@@ -1343,6 +1378,13 @@ function bindShellEvents() {
     if (!userModal) return;
     userModal.hidden = true;
     const form = document.getElementById("user-edit-form");
+    if (form) form.reset();
+  };
+
+  const closeHistoryEditModal = () => {
+    if (!historyEditModal) return;
+    historyEditModal.hidden = true;
+    const form = document.getElementById("history-edit-form");
     if (form) form.reset();
   };
 
@@ -1394,6 +1436,10 @@ function bindShellEvents() {
     button.addEventListener("click", closeUserModal);
   });
 
+  document.querySelectorAll("#close-history-edit-modal, #cancel-history-edit-modal").forEach((button) => {
+    button.addEventListener("click", closeHistoryEditModal);
+  });
+
   if (passwordModal) {
     passwordModal.addEventListener("click", (event) => {
       if (!state.forcePasswordChange && event.target === passwordModal) closePasswordModal();
@@ -1412,6 +1458,11 @@ function bindShellEvents() {
   if (userModal) {
     userModal.addEventListener("click", (event) => {
       if (event.target === userModal) closeUserModal();
+    });
+  }
+  if (historyEditModal) {
+    historyEditModal.addEventListener("click", (event) => {
+      if (event.target === historyEditModal) closeHistoryEditModal();
     });
   }
 
@@ -1598,6 +1649,8 @@ function bindShellEvents() {
     manualTagForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const submitButton = manualTagForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         await api("/api/admin/manual-tag", {
           method: "POST",
@@ -1608,6 +1661,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }
@@ -1707,7 +1762,7 @@ function bindShellEvents() {
   });
 
   document.querySelectorAll("[data-history-edit]").forEach((button) => {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => {
       const metricId = Number(button.dataset.historyEdit);
       const operation = String(button.dataset.historyOperation || "");
       const baseRow = (state.history?.history || []).find((item) => Number(item.id) === metricId);
@@ -1716,29 +1771,45 @@ function bindShellEvents() {
         return;
       }
       const is0800 = operation === "0800";
-      const currentApproved = is0800 ? Number(baseRow.calls_0800_approved || 0) : Number(baseRow.calls_nuvidio_approved || 0);
-      const currentRejected = is0800 ? Number(baseRow.calls_0800_rejected || 0) : Number(baseRow.calls_nuvidio_rejected || 0);
-      const currentPending = is0800 ? Number(baseRow.calls_0800_pending || 0) : 0;
-      const currentNoAction = is0800 ? Number(baseRow.calls_0800_no_action || 0) : Number(baseRow.calls_nuvidio_no_action || 0);
+      const setField = (id, value) => {
+        const input = document.getElementById(id);
+        if (input) input.value = value ?? "";
+      };
+      const operatorName = state.users.find((user) => String(user.id) === String(baseRow.user_id))?.full_name || "Operador";
+      setField("history-edit-metric-id", metricId);
+      setField("history-edit-operation", operation);
+      setField("history-edit-operator", operatorName);
+      setField("history-edit-date", formatDateBr(baseRow.metric_date));
+      setField("history-edit-operation-label", operation);
+      setField("history-edit-approved", is0800 ? Number(baseRow.calls_0800_approved || 0) : Number(baseRow.calls_nuvidio_approved || 0));
+      setField("history-edit-rejected", is0800 ? Number(baseRow.calls_0800_rejected || 0) : Number(baseRow.calls_nuvidio_rejected || 0));
+      setField("history-edit-pending", is0800 ? Number(baseRow.calls_0800_pending || 0) : 0);
+      setField("history-edit-no-action", is0800 ? Number(baseRow.calls_0800_no_action || 0) : Number(baseRow.calls_nuvidio_no_action || 0));
+      const pendingRow = document.querySelector(".history-edit-pending");
+      if (pendingRow) pendingRow.style.display = is0800 ? "grid" : "none";
+      if (historyEditModal) historyEditModal.hidden = false;
+    });
+  });
 
-      const approved = window.prompt(`Aprovado (${operation})`, String(currentApproved));
-      if (approved === null) return;
-      const rejected = window.prompt(`Reprovado (${operation})`, String(currentRejected));
-      if (rejected === null) return;
-      let pending = String(currentPending);
-      if (is0800) {
-        const pendingPrompt = window.prompt("Pendenciado (0800)", String(currentPending));
-        if (pendingPrompt === null) return;
-        pending = pendingPrompt;
+  const historyEditForm = document.getElementById("history-edit-form");
+  if (historyEditForm) {
+    historyEditForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const metricId = Number(form.get("metric_id"));
+      const operation = String(form.get("operation") || "");
+      const baseRow = (state.history?.history || []).find((item) => Number(item.id) === metricId);
+      if (!baseRow) {
+        setFlash("error", "Registro não encontrado para edição.");
+        return;
       }
-      const noAction = window.prompt(`Sem ação (${operation})`, String(currentNoAction));
-      if (noAction === null) return;
-
-      const approvedN = Math.max(0, Number(approved || 0));
-      const rejectedN = Math.max(0, Number(rejected || 0));
-      const pendingN = Math.max(0, Number(pending || 0));
-      const noActionN = Math.max(0, Number(noAction || 0));
-      const restoreButton = setButtonProcessing(button, true, "Salvando...");
+      const is0800 = operation === "0800";
+      const approvedN = Math.max(0, Number(form.get("approved") || 0));
+      const rejectedN = Math.max(0, Number(form.get("rejected") || 0));
+      const pendingN = Math.max(0, Number(form.get("pending") || 0));
+      const noActionN = Math.max(0, Number(form.get("no_action") || 0));
+      const submitButton = historyEditForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const payload = is0800
           ? {
@@ -1759,6 +1830,7 @@ function bindShellEvents() {
           body: JSON.stringify(payload),
         });
         await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        closeHistoryEditModal();
         setFlash("success", `Registro ${operation} atualizado.`);
         render();
       } catch (error) {
@@ -1767,7 +1839,7 @@ function bindShellEvents() {
         restoreButton();
       }
     });
-  });
+  }
 
   document.querySelectorAll("[data-history-delete]").forEach((button) => {
     button.addEventListener("click", async () => {

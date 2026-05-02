@@ -809,7 +809,7 @@ body.theme-contrast .select-wrap select:disabled {
 .chart-value {
   font-size: 10px;
   font-weight: 700;
-  color: var(--muted);
+  color: var(--text);
   line-height: 1;
   white-space: nowrap;
 }
@@ -827,7 +827,9 @@ body.theme-contrast .select-wrap select:disabled {
 
 .chart-col small {
   font-size: 0.62rem;
-  color: var(--muted);
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .tag-split {

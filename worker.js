@@ -399,6 +399,17 @@ function calculateEffectiveness(metric) {
   return Number(((actionable / total) * 100).toFixed(2));
 }
 
+function calculateOperationEffectiveness(metric, operation) {
+  if (operation === "0800") {
+    const actionable = toInt(metric.calls_0800_approved) + toInt(metric.calls_0800_rejected) + toInt(metric.calls_0800_pending);
+    const total = actionable + toInt(metric.calls_0800_no_action);
+    return total ? Number(((actionable / total) * 100).toFixed(2)) : 0;
+  }
+  const actionable = toInt(metric.calls_nuvidio_approved) + toInt(metric.calls_nuvidio_rejected);
+  const total = actionable + toInt(metric.calls_nuvidio_no_action);
+  return total ? Number(((actionable / total) * 100).toFixed(2)) : 0;
+}
+
 async function hashPassword(password) {
   const salt = randomHex(16);
   const hash = await digestHex(`${salt}:${password}`);
@@ -1164,26 +1175,33 @@ function buildOverview(db, user, url) {
     .filter((metric) => metric.metric_date >= start && metric.metric_date <= end)
     .sort((a, b) => a.metric_date.localeCompare(b.metric_date));
   const cards = {
-    production: todayRows.reduce((sum, row) => sum + toInt(row.production), 0),
-    effectiveness: average(todayRows.map(calculateEffectiveness)),
+    production: todayRows.reduce((sum, row) => sum + toInt(row.production_0800) + toInt(row.production_nuvidio), 0),
+    effectiveness: averageIgnoreZero(todayRows.flatMap((row) => [
+      calculateOperationEffectiveness(row, "0800"),
+      calculateOperationEffectiveness(row, "nuvidio"),
+    ])),
     quality: average(monthRows.map((item) => toFloat(item.score))),
   };
   const trendMap = new Map();
   for (const row of trendRows) {
     const current = trendMap.get(row.metric_date) || { date: row.metric_date, production: 0, effectivenessParts: [] };
-    current.production += toInt(row.production);
-    current.effectivenessParts.push(calculateEffectiveness(row));
+    current.production += toInt(row.production_0800) + toInt(row.production_nuvidio);
+    current.effectivenessParts.push(calculateOperationEffectiveness(row, "0800"));
+    current.effectivenessParts.push(calculateOperationEffectiveness(row, "nuvidio"));
     trendMap.set(row.metric_date, current);
   }
   const trend = [...trendMap.values()].map((item) => ({
     date: item.date,
     production: item.production,
-    effectiveness: average(item.effectivenessParts),
+    effectiveness: averageIgnoreZero(item.effectivenessParts),
   }));
   const operators = todayRows.map((row) => ({
     name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
-    production: row.production,
-    effectiveness: calculateEffectiveness(row),
+    production: toInt(row.production_0800) + toInt(row.production_nuvidio),
+    effectiveness: averageIgnoreZero([
+      calculateOperationEffectiveness(row, "0800"),
+      calculateOperationEffectiveness(row, "nuvidio"),
+    ]),
   }));
   return { cards, trend, operators };
 }
@@ -1235,6 +1253,12 @@ function buildHistory(db, user, url) {
 function average(values) {
   if (!values.length) return 0;
   return Number((values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length).toFixed(2));
+}
+
+function averageIgnoreZero(values) {
+  const filtered = values.map((value) => Number(value || 0)).filter((value) => Number.isFinite(value) && value > 0);
+  if (!filtered.length) return 0;
+  return Number((filtered.reduce((sum, value) => sum + value, 0) / filtered.length).toFixed(2));
 }
 
 function shiftDate(days) {
@@ -1504,7 +1528,7 @@ async function handleApi(request, url, db, env = {}) {
   if (url.pathname === "/api/admin/quality/template" && request.method === "GET") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
-    if (!isNode) {
+    if (!isLocalNodeRuntime) {
       const operators = db.users.filter((user) => user.is_active && user.role === "operator");
       const csv = [
         "Nome do Operador;Monitoria 1;Monitoria 2;Monitoria 3;Monitoria 4",
@@ -1546,7 +1570,7 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: "Use um arquivo XLSX ou CSV para a monitoria" }, 400);
     }
 
-    if (!isNode && lowerName.endsWith(".xlsx")) {
+    if (!isLocalNodeRuntime && lowerName.endsWith(".xlsx")) {
       return cloudQualityUnsupported();
     }
 
