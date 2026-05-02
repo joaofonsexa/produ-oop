@@ -828,6 +828,17 @@ body.theme-contrast .select-wrap select:disabled {
 .tag-split-fill.amber { background: var(--amber); }
 .tag-split-fill.blue { background: var(--blue); }
 
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.switch-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
 .table-wrap {
   overflow: auto;
   border-radius: 14px;

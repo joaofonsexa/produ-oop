@@ -1,5 +1,9 @@
 ﻿const state = {
   user: null,
+  appSettings: {
+    maintenance_for_operators: false,
+    maintenance_message: "Portal em manutenção. Tente novamente em instantes.",
+  },
   route: "overview",
   overview: null,
   analysis: null,
@@ -440,12 +444,15 @@ async function boot() {
   try {
     const auth = await api("/api/auth/me");
     state.user = auth.user;
+    if (auth.app_settings) state.appSettings = auth.app_settings;
     if (state.user) {
       applyUserPreferences();
       state.filters.historyUserId = String(state.user.id);
       if (!isManager()) state.filters.analysisUserId = String(state.user.id);
       enforceOperatorScope();
-      await loadAll();
+      if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
+        await loadAll();
+      }
       state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
       state.forcePasswordChange = Boolean(state.user.must_change_password);
     }
@@ -508,9 +515,55 @@ function render() {
     bindLogin();
     return;
   }
+  if (!isManager() && state.appSettings.maintenance_for_operators) {
+    app.innerHTML = maintenanceTemplate();
+    bindMaintenance();
+    return;
+  }
   enforceOperatorScope();
   app.innerHTML = shellTemplate();
   bindShellEvents();
+}
+
+function maintenanceTemplate() {
+  return `
+    <section class="login-screen">
+      <div class="login-card">
+        <div class="login-copy">
+          <div class="brand">
+            <div class="brand-logo-wrap">
+              <img class="brand-logo" src="${brandLogoSrc()}" alt="KR Consulting" onerror="this.style.display='none';this.nextElementSibling.style.display='grid';">
+              <div class="brand-mark" style="display:none;">KR</div>
+            </div>
+            <div class="brand-copy">
+              <span class="eyebrow">Manutenção</span>
+              <h1>PORTAL DE RESULTADOS</h1>
+              <p>${esc(state.appSettings.maintenance_message || "Portal em manutenção. Tente novamente em instantes.")}</p>
+            </div>
+          </div>
+        </div>
+        <div class="login-form">
+          <span class="eyebrow">Acesso temporariamente indisponível</span>
+          <h2>Em manutenção</h2>
+          <div class="info-box">O acesso para operadores está temporariamente pausado.</div>
+          <button class="btn" id="maintenance-logout">Sair</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function bindMaintenance() {
+  const button = document.getElementById("maintenance-logout");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } finally {
+      state.user = null;
+      render();
+    }
+  });
 }
 
 function flashTemplate() {
@@ -979,6 +1032,21 @@ function adminTemplate() {
     <section class="section">
       <div class="hero-grid">
         <article class="panel">
+          <div class="panel-head"><div><span class="eyebrow">Operação</span><h3>Modo manutenção</h3></div></div>
+          <form id="admin-maintenance-form" class="section">
+            <label class="switch-row">
+              <input type="checkbox" id="maintenance-toggle" ${state.appSettings.maintenance_for_operators ? "checked" : ""}>
+              <span>Ativar manutenção para operadores</span>
+            </label>
+            <label>Mensagem para operadores
+              <input id="maintenance-message" value="${esc(state.appSettings.maintenance_message || "")}" maxlength="220">
+            </label>
+            <div class="action-grid">
+              <button class="btn" type="submit">Salvar manutenção</button>
+            </div>
+          </form>
+        </article>
+        <article class="panel">
           <div class="management-header">
             <div>
               <span class="eyebrow">Gestão</span>
@@ -1110,13 +1178,16 @@ function bindLogin() {
         body: JSON.stringify({ login: form.get("login"), password: form.get("password") }),
       });
       state.user = response.user;
+      if (response.app_settings) state.appSettings = response.app_settings;
       applyUserPreferences();
       clearFlash();
       state.forcePasswordChange = Boolean(state.user.must_change_password);
       state.filters.historyUserId = String(state.user.id);
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
       enforceOperatorScope();
-      await loadAll();
+      if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
+        await loadAll();
+      }
       state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
       render();
     } catch (error) {
@@ -1514,6 +1585,29 @@ function bindShellEvents() {
   if (downloadQualityTemplate) {
     downloadQualityTemplate.addEventListener("click", () => {
       window.location.href = "/api/admin/quality/template";
+    });
+  }
+
+  const maintenanceForm = document.getElementById("admin-maintenance-form");
+  if (maintenanceForm) {
+    maintenanceForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const maintenanceToggle = document.getElementById("maintenance-toggle");
+      const maintenanceMessage = document.getElementById("maintenance-message");
+      try {
+        const response = await api("/api/admin/settings", {
+          method: "PATCH",
+          body: JSON.stringify({
+            maintenance_for_operators: Boolean(maintenanceToggle?.checked),
+            maintenance_message: String(maintenanceMessage?.value || "").trim(),
+          }),
+        });
+        state.appSettings = response.app_settings || state.appSettings;
+        setFlash("success", "Modo de manutenção atualizado.");
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      }
     });
   }
 

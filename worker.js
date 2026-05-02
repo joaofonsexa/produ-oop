@@ -223,6 +223,11 @@ function normalizeDbState(db) {
   db.qualityScores = db.qualityScores || [];
   db.importLogs = db.importLogs || [];
   db.r2ProcessedKeys = Array.isArray(db.r2ProcessedKeys) ? db.r2ProcessedKeys : [];
+  db.appSettings = {
+    maintenance_for_operators: false,
+    maintenance_message: "Portal em manutenção. Tente novamente em instantes.",
+    ...(db.appSettings || {}),
+  };
   const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
   db.counters = db.counters || { users: nextUserCounter, dailyMetrics: 1, qualityScores: 1, importLogs: 1 };
   db.counters.users = Math.max(db.counters.users || 1, nextUserCounter);
@@ -484,7 +489,24 @@ function seedState() {
     dailyMetrics: [],
     qualityScores: [],
     importLogs: [],
+    appSettings: {
+      maintenance_for_operators: false,
+      maintenance_message: "Portal em manutenção. Tente novamente em instantes.",
+    },
   };
+}
+
+function serializeAppSettings(db) {
+  return {
+    maintenance_for_operators: Boolean(db?.appSettings?.maintenance_for_operators),
+    maintenance_message: String(
+      db?.appSettings?.maintenance_message || "Portal em manutenção. Tente novamente em instantes.",
+    ),
+  };
+}
+
+function isOperatorBlockedByMaintenance(user, db) {
+  return Boolean(user && user.role !== "manager" && db?.appSettings?.maintenance_for_operators);
 }
 
 async function ensureStorage(env = {}) {
@@ -1230,7 +1252,10 @@ function cloudQualityUnsupported() {
 async function handleApi(request, url, db, env = {}) {
   if (url.pathname === "/api/auth/me" && request.method === "GET") {
     const user = await getCurrentUser(request, db, env);
-    return jsonResponse({ user: user ? serializeUser(user) : null });
+    return jsonResponse({
+      user: user ? serializeUser(user) : null,
+      app_settings: serializeAppSettings(db),
+    });
   }
 
   if (url.pathname === "/api/auth/login" && request.method === "POST") {
@@ -1252,7 +1277,10 @@ async function handleApi(request, url, db, env = {}) {
       expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
     }, env);
     return jsonResponse(
-      { user: serializeUser(user) },
+      {
+        user: serializeUser(user),
+        app_settings: serializeAppSettings(db),
+      },
       200,
       { "set-cookie": `${SESSION_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax` },
     );
@@ -1305,21 +1333,51 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ ok: true, user: serializeUser(auth.user) });
   }
 
+  if (url.pathname === "/api/admin/settings" && request.method === "GET") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    return jsonResponse({ app_settings: serializeAppSettings(db) });
+  }
+
+  if (url.pathname === "/api/admin/settings" && request.method === "PATCH") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const payload = await request.json();
+    if (payload.maintenance_for_operators !== undefined) {
+      db.appSettings.maintenance_for_operators = Boolean(payload.maintenance_for_operators);
+    }
+    if (payload.maintenance_message !== undefined) {
+      db.appSettings.maintenance_message = String(payload.maintenance_message || "").trim()
+        || "Portal em manutenção. Tente novamente em instantes.";
+    }
+    await persistStorage(db, env);
+    return jsonResponse({ app_settings: serializeAppSettings(db) });
+  }
+
   if (url.pathname === "/api/dashboard/overview" && request.method === "GET") {
     const auth = await requireAuth(request, db, env);
     if (auth.error) return auth.error;
+    if (isOperatorBlockedByMaintenance(auth.user, db)) {
+      return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
+    }
     return jsonResponse(buildOverview(db, auth.user, url));
   }
 
   if (url.pathname === "/api/analysis" && request.method === "GET") {
     const auth = await requireAuth(request, db, env);
     if (auth.error) return auth.error;
+    if (isOperatorBlockedByMaintenance(auth.user, db)) {
+      return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
+    }
     return jsonResponse(buildAnalysis(db, auth.user, url));
   }
 
   if (url.pathname === "/api/history" && request.method === "GET") {
     const auth = await requireAuth(request, db, env);
     if (auth.error) return auth.error;
+    if (isOperatorBlockedByMaintenance(auth.user, db)) {
+      return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
+    }
     return jsonResponse(buildHistory(db, auth.user, url));
   }
 
