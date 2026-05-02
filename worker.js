@@ -607,28 +607,91 @@ async function ensureD1Schema(connection) {
   for (const statement of D1_SCHEMA_STATEMENTS) {
     await connection.prepare(statement).run();
   }
-  const tableInfo = await connection.prepare("PRAGMA table_info(users)").all();
-  const columns = new Set((tableInfo?.results || []).map((row) => String(row.name)));
-  if (!columns.has("platform_0800_id")) {
+  const userTableInfo = await connection.prepare("PRAGMA table_info(users)").all();
+  const userColumns = new Set((userTableInfo?.results || []).map((row) => String(row.name)));
+  if (!userColumns.has("platform_0800_id")) {
     await connection.exec("ALTER TABLE users ADD COLUMN platform_0800_id TEXT");
   }
-  if (!columns.has("nuvidio_id")) {
+  if (!userColumns.has("nuvidio_id")) {
     await connection.exec("ALTER TABLE users ADD COLUMN nuvidio_id TEXT");
   }
-  if (!columns.has("must_change_password")) {
+  if (!userColumns.has("must_change_password")) {
     await connection.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 1");
   }
-  if (!columns.has("password_plain")) {
+  if (!userColumns.has("password_plain")) {
     await connection.exec("ALTER TABLE users ADD COLUMN password_plain TEXT");
   }
-  if (!columns.has("is_active")) {
+  if (!userColumns.has("is_active")) {
     await connection.exec("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1");
   }
-  if (!columns.has("preferred_theme")) {
+  if (!userColumns.has("preferred_theme")) {
     await connection.exec("ALTER TABLE users ADD COLUMN preferred_theme TEXT NOT NULL DEFAULT 'dark'");
   }
-  if (!columns.has("last_route")) {
+  if (!userColumns.has("last_route")) {
     await connection.exec("ALTER TABLE users ADD COLUMN last_route TEXT NOT NULL DEFAULT 'overview'");
+  }
+
+  const dailyMetricsTableInfo = await connection.prepare("PRAGMA table_info(daily_metrics)").all();
+  const dailyMetricsColumns = new Set((dailyMetricsTableInfo?.results || []).map((row) => String(row.name)));
+  if (!dailyMetricsColumns.has("production_0800")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN production_0800 INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("production_nuvidio")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN production_nuvidio INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_0800_approved")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_0800_approved INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_0800_rejected")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_0800_rejected INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_0800_pending")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_0800_pending INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_0800_no_action")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_0800_no_action INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_nuvidio_approved")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_nuvidio_approved INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_nuvidio_rejected")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_nuvidio_rejected INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("calls_nuvidio_no_action")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_nuvidio_no_action INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!dailyMetricsColumns.has("import_source")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN import_source TEXT");
+  }
+  if (!dailyMetricsColumns.has("created_at")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+  }
+  if (!dailyMetricsColumns.has("updated_at")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
+  }
+
+  const qualityScoresTableInfo = await connection.prepare("PRAGMA table_info(quality_scores)").all();
+  const qualityScoreColumns = new Set((qualityScoresTableInfo?.results || []).map((row) => String(row.name)));
+  if (!qualityScoreColumns.has("monitoria_1")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN monitoria_1 REAL");
+  }
+  if (!qualityScoreColumns.has("monitoria_2")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN monitoria_2 REAL");
+  }
+  if (!qualityScoreColumns.has("monitoria_3")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN monitoria_3 REAL");
+  }
+  if (!qualityScoreColumns.has("monitoria_4")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN monitoria_4 REAL");
+  }
+  if (!qualityScoreColumns.has("notes")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN notes TEXT");
+  }
+  if (!qualityScoreColumns.has("created_at")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+  }
+  if (!qualityScoreColumns.has("updated_at")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
   }
 }
 
