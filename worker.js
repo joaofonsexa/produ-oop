@@ -110,6 +110,15 @@ function toFloat(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function toOptionalMonitoria(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const parsed = Number(text.replace(",", "."));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
 function parseDate(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return todayIso();
@@ -1504,20 +1513,38 @@ async function handleApi(request, url, db, env = {}) {
     if (!userId || !String(payload.reference_month || "").trim()) {
       return jsonResponse({ error: "user_id e reference_month sao obrigatorios" }, 400);
     }
+    const monitoria1 = toOptionalMonitoria(payload.monitoria_1);
+    const monitoria2 = toOptionalMonitoria(payload.monitoria_2);
+    const monitoria3 = toOptionalMonitoria(payload.monitoria_3);
+    const monitoria4 = toOptionalMonitoria(payload.monitoria_4);
+    const monitorias = [monitoria1, monitoria2, monitoria3, monitoria4]
+      .filter((value) => value !== null && Number.isFinite(value) && value >= 0 && value <= 100);
+    const resolvedScore = monitorias.length
+      ? Number((monitorias.reduce((sum, value) => sum + value, 0) / monitorias.length).toFixed(2))
+      : toFloat(payload.score);
+
     let score = db.qualityScores.find((item) => item.user_id === userId && item.reference_month === payload.reference_month);
     if (!score) {
       score = {
         id: nextId(db, "qualityScores"),
         user_id: userId,
         reference_month: payload.reference_month,
-        score: toFloat(payload.score),
+        score: resolvedScore,
+        monitoria_1: monitoria1,
+        monitoria_2: monitoria2,
+        monitoria_3: monitoria3,
+        monitoria_4: monitoria4,
         notes: String(payload.notes || "").trim(),
         created_at: nowIso(),
         updated_at: nowIso(),
       };
       db.qualityScores.push(score);
     } else {
-      score.score = toFloat(payload.score);
+      score.score = resolvedScore;
+      score.monitoria_1 = monitoria1;
+      score.monitoria_2 = monitoria2;
+      score.monitoria_3 = monitoria3;
+      score.monitoria_4 = monitoria4;
       score.notes = String(payload.notes || "").trim();
       score.updated_at = nowIso();
     }

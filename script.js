@@ -114,6 +114,13 @@ function clearFlash() {
   state.flash = null;
 }
 
+function refreshDashboardInBackground(successMessage = "") {
+  if (successMessage) setFlash("success", successMessage);
+  Promise.all([loadOverview(), loadAnalysis(), loadHistory()])
+    .then(() => render())
+    .catch((error) => setFlash("error", error.message || "Falha ao atualizar os dados."));
+}
+
 function setButtonProcessing(button, processing, processingText = "Processando...") {
   if (!button) return () => {};
   const originalText = button.textContent;
@@ -423,7 +430,43 @@ function buildAnalysisModel() {
   const selectedUser = state.filters.analysisUserId;
   const filteredRanking = selectedUser === "all" ? ranking : ranking.filter((item) => String(item.user_id) === String(selectedUser));
   const trend = state.overview?.trend || [];
-  const qualityMonths = (state.history?.quality || []).slice().sort((a, b) => a.reference_month.localeCompare(b.reference_month));
+  const qualityRows = (state.history?.quality || []).slice().sort((a, b) => a.reference_month.localeCompare(b.reference_month));
+  const qualityByMonthMap = new Map();
+  const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";
+  qualityRows.forEach((item) => {
+    const key = String(item.reference_month || "");
+    const bucket = qualityByMonthMap.get(key) || {
+      reference_month: key,
+      scoreValues: [],
+      m1Values: [],
+      m2Values: [],
+      m3Values: [],
+      m4Values: [],
+    };
+    if (hasValue(item.score)) bucket.scoreValues.push(Number(item.score));
+    if (hasValue(item.monitoria_1)) bucket.m1Values.push(Number(item.monitoria_1));
+    if (hasValue(item.monitoria_2)) bucket.m2Values.push(Number(item.monitoria_2));
+    if (hasValue(item.monitoria_3)) bucket.m3Values.push(Number(item.monitoria_3));
+    if (hasValue(item.monitoria_4)) bucket.m4Values.push(Number(item.monitoria_4));
+    qualityByMonthMap.set(key, bucket);
+  });
+  const qualityMonths = [...qualityByMonthMap.values()].map((bucket) => {
+    const avg = (arr) => arr.length ? (arr.reduce((s, v) => s + Number(v || 0), 0) / arr.length) : 0;
+    const m1 = avg(bucket.m1Values);
+    const m2 = avg(bucket.m2Values);
+    const m3 = avg(bucket.m3Values);
+    const m4 = avg(bucket.m4Values);
+    const final = (m1 + m2 + m3 + m4) / 4;
+    return {
+      reference_month: bucket.reference_month,
+      monitoria_1: m1,
+      monitoria_2: m2,
+      monitoria_3: m3,
+      monitoria_4: m4,
+      score: avg(bucket.scoreValues),
+      final_score: final,
+    };
+  }).sort((a, b) => a.reference_month.localeCompare(b.reference_month));
   const status0800 = (state.history?.history || []).reduce((acc, row) => {
     acc.approved += Number(row.calls_0800_approved || 0);
     acc.pending += Number(row.calls_0800_pending || 0);
@@ -956,7 +999,14 @@ function analysisTemplate() {
   const maxProduction = Math.max(...trend.map((item) => Number(item.production || 0)), 1);
   const maxEffectiveness = Math.max(...trend.map((item) => Number(item.effectiveness || 0)), 1);
   const qualityMonths = model.qualityMonths;
-  const maxQuality = Math.max(...qualityMonths.map((item) => Number(item.score || 0)), 10);
+  const maxQuality = Math.max(...qualityMonths.flatMap((item) => [
+    Number(item.monitoria_1 || 0),
+    Number(item.monitoria_2 || 0),
+    Number(item.monitoria_3 || 0),
+    Number(item.monitoria_4 || 0),
+    Number(item.final_score || item.score || 0),
+  ]), 10);
+  const latestQuality = qualityMonths[qualityMonths.length - 1] || null;
   const historyRows = state.history?.history || [];
   const byDate0800 = new Map();
   const byDateNuvidio = new Map();
@@ -1030,10 +1080,17 @@ function analysisTemplate() {
 
           <div class="hero-grid">
             <article class="panel">
-              <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Mensal</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Monitorias + média final</h3></div></div>
               <div class="chart">
-                ${qualityMonths.length ? qualityMonths.map((item) => `<div class="chart-col"><span class="chart-value">${number(item.score)}</span><div class="column amber" style="height:${Math.max(12, (item.score / maxQuality) * 110)}px;"></div><small>${formatMonthLabel(item.reference_month)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
+                ${latestQuality ? [
+                  { label: "M1", value: Number(latestQuality.monitoria_1 || 0), tone: "" },
+                  { label: "M2", value: Number(latestQuality.monitoria_2 || 0), tone: "" },
+                  { label: "M3", value: Number(latestQuality.monitoria_3 || 0), tone: "" },
+                  { label: "M4", value: Number(latestQuality.monitoria_4 || 0), tone: "" },
+                  { label: "Final", value: Number(latestQuality.final_score || latestQuality.score || 0), tone: "amber" },
+                ].map((entry) => `<div class="chart-col"><span class="chart-value">${number(entry.value)}</span><div class="column ${entry.tone}" style="height:${Math.max(12, (entry.value / maxQuality) * 110)}px;"></div><small>${entry.label}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
+              ${latestQuality ? `<div class="muted" style="margin-top:8px;">Referência: ${formatMonthLabel(latestQuality.reference_month)}</div>` : ""}
             </article>
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Resumo</span><h3>Consolidado</h3></div></div>
@@ -1268,7 +1325,10 @@ function adminTemplate() {
                   ${yearOptions(defaultYear)}
                 </select>
               </label>
-              <label>Nota (0-100)<input type="number" min="0" max="100" step="0.01" name="score" required></label>
+              <label>Monitoria 1<input type="number" min="0" max="100" step="0.01" name="monitoria_1"></label>
+              <label>Monitoria 2<input type="number" min="0" max="100" step="0.01" name="monitoria_2"></label>
+              <label>Monitoria 3<input type="number" min="0" max="100" step="0.01" name="monitoria_3"></label>
+              <label>Monitoria 4<input type="number" min="0" max="100" step="0.01" name="monitoria_4"></label>
               <label>Observações<input name="notes" maxlength="220" placeholder="Opcional"></label>
             </div>
             <input type="hidden" name="reference_month" id="quality-manual-reference-month" value="${currentReferenceMonth}">
@@ -1642,16 +1702,28 @@ function bindShellEvents() {
       const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
-        payload.score = Number(payload.score || 0);
+        const rawMonitorias = [
+          payload.monitoria_1,
+          payload.monitoria_2,
+          payload.monitoria_3,
+          payload.monitoria_4,
+        ];
+        const monitorias = rawMonitorias
+          .map((value) => String(value ?? "").trim())
+          .filter((value) => value !== "")
+          .map((value) => Number(value.replace(",", ".")))
+          .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100);
+        if (!monitorias.length) {
+          throw new Error("Preencha pelo menos uma monitoria (0 a 100).");
+        }
+        payload.score = monitorias.reduce((sum, value) => sum + value, 0) / monitorias.length;
         await api("/api/admin/quality", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
-        setFlash("success", "Qualidade salva com sucesso.");
+        refreshDashboardInBackground("Qualidade salva com sucesso.");
         qualityManualForm.reset();
         syncManualReference();
-        render();
       } catch (error) {
         setFlash("error", error.message);
       } finally {
@@ -1708,9 +1780,7 @@ function bindShellEvents() {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
-        setFlash("success", "Lançamento manual salvo.");
-        render();
+        refreshDashboardInBackground("Lançamento manual salvo.");
       } catch (error) {
         setFlash("error", error.message);
       } finally {
@@ -1881,10 +1951,8 @@ function bindShellEvents() {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
         closeHistoryEditModal();
-        setFlash("success", `Registro ${operation} atualizado.`);
-        render();
+        refreshDashboardInBackground(`Registro ${operation} atualizado.`);
       } catch (error) {
         setFlash("error", error.message);
       } finally {
@@ -1900,9 +1968,7 @@ function bindShellEvents() {
       const restoreButton = setButtonProcessing(button, true, "Removendo...");
       try {
         await api(`/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
-        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
-        setFlash("success", "Registro removido com sucesso.");
-        render();
+        refreshDashboardInBackground("Registro removido com sucesso.");
       } catch (error) {
         setFlash("error", error.message);
       } finally {
