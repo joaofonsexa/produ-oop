@@ -33,6 +33,7 @@ bootLoader.innerHTML = `
   </div>
 `;
 document.body.appendChild(bootLoader);
+let maintenanceWatcher = null;
 
 function setBootLoaderMessage(message) {
   const label = document.getElementById("boot-loader-message");
@@ -45,6 +46,34 @@ function showBootLoader() {
 
 function hideBootLoader() {
   bootLoader.classList.remove("visible");
+}
+
+function stopMaintenanceWatcher() {
+  if (maintenanceWatcher) {
+    clearInterval(maintenanceWatcher);
+    maintenanceWatcher = null;
+  }
+}
+
+function startMaintenanceWatcher() {
+  stopMaintenanceWatcher();
+  if (!state.user || isManager()) return;
+  maintenanceWatcher = setInterval(async () => {
+    try {
+      const auth = await api("/api/auth/me");
+      if (auth.app_settings) {
+        const wasActive = Boolean(state.appSettings?.maintenance_for_operators);
+        state.appSettings = auth.app_settings;
+        const isActive = Boolean(state.appSettings.maintenance_for_operators);
+        if (!wasActive && isActive) {
+          setFlash("error", state.appSettings.maintenance_message || "Portal em manutenção para operadores.");
+          render();
+        }
+      }
+    } catch {
+      // silencioso para nao poluir a UX
+    }
+  }, 15000);
 }
 
 function brandLogoSrc() {
@@ -536,15 +565,18 @@ function navMeta() {
 function render() {
   applyTheme();
   if (!state.user) {
+    stopMaintenanceWatcher();
     app.innerHTML = loginTemplate();
     bindLogin();
     return;
   }
   if (!isManager() && state.appSettings.maintenance_for_operators) {
+    startMaintenanceWatcher();
     app.innerHTML = maintenanceTemplate();
     bindMaintenance();
     return;
   }
+  startMaintenanceWatcher();
   enforceOperatorScope();
   app.innerHTML = shellTemplate();
   bindShellEvents();
@@ -1205,8 +1237,6 @@ function bindLogin() {
         submitButton.disabled = true;
         submitButton.textContent = "Verificando credenciais...";
       }
-      setBootLoaderMessage("Verificando credenciais...");
-      showBootLoader();
       const response = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ login: form.get("login"), password: form.get("password") }),
@@ -1232,8 +1262,6 @@ function bindLogin() {
     } catch (error) {
       setFlash("error", error.message);
     } finally {
-      hideBootLoader();
-      setBootLoaderMessage("Carregando portal...");
       if (submitButton) {
         submitButton.disabled = false;
         submitButton.textContent = originalButtonText;
