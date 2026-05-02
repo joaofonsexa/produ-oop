@@ -992,13 +992,6 @@ function analysisTemplate() {
           </div>
           <label>Início<input type="date" id="start-filter" value="${state.filters.start}"></label>
           <label>Fim<input type="date" id="end-filter" value="${state.filters.end}"></label>
-          <label>Operação
-            <select id="operation-filter">
-              <option value="all" ${state.filters.operation === "all" ? "selected" : ""}>Nuvidio + 0800</option>
-              <option value="nuvidio" ${state.filters.operation === "nuvidio" ? "selected" : ""}>Nuvidio</option>
-              <option value="0800" ${state.filters.operation === "0800" ? "selected" : ""}>0800</option>
-            </select>
-          </label>
           <div class="filter-actions">
             <button class="btn" data-action="refresh-analysis">Aplicar</button>
             <button class="btn-secondary" data-action="reset-analysis">Limpar</button>
@@ -1255,6 +1248,35 @@ function adminTemplate() {
             </div>
           </form>
         </article>
+        <article class="panel">
+          <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Lançamento manual</h3></div></div>
+          <form id="quality-manual-form" class="section">
+            <div class="form-grid">
+              <label>Operador
+                <select name="user_id" required>
+                  <option value="">Selecione</option>
+                  ${operatorUsers.map((user) => `<option value="${user.id}">${esc(user.full_name)}</option>`).join("")}
+                </select>
+              </label>
+              <label>Mês
+                <select id="quality-manual-month-select" required>
+                  ${monthOptions(defaultMonth)}
+                </select>
+              </label>
+              <label>Ano
+                <select id="quality-manual-year-select" required>
+                  ${yearOptions(defaultYear)}
+                </select>
+              </label>
+              <label>Nota (0-100)<input type="number" min="0" max="100" step="0.01" name="score" required></label>
+              <label>Observações<input name="notes" maxlength="220" placeholder="Opcional"></label>
+            </div>
+            <input type="hidden" name="reference_month" id="quality-manual-reference-month" value="${currentReferenceMonth}">
+            <div class="action-grid">
+              <button class="btn" type="submit">Salvar qualidade</button>
+            </div>
+          </form>
+        </article>
       </div>
       <div class="hero-grid">
         <article class="panel">
@@ -1506,13 +1528,6 @@ function bindShellEvents() {
     });
   }
 
-  document.querySelectorAll("#operation-filter").forEach((input) => {
-    input.addEventListener("change", (event) => {
-      state.filters.operation = event.target.value;
-      render();
-    });
-  });
-
   const actionMap = {
     "logout": async () => {
       await api("/api/auth/logout", { method: "POST" });
@@ -1604,6 +1619,43 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      }
+    });
+  }
+
+  const qualityManualForm = document.getElementById("quality-manual-form");
+  if (qualityManualForm) {
+    const monthSelect = document.getElementById("quality-manual-month-select");
+    const yearSelect = document.getElementById("quality-manual-year-select");
+    const monthInput = document.getElementById("quality-manual-reference-month");
+    const syncManualReference = () => {
+      if (!monthSelect || !yearSelect || !monthInput) return;
+      monthInput.value = `${yearSelect.value}-${monthSelect.value}`;
+    };
+    syncManualReference();
+    if (monthSelect) monthSelect.addEventListener("change", syncManualReference);
+    if (yearSelect) yearSelect.addEventListener("change", syncManualReference);
+
+    qualityManualForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitButton = qualityManualForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
+      try {
+        const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+        payload.score = Number(payload.score || 0);
+        await api("/api/admin/quality", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        setFlash("success", "Qualidade salva com sucesso.");
+        qualityManualForm.reset();
+        syncManualReference();
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }

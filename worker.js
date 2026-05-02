@@ -1700,6 +1700,9 @@ async function handleApi(request, url, db, env = {}) {
     metric.calls_nuvidio_approved = toInt(payload.calls_nuvidio_approved ?? metric.calls_nuvidio_approved);
     metric.calls_nuvidio_rejected = toInt(payload.calls_nuvidio_rejected ?? metric.calls_nuvidio_rejected);
     metric.calls_nuvidio_no_action = toInt(payload.calls_nuvidio_no_action ?? metric.calls_nuvidio_no_action);
+    metric.production_0800 = toInt(metric.calls_0800_approved) + toInt(metric.calls_0800_rejected) + toInt(metric.calls_0800_pending) + toInt(metric.calls_0800_no_action);
+    metric.production_nuvidio = toInt(metric.calls_nuvidio_approved) + toInt(metric.calls_nuvidio_rejected) + toInt(metric.calls_nuvidio_no_action);
+    metric.production = toInt(metric.production_0800) + toInt(metric.production_nuvidio);
     metric.updated_at = nowIso();
     await persistStorage(db, env);
     return jsonResponse({ metric: { ...metric, effectiveness: calculateEffectiveness(metric) } });
