@@ -1234,7 +1234,7 @@ body.theme-contrast .modal-card {
 }
 
 .trend-tooltip {
-  position: absolute;
+  position: fixed;
   z-index: 40;
   min-width: 280px;
   max-width: 360px;
@@ -1243,6 +1243,7 @@ body.theme-contrast .modal-card {
   border: 1px solid var(--line);
   background: rgba(12, 16, 22, 0.96);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
 }
 
 .trend-tooltip-title {

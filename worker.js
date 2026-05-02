@@ -8,6 +8,10 @@ const D1_SCHEMA_STATEMENTS = [
   "CREATE TABLE IF NOT EXISTS app_state (id INTEGER PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, login TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, password_plain TEXT, role TEXT NOT NULL, platform_0800_id TEXT, nuvidio_id TEXT, must_change_password INTEGER NOT NULL DEFAULT 1, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_users_login ON users(login)",
+  "CREATE TABLE IF NOT EXISTS daily_metrics (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, metric_date TEXT NOT NULL, production INTEGER NOT NULL DEFAULT 0, production_0800 INTEGER NOT NULL DEFAULT 0, production_nuvidio INTEGER NOT NULL DEFAULT 0, calls_0800_approved INTEGER NOT NULL DEFAULT 0, calls_0800_rejected INTEGER NOT NULL DEFAULT 0, calls_0800_pending INTEGER NOT NULL DEFAULT 0, calls_0800_no_action INTEGER NOT NULL DEFAULT 0, calls_nuvidio_approved INTEGER NOT NULL DEFAULT 0, calls_nuvidio_rejected INTEGER NOT NULL DEFAULT 0, calls_nuvidio_no_action INTEGER NOT NULL DEFAULT 0, import_source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_daily_metrics_user_date ON daily_metrics(user_id, metric_date)",
+  "CREATE TABLE IF NOT EXISTS quality_scores (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, reference_month TEXT NOT NULL, score REAL NOT NULL DEFAULT 0, monitoria_1 REAL, monitoria_2 REAL, monitoria_3 REAL, monitoria_4 REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_quality_scores_user_month ON quality_scores(user_id, reference_month)",
 ];
 const INDEX_HTML = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -51,6 +55,8 @@ const isLocalNodeRuntime =
 
 let nodeModulesPromise;
 let storageCache = null;
+let storageCacheLoadedAt = 0;
+const STORAGE_CACHE_TTL_MS = 1500;
 
 async function nodeModules() {
   if (!isLocalNodeRuntime) return null;
@@ -267,6 +273,44 @@ function normalizeD1UserRow(row) {
   });
 }
 
+function normalizeD1DailyMetricRow(row) {
+  return {
+    id: Number(row.id),
+    user_id: Number(row.user_id),
+    metric_date: String(row.metric_date || "").trim(),
+    production: toInt(row.production),
+    production_0800: toInt(row.production_0800),
+    production_nuvidio: toInt(row.production_nuvidio),
+    calls_0800_approved: toInt(row.calls_0800_approved),
+    calls_0800_rejected: toInt(row.calls_0800_rejected),
+    calls_0800_pending: toInt(row.calls_0800_pending),
+    calls_0800_no_action: toInt(row.calls_0800_no_action),
+    calls_nuvidio_approved: toInt(row.calls_nuvidio_approved),
+    calls_nuvidio_rejected: toInt(row.calls_nuvidio_rejected),
+    calls_nuvidio_no_action: toInt(row.calls_nuvidio_no_action),
+    import_source: String(row.import_source || "").trim(),
+    created_at: row.created_at || nowIso(),
+    updated_at: row.updated_at || nowIso(),
+  };
+}
+
+function normalizeD1QualityScoreRow(row) {
+  const normalizeMonitoria = (value) => (value === null || value === undefined || value === "" ? null : toFloat(value));
+  return {
+    id: Number(row.id),
+    user_id: Number(row.user_id),
+    reference_month: String(row.reference_month || "").trim(),
+    score: toFloat(row.score),
+    monitoria_1: normalizeMonitoria(row.monitoria_1),
+    monitoria_2: normalizeMonitoria(row.monitoria_2),
+    monitoria_3: normalizeMonitoria(row.monitoria_3),
+    monitoria_4: normalizeMonitoria(row.monitoria_4),
+    notes: String(row.notes || "").trim(),
+    created_at: row.created_at || nowIso(),
+    updated_at: row.updated_at || nowIso(),
+  };
+}
+
 async function ensureDefaultPasswords(db) {
   let changed = false;
   const admin = db.users.find((user) => String(user.login).trim().toLowerCase() === "admin");
@@ -309,58 +353,205 @@ async function loadUsersFromD1(connection) {
   return (result?.results || []).map(normalizeD1UserRow);
 }
 
+async function loadDailyMetricsFromD1(connection) {
+  const result = await connection.prepare(`
+    SELECT
+      id,
+      user_id,
+      metric_date,
+      production,
+      production_0800,
+      production_nuvidio,
+      calls_0800_approved,
+      calls_0800_rejected,
+      calls_0800_pending,
+      calls_0800_no_action,
+      calls_nuvidio_approved,
+      calls_nuvidio_rejected,
+      calls_nuvidio_no_action,
+      import_source,
+      created_at,
+      updated_at
+    FROM daily_metrics
+    ORDER BY metric_date, id
+  `).all();
+  return (result?.results || []).map(normalizeD1DailyMetricRow);
+}
+
+async function loadQualityScoresFromD1(connection) {
+  const result = await connection.prepare(`
+    SELECT
+      id,
+      user_id,
+      reference_month,
+      score,
+      monitoria_1,
+      monitoria_2,
+      monitoria_3,
+      monitoria_4,
+      notes,
+      created_at,
+      updated_at
+    FROM quality_scores
+    ORDER BY reference_month, id
+  `).all();
+  return (result?.results || []).map(normalizeD1QualityScoreRow);
+}
+
+async function persistUserRecordToD1(connection, user) {
+  await connection.prepare(`
+    INSERT INTO users (
+      id,
+      full_name,
+      login,
+      password_hash,
+      password_plain,
+      role,
+      platform_0800_id,
+      nuvidio_id,
+      must_change_password,
+      is_active,
+      preferred_theme,
+      last_route,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      full_name = excluded.full_name,
+      login = excluded.login,
+      password_hash = excluded.password_hash,
+      password_plain = excluded.password_plain,
+      role = excluded.role,
+      platform_0800_id = excluded.platform_0800_id,
+      nuvidio_id = excluded.nuvidio_id,
+      must_change_password = excluded.must_change_password,
+      is_active = excluded.is_active,
+      preferred_theme = excluded.preferred_theme,
+      last_route = excluded.last_route,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at
+  `).bind(
+    Number(user.id),
+    String(user.full_name || "").trim(),
+    String(user.login || "").trim(),
+    String(user.password_hash || "").trim(),
+    String(user.password_plain || "").trim(),
+    String(user.role || "operator").trim(),
+    String(user.platform_0800_id || "").trim(),
+    String(user.nuvidio_id || "").trim(),
+    user.must_change_password ? 1 : 0,
+    user.is_active ? 1 : 0,
+    user.preferred_theme === "contrast" ? "contrast" : "dark",
+    normalizeRouteForRole(user.last_route, user.role),
+    user.created_at || nowIso(),
+    user.updated_at || nowIso(),
+  ).run();
+}
+
+async function persistDailyMetricRecordToD1(connection, metric) {
+  await connection.prepare(`
+    INSERT INTO daily_metrics (
+      id,
+      user_id,
+      metric_date,
+      production,
+      production_0800,
+      production_nuvidio,
+      calls_0800_approved,
+      calls_0800_rejected,
+      calls_0800_pending,
+      calls_0800_no_action,
+      calls_nuvidio_approved,
+      calls_nuvidio_rejected,
+      calls_nuvidio_no_action,
+      import_source,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      user_id = excluded.user_id,
+      metric_date = excluded.metric_date,
+      production = excluded.production,
+      production_0800 = excluded.production_0800,
+      production_nuvidio = excluded.production_nuvidio,
+      calls_0800_approved = excluded.calls_0800_approved,
+      calls_0800_rejected = excluded.calls_0800_rejected,
+      calls_0800_pending = excluded.calls_0800_pending,
+      calls_0800_no_action = excluded.calls_0800_no_action,
+      calls_nuvidio_approved = excluded.calls_nuvidio_approved,
+      calls_nuvidio_rejected = excluded.calls_nuvidio_rejected,
+      calls_nuvidio_no_action = excluded.calls_nuvidio_no_action,
+      import_source = excluded.import_source,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at
+  `).bind(
+    Number(metric.id),
+    Number(metric.user_id),
+    String(metric.metric_date || "").trim(),
+    toInt(metric.production),
+    toInt(metric.production_0800),
+    toInt(metric.production_nuvidio),
+    toInt(metric.calls_0800_approved),
+    toInt(metric.calls_0800_rejected),
+    toInt(metric.calls_0800_pending),
+    toInt(metric.calls_0800_no_action),
+    toInt(metric.calls_nuvidio_approved),
+    toInt(metric.calls_nuvidio_rejected),
+    toInt(metric.calls_nuvidio_no_action),
+    String(metric.import_source || "").trim(),
+    metric.created_at || nowIso(),
+    metric.updated_at || nowIso(),
+  ).run();
+}
+
+async function persistQualityScoreRecordToD1(connection, score) {
+  await connection.prepare(`
+    INSERT INTO quality_scores (
+      id,
+      user_id,
+      reference_month,
+      score,
+      monitoria_1,
+      monitoria_2,
+      monitoria_3,
+      monitoria_4,
+      notes,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      user_id = excluded.user_id,
+      reference_month = excluded.reference_month,
+      score = excluded.score,
+      monitoria_1 = excluded.monitoria_1,
+      monitoria_2 = excluded.monitoria_2,
+      monitoria_3 = excluded.monitoria_3,
+      monitoria_4 = excluded.monitoria_4,
+      notes = excluded.notes,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at
+  `).bind(
+    Number(score.id),
+    Number(score.user_id),
+    String(score.reference_month || "").trim(),
+    toFloat(score.score),
+    score.monitoria_1 === null || score.monitoria_1 === undefined || score.monitoria_1 === "" ? null : toFloat(score.monitoria_1),
+    score.monitoria_2 === null || score.monitoria_2 === undefined || score.monitoria_2 === "" ? null : toFloat(score.monitoria_2),
+    score.monitoria_3 === null || score.monitoria_3 === undefined || score.monitoria_3 === "" ? null : toFloat(score.monitoria_3),
+    score.monitoria_4 === null || score.monitoria_4 === undefined || score.monitoria_4 === "" ? null : toFloat(score.monitoria_4),
+    String(score.notes || "").trim(),
+    score.created_at || nowIso(),
+    score.updated_at || nowIso(),
+  ).run();
+}
+
 async function persistUsersToD1(connection, users) {
   for (const user of users) {
-    await connection.prepare(`
-      INSERT INTO users (
-        id,
-        full_name,
-        login,
-        password_hash,
-        password_plain,
-        role,
-        platform_0800_id,
-        nuvidio_id,
-        must_change_password,
-        is_active,
-        preferred_theme,
-        last_route,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        full_name = excluded.full_name,
-        login = excluded.login,
-        password_hash = excluded.password_hash,
-        password_plain = excluded.password_plain,
-        role = excluded.role,
-        platform_0800_id = excluded.platform_0800_id,
-        nuvidio_id = excluded.nuvidio_id,
-        must_change_password = excluded.must_change_password,
-        is_active = excluded.is_active,
-        preferred_theme = excluded.preferred_theme,
-        last_route = excluded.last_route,
-        created_at = excluded.created_at,
-        updated_at = excluded.updated_at
-    `).bind(
-      Number(user.id),
-      String(user.full_name || "").trim(),
-      String(user.login || "").trim(),
-      String(user.password_hash || "").trim(),
-      String(user.password_plain || "").trim(),
-      String(user.role || "operator").trim(),
-      String(user.platform_0800_id || "").trim(),
-      String(user.nuvidio_id || "").trim(),
-      user.must_change_password ? 1 : 0,
-      user.is_active ? 1 : 0,
-      user.preferred_theme === "contrast" ? "contrast" : "dark",
-      normalizeRouteForRole(user.last_route, user.role),
-      user.created_at || nowIso(),
-      user.updated_at || nowIso(),
-    ).run();
+    await persistUserRecordToD1(connection, user);
   }
-
   if (users.length) {
     const placeholders = users.map(() => "?").join(", ");
     await connection.prepare(`DELETE FROM users WHERE id NOT IN (${placeholders})`)
@@ -368,8 +559,48 @@ async function persistUsersToD1(connection, users) {
       .run();
     return;
   }
-
   await connection.prepare("DELETE FROM users").run();
+}
+
+async function persistDailyMetricsToD1(connection, dailyMetrics) {
+  for (const metric of dailyMetrics) {
+    await persistDailyMetricRecordToD1(connection, metric);
+  }
+}
+
+async function persistQualityScoresToD1(connection, qualityScores) {
+  for (const score of qualityScores) {
+    await persistQualityScoreRecordToD1(connection, score);
+  }
+}
+
+async function deleteDailyMetricRecordFromD1(connection, metricId) {
+  await connection.prepare("DELETE FROM daily_metrics WHERE id = ?").bind(Number(metricId)).run();
+}
+
+async function deleteUserDataFromD1(connection, userId) {
+  await connection.prepare("DELETE FROM quality_scores WHERE user_id = ?").bind(Number(userId)).run();
+  await connection.prepare("DELETE FROM daily_metrics WHERE user_id = ?").bind(Number(userId)).run();
+  await connection.prepare("DELETE FROM users WHERE id = ?").bind(Number(userId)).run();
+}
+
+function buildPersistableMetaState(db) {
+  return {
+    counters: db.counters || seedState().counters,
+    importLogs: db.importLogs || [],
+    r2ProcessedKeys: db.r2ProcessedKeys || [],
+    appSettings: db.appSettings || seedState().appSettings,
+  };
+}
+
+async function persistMetaStateToD1(connection, db) {
+  await connection.prepare(`
+    INSERT INTO app_state (id, data, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      data = excluded.data,
+      updated_at = excluded.updated_at
+  `).bind(D1_STATE_ID, JSON.stringify(buildPersistableMetaState(db)), nowIso()).run();
 }
 
 async function ensureD1Schema(connection) {
@@ -560,29 +791,63 @@ function isOperatorBlockedByMaintenance(user, db) {
   return Boolean(user && user.role !== "manager" && db?.appSettings?.maintenance_for_operators);
 }
 
+function rememberStorage(db) {
+  storageCache = db;
+  storageCacheLoadedAt = Date.now();
+  return db;
+}
+
 async function ensureStorage(env = {}) {
   if (env?.DB) {
+    if (storageCache && (Date.now() - storageCacheLoadedAt) < STORAGE_CACHE_TTL_MS) {
+      return storageCache;
+    }
     await ensureD1Schema(env.DB);
     const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
-    const baseState = row?.data ? normalizeDbState(JSON.parse(row.data)) : normalizeDbState(seedState());
-    const loadedUsers = await loadUsersFromD1(env.DB);
-    if (loadedUsers.length) {
-      baseState.users = loadedUsers;
-    } else if (!row?.data) {
-      baseState.users[0].password_hash = await hashPassword("admin123");
+    const seededState = seedState();
+    const rawState = row?.data ? JSON.parse(row.data) : {};
+    const legacyState = normalizeDbState({
+      ...seededState,
+      ...rawState,
+      users: Array.isArray(rawState?.users) ? rawState.users : seededState.users,
+      dailyMetrics: Array.isArray(rawState?.dailyMetrics) ? rawState.dailyMetrics : [],
+      qualityScores: Array.isArray(rawState?.qualityScores) ? rawState.qualityScores : [],
+    });
+    const [loadedUsers, loadedDailyMetrics, loadedQualityScores] = await Promise.all([
+      loadUsersFromD1(env.DB),
+      loadDailyMetricsFromD1(env.DB),
+      loadQualityScoresFromD1(env.DB),
+    ]);
+    const db = normalizeDbState({
+      ...seededState,
+      ...legacyState,
+      users: loadedUsers.length ? loadedUsers : (legacyState.users?.length ? legacyState.users : seededState.users),
+      dailyMetrics: loadedDailyMetrics.length ? loadedDailyMetrics : (legacyState.dailyMetrics || []),
+      qualityScores: loadedQualityScores.length ? loadedQualityScores : (legacyState.qualityScores || []),
+    });
+    if (!loadedUsers.length && !legacyState.users?.length) {
+      db.users[0].password_hash = await hashPassword("admin123");
     }
-    const db = normalizeDbState(baseState);
     const repairedPasswords = await ensureDefaultPasswords(db);
+    const legacyPayloadHasEmbeddedCollections = Boolean(
+      rawState && (
+        Object.prototype.hasOwnProperty.call(rawState, "users")
+        || Object.prototype.hasOwnProperty.call(rawState, "dailyMetrics")
+        || Object.prototype.hasOwnProperty.call(rawState, "qualityScores")
+      )
+    );
     const shouldPersist =
       !row?.data ||
       !loadedUsers.length ||
+      (!loadedDailyMetrics.length && db.dailyMetrics.length > 0) ||
+      (!loadedQualityScores.length && db.qualityScores.length > 0) ||
       repairedPasswords ||
-      db.users.length !== loadedUsers.length;
+      db.users.length !== loadedUsers.length ||
+      legacyPayloadHasEmbeddedCollections;
     if (shouldPersist) {
       await persistStorage(db, env);
     }
-    storageCache = db;
-    return db;
+    return rememberStorage(db);
   }
   if (storageCache) return storageCache;
   if (isLocalNodeRuntime) {
@@ -590,40 +855,88 @@ async function ensureStorage(env = {}) {
     await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
     try {
       const raw = await fs.readFile(DB_PATH, "utf8");
-      storageCache = normalizeDbState(JSON.parse(raw));
+      rememberStorage(normalizeDbState(JSON.parse(raw)));
     } catch {
-      storageCache = normalizeDbState(seedState());
-      storageCache.users[0].password_hash = await hashPassword("admin123");
+      const seeded = normalizeDbState(seedState());
+      seeded.users[0].password_hash = await hashPassword("admin123");
+      rememberStorage(seeded);
       await persistStorage(storageCache, env);
     }
   } else {
-    storageCache = normalizeDbState(seedState());
-    storageCache.users[0].password_hash = await hashPassword("admin123");
+    const seeded = normalizeDbState(seedState());
+    seeded.users[0].password_hash = await hashPassword("admin123");
+    rememberStorage(seeded);
   }
   return storageCache;
 }
 
-async function persistStorage(db, env = {}) {
+async function persistStorage(db, env = {}, scope = {}) {
+  const options = {
+    users: true,
+    dailyMetrics: true,
+    qualityScores: true,
+    meta: true,
+    ...scope,
+  };
   if (env?.DB) {
     await ensureD1Schema(env.DB);
-    await persistUsersToD1(env.DB, db.users || []);
-    await env.DB.prepare(`
-      INSERT INTO app_state (id, data, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        data = excluded.data,
-        updated_at = excluded.updated_at
-    `).bind(D1_STATE_ID, JSON.stringify(db), nowIso()).run();
-    storageCache = db;
+    if (options.users) await persistUsersToD1(env.DB, db.users || []);
+    if (options.dailyMetrics) await persistDailyMetricsToD1(env.DB, db.dailyMetrics || []);
+    if (options.qualityScores) await persistQualityScoresToD1(env.DB, db.qualityScores || []);
+    if (options.meta) await persistMetaStateToD1(env.DB, db);
+    rememberStorage(db);
     return;
   }
   if (!isLocalNodeRuntime || !db) {
-    storageCache = db;
+    rememberStorage(db);
     return;
   }
-  storageCache = db;
+  rememberStorage(db);
   const { fs } = await nodeModules();
   await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
+}
+
+async function persistSingleUserChange(db, env, user, includeMeta = false) {
+  if (env?.DB) {
+    await ensureD1Schema(env.DB);
+    await persistUserRecordToD1(env.DB, user);
+    if (includeMeta) await persistMetaStateToD1(env.DB, db);
+    rememberStorage(db);
+    return;
+  }
+  await persistStorage(db, env, { users: true, dailyMetrics: false, qualityScores: false, meta: includeMeta });
+}
+
+async function persistSingleDailyMetricChange(db, env, metric, includeMeta = false) {
+  if (env?.DB) {
+    await ensureD1Schema(env.DB);
+    await persistDailyMetricRecordToD1(env.DB, metric);
+    if (includeMeta) await persistMetaStateToD1(env.DB, db);
+    rememberStorage(db);
+    return;
+  }
+  await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: includeMeta });
+}
+
+async function persistSingleQualityScoreChange(db, env, score, includeMeta = false) {
+  if (env?.DB) {
+    await ensureD1Schema(env.DB);
+    await persistQualityScoreRecordToD1(env.DB, score);
+    if (includeMeta) await persistMetaStateToD1(env.DB, db);
+    rememberStorage(db);
+    return;
+  }
+  await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: includeMeta });
+}
+
+async function persistMetaOnly(db, env) {
+  if (env?.DB) {
+    await ensureD1Schema(env.DB);
+    await persistMetaStateToD1(env.DB, db);
+    rememberStorage(db);
+    return;
+  }
+  await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: false, meta: true });
 }
 
 function nextId(db, key) {
@@ -1343,6 +1656,16 @@ function buildAnalysis(db, user, url) {
   return { ranking, period: { start, end } };
 }
 
+function buildBootstrap(db, user, url) {
+  return {
+    app_settings: serializeAppSettings(db),
+    users: user.role === "manager" ? db.users.map(serializeUser) : [],
+    overview: buildOverview(db, user, url),
+    analysis: buildAnalysis(db, user, url),
+    history: buildHistory(db, user, url),
+  };
+}
+
 function buildHistory(db, user, url) {
   const start = url.searchParams.get("start") || shiftDate(-29);
   const end = url.searchParams.get("end") || todayIso();
@@ -1411,7 +1734,7 @@ async function handleApi(request, url, db, env = {}) {
     if (plainMatches && !hashMatches) {
       user.password_hash = await hashPassword(inputPassword);
       user.updated_at = nowIso();
-      await persistStorage(db, env);
+      await persistSingleUserChange(db, env, user, false);
     }
     const token = await signSessionWithEnv({
       user_id: user.id,
@@ -1444,7 +1767,7 @@ async function handleApi(request, url, db, env = {}) {
       auth.user.last_route = normalizeRouteForRole(payload.last_route, auth.user.role);
     }
     auth.user.updated_at = nowIso();
-    await persistStorage(db, env);
+    await persistSingleUserChange(db, env, auth.user, false);
     return jsonResponse({ user: serializeUser(auth.user) });
   }
 
@@ -1470,7 +1793,7 @@ async function handleApi(request, url, db, env = {}) {
     auth.user.password_plain = newPassword;
     auth.user.must_change_password = false;
     auth.user.updated_at = nowIso();
-    await persistStorage(db, env);
+    await persistSingleUserChange(db, env, auth.user, false);
     return jsonResponse({ ok: true, user: serializeUser(auth.user) });
   }
 
@@ -1512,7 +1835,7 @@ async function handleApi(request, url, db, env = {}) {
         },
       };
     }
-    await persistStorage(db, env);
+    await persistMetaOnly(db, env);
     return jsonResponse({ app_settings: serializeAppSettings(db) });
   }
 
@@ -1550,6 +1873,15 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
     }
     return jsonResponse(buildAnalysis(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/bootstrap" && request.method === "GET") {
+    const auth = await requireAuth(request, db, env);
+    if (auth.error) return auth.error;
+    if (isOperatorBlockedByMaintenance(auth.user, db)) {
+      return jsonResponse({ error: "Portal em manutenção para operadores." }, 503);
+    }
+    return jsonResponse(buildBootstrap(db, auth.user, url));
   }
 
   if (url.pathname === "/api/history" && request.method === "GET") {
@@ -1599,7 +1931,7 @@ async function handleApi(request, url, db, env = {}) {
       updated_at: nowIso(),
     };
     db.users.push(user);
-    await persistStorage(db, env);
+    await persistSingleUserChange(db, env, user, true);
     return jsonResponse({ user: serializeUser(user), default_password: DEFAULT_PASSWORD }, 201);
   }
 
@@ -1632,7 +1964,7 @@ async function handleApi(request, url, db, env = {}) {
       user.password_plain = String(payload.password).trim();
       user.must_change_password = true;
     }
-    await persistStorage(db, env);
+    await persistSingleUserChange(db, env, user, false);
     return jsonResponse({ user: serializeUser(user) });
   }
 
@@ -1648,7 +1980,14 @@ async function handleApi(request, url, db, env = {}) {
     db.users.splice(userIndex, 1);
     db.dailyMetrics = db.dailyMetrics.filter((entry) => entry.user_id !== userId);
     db.qualityScores = db.qualityScores.filter((entry) => entry.user_id !== userId);
-    await persistStorage(db, env);
+    if (env?.DB) {
+      await ensureD1Schema(env.DB);
+      await deleteUserDataFromD1(env.DB, userId);
+      await persistMetaStateToD1(env.DB, db);
+      rememberStorage(db);
+    } else {
+      await persistStorage(db, env);
+    }
     return jsonResponse({ ok: true });
   }
 
@@ -1695,7 +2034,7 @@ async function handleApi(request, url, db, env = {}) {
       score.notes = String(payload.notes || "").trim();
       score.updated_at = nowIso();
     }
-    await persistStorage(db, env);
+    await persistSingleQualityScoreChange(db, env, score, true);
     return jsonResponse({ quality: score });
   }
 
@@ -1805,7 +2144,7 @@ async function handleApi(request, url, db, env = {}) {
       }
     }
 
-    await persistStorage(db, env);
+    await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: true });
     return jsonResponse({ processed, rejected: errors.length, errors: errors.slice(0, 20) });
   }
 
@@ -1855,7 +2194,8 @@ async function handleApi(request, url, db, env = {}) {
           calls_nuvidio_no_action: noAction,
         };
     upsertDailyMetric(db, user.id, metricDate, values, "manual_tag");
-    await persistStorage(db, env);
+    const metric = db.dailyMetrics.find((entry) => entry.user_id === user.id && entry.metric_date === metricDate);
+    await persistSingleDailyMetricChange(db, env, metric, true);
     return jsonResponse({ ok: true });
   }
 
@@ -1878,7 +2218,7 @@ async function handleApi(request, url, db, env = {}) {
     metric.production_nuvidio = toInt(metric.calls_nuvidio_approved) + toInt(metric.calls_nuvidio_rejected) + toInt(metric.calls_nuvidio_no_action);
     metric.production = toInt(metric.production_0800) + toInt(metric.production_nuvidio);
     metric.updated_at = nowIso();
-    await persistStorage(db, env);
+    await persistSingleDailyMetricChange(db, env, metric, false);
     return jsonResponse({ metric: { ...metric, effectiveness: calculateEffectiveness(metric) } });
   }
 
@@ -1889,7 +2229,13 @@ async function handleApi(request, url, db, env = {}) {
     const index = db.dailyMetrics.findIndex((entry) => entry.id === metricId);
     if (index === -1) return jsonResponse({ error: "Registro nao encontrado" }, 404);
     db.dailyMetrics.splice(index, 1);
-    await persistStorage(db, env);
+    if (env?.DB) {
+      await ensureD1Schema(env.DB);
+      await deleteDailyMetricRecordFromD1(env.DB, metricId);
+      rememberStorage(db);
+    } else {
+      await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: false });
+    }
     return jsonResponse({ ok: true });
   }
 
@@ -2001,7 +2347,7 @@ async function handleApi(request, url, db, env = {}) {
       summary.skipped.push("Nenhum arquivo novo para processar no R2.");
     }
 
-    await persistStorage(db, env);
+    await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: true });
     return jsonResponse(summary);
   }
 
@@ -2035,7 +2381,7 @@ async function handleApi(request, url, db, env = {}) {
     else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
     const { processed, rejected, errors } = outcome;
     registerImportLog(db, auth.user.id, file.name, processed, rejected);
-    await persistStorage(db, env);
+    await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: true });
     return jsonResponse({ processed, rejected, errors: errors.slice(0, 20) });
   }
 

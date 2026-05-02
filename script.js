@@ -123,7 +123,7 @@ function clearFlash() {
 
 function refreshDashboardInBackground(successMessage = "") {
   if (successMessage) setFlash("success", successMessage);
-  Promise.all([loadOverview(), loadAnalysis(), loadHistory()])
+  loadBootstrap()
     .then(() => render())
     .catch((error) => setFlash("error", error.message || "Falha ao atualizar os dados."));
 }
@@ -619,15 +619,10 @@ async function boot() {
 }
 
 async function loadAll() {
-  if (isManager()) {
+  if (isManager() && !state.users.length) {
     await loadUsers();
-    ensureManagerUserFilters();
   }
-  await Promise.all([
-    loadOverview(),
-    loadAnalysis(),
-    loadHistory(),
-  ]);
+  await loadBootstrap();
 }
 
 async function loadOverview() {
@@ -643,6 +638,22 @@ async function loadHistory() {
     ? "all"
     : (isManager() ? state.filters.historyUserId || state.user.id : state.user.id);
   state.history = await api(`/api/history?user_id=${userId}&start=${state.filters.start}&end=${state.filters.end}`);
+}
+
+async function loadBootstrap() {
+  const userId = isManager() && (state.filters.analysisUserId === "all" || state.filters.historyUserId === "all")
+    ? "all"
+    : (isManager() ? state.filters.historyUserId || state.user.id : state.user.id);
+  const data = await api(`/api/bootstrap?date=${state.filters.today}&start=${state.filters.start}&end=${state.filters.end}&user_id=${userId}`);
+  state.overview = data.overview;
+  state.analysis = data.analysis;
+  state.history = data.history;
+  if (data.app_settings) state.appSettings = data.app_settings;
+  if (isManager() && Array.isArray(data.users) && data.users.length) {
+    state.users = data.users;
+    ensureManagerUserFilters();
+    state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.filters.historyQuery;
+  }
 }
 
 async function loadUsers() {
@@ -1606,6 +1617,28 @@ function bindShellEvents() {
     });
   }
 
+  const placeTooltipAbovePoint = (tooltip, point) => {
+    if (!tooltip || !point) return;
+    tooltip.hidden = false;
+    tooltip.style.visibility = "hidden";
+    const rect = point.getBoundingClientRect();
+    const tooltipWidth = tooltip.offsetWidth || 280;
+    const tooltipHeight = tooltip.offsetHeight || 120;
+    const margin = 12;
+    const centeredLeft = rect.left + (rect.width / 2) - (tooltipWidth / 2);
+    const resolvedLeft = Math.min(
+      window.innerWidth - tooltipWidth - margin,
+      Math.max(margin, centeredLeft),
+    );
+    let resolvedTop = rect.top - tooltipHeight - 10;
+    if (resolvedTop < margin) {
+      resolvedTop = rect.bottom + 10;
+    }
+    tooltip.style.left = `${resolvedLeft}px`;
+    tooltip.style.top = `${resolvedTop}px`;
+    tooltip.style.visibility = "visible";
+  };
+
   if (trendTooltip && isManager()) {
     const trendPoints = document.querySelectorAll(".trend-point[data-trend-date]");
     const showTrendTooltip = async (point, event) => {
@@ -1631,11 +1664,7 @@ function bindShellEvents() {
         <div class="trend-tooltip-title">Top 10 · ${esc(formatDateBr(key))}</div>
         ${lines}
       `;
-      trendTooltip.hidden = false;
-      const rect = point.getBoundingClientRect();
-      const parentRect = point.closest(".panel")?.getBoundingClientRect() || rect;
-      trendTooltip.style.left = `${Math.max(16, rect.left - parentRect.left + 24)}px`;
-      trendTooltip.style.top = `${Math.max(12, rect.top - parentRect.top - 8)}px`;
+      placeTooltipAbovePoint(trendTooltip, point);
     };
 
     trendPoints.forEach((point) => {
@@ -1705,11 +1734,7 @@ function bindShellEvents() {
         <div class="trend-tooltip-line"><span>${esc(metricWhenLabel(dataset))}</span></div>
         ${lines}
       `;
-      analysisMetricTooltip.hidden = false;
-      const rect = point.getBoundingClientRect();
-      const parentRect = point.closest(".panel")?.getBoundingClientRect() || rect;
-      analysisMetricTooltip.style.left = `${Math.max(16, rect.left - parentRect.left + 24)}px`;
-      analysisMetricTooltip.style.top = `${Math.max(12, rect.top - parentRect.top - 8)}px`;
+      placeTooltipAbovePoint(analysisMetricTooltip, point);
     };
     analysisPoints.forEach((point) => {
       point.addEventListener("mouseenter", () => {
@@ -1777,7 +1802,7 @@ function bindShellEvents() {
       setFlash("success", "Atualizado.");
     },
     "refresh-analysis": async () => {
-      await Promise.all([loadAnalysis(), loadOverview(), loadHistory()]);
+      await loadBootstrap();
       setFlash("success", "Análises atualizadas.");
     },
     "refresh-history": async () => {
@@ -1802,7 +1827,7 @@ function bindShellEvents() {
       state.filters.end = new Date().toISOString().slice(0, 10);
       state.filters.operation = "all";
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
-      await Promise.all([loadAnalysis(), loadOverview(), loadHistory()]);
+      await loadBootstrap();
       setFlash("success", "Filtros redefinidos.");
     },
     "toggle-theme": async () => {
@@ -1850,7 +1875,7 @@ function bindShellEvents() {
         const response = await fetch("/api/admin/quality/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Erro ao importar monitoria");
-        await loadHistory();
+        await loadBootstrap();
         setFlash("success", `Monitoria importada com ${data.processed} operadores.`);
         render();
       } catch (error) {
@@ -1917,7 +1942,7 @@ function bindShellEvents() {
         const response = await fetch("/api/admin/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Erro ao importar base.");
-        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        await loadBootstrap();
         setFlash("success", `Base importada: ${data.processed} registro(s), ${data.rejected} rejeição(ões).`);
         render();
       } catch (error) {
