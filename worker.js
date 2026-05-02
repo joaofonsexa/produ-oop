@@ -1681,6 +1681,17 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ metric: { ...metric, effectiveness: calculateEffectiveness(metric) } });
   }
 
+  if (url.pathname.startsWith("/api/admin/daily-metrics/") && request.method === "DELETE") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const metricId = Number(url.pathname.split("/").pop());
+    const index = db.dailyMetrics.findIndex((entry) => entry.id === metricId);
+    if (index === -1) return jsonResponse({ error: "Registro nao encontrado" }, 404);
+    db.dailyMetrics.splice(index, 1);
+    await persistStorage(db, env);
+    return jsonResponse({ ok: true });
+  }
+
   if (url.pathname === "/api/admin/import/r2" && request.method === "POST") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;

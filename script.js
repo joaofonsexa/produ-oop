@@ -34,6 +34,8 @@ bootLoader.innerHTML = `
 `;
 document.body.appendChild(bootLoader);
 let maintenanceWatcher = null;
+let maintenanceWatcherInFlight = false;
+let maintenanceVisibilityHandlerBound = false;
 
 function setBootLoaderMessage(message) {
   const label = document.getElementById("boot-loader-message");
@@ -53,27 +55,46 @@ function stopMaintenanceWatcher() {
     clearInterval(maintenanceWatcher);
     maintenanceWatcher = null;
   }
+  maintenanceWatcherInFlight = false;
+}
+
+async function checkMaintenanceNow() {
+  if (!state.user || isManager() || maintenanceWatcherInFlight) return;
+  maintenanceWatcherInFlight = true;
+  try {
+    const auth = await api("/api/auth/me");
+    if (auth.app_settings) {
+      const wasActive = Boolean(state.appSettings?.maintenance_for_operators);
+      state.appSettings = auth.app_settings;
+      const isActive = Boolean(state.appSettings.maintenance_for_operators);
+      if (!wasActive && isActive) {
+        setFlash("error", state.appSettings.maintenance_message || "Portal em manutenção para operadores.");
+        render();
+      }
+    }
+  } catch {
+    // silencioso para nao poluir a UX
+  } finally {
+    maintenanceWatcherInFlight = false;
+  }
 }
 
 function startMaintenanceWatcher() {
   stopMaintenanceWatcher();
   if (!state.user || isManager()) return;
-  maintenanceWatcher = setInterval(async () => {
-    try {
-      const auth = await api("/api/auth/me");
-      if (auth.app_settings) {
-        const wasActive = Boolean(state.appSettings?.maintenance_for_operators);
-        state.appSettings = auth.app_settings;
-        const isActive = Boolean(state.appSettings.maintenance_for_operators);
-        if (!wasActive && isActive) {
-          setFlash("error", state.appSettings.maintenance_message || "Portal em manutenção para operadores.");
-          render();
-        }
-      }
-    } catch {
-      // silencioso para nao poluir a UX
-    }
-  }, 15000);
+  maintenanceWatcher = setInterval(() => {
+    checkMaintenanceNow();
+  }, 5000);
+  checkMaintenanceNow();
+  if (!maintenanceVisibilityHandlerBound) {
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) checkMaintenanceNow();
+    });
+    window.addEventListener("focus", () => {
+      checkMaintenanceNow();
+    });
+    maintenanceVisibilityHandlerBound = true;
+  }
 }
 
 function brandLogoSrc() {
@@ -343,23 +364,33 @@ function getScopedHistory() {
     if (operation === "all" || operation === "0800") {
       list.push({
         metricId: row.id,
+        userId: row.user_id,
         date: row.metric_date,
         operation: "0800",
-        production: row.production,
+        production: Number(row.production_0800 || 0),
         effectiveness: calcOperationEffectiveness(row, "0800"),
         quality: findQualityForDate(row.metric_date),
         updatedAt: row.updated_at,
+        calls_approved: Number(row.calls_0800_approved || 0),
+        calls_rejected: Number(row.calls_0800_rejected || 0),
+        calls_pending: Number(row.calls_0800_pending || 0),
+        calls_no_action: Number(row.calls_0800_no_action || 0),
       });
     }
     if (operation === "all" || operation === "nuvidio") {
       list.push({
         metricId: row.id,
+        userId: row.user_id,
         date: row.metric_date,
         operation: "Nuvidio",
-        production: row.production,
+        production: Number(row.production_nuvidio || 0),
         effectiveness: calcOperationEffectiveness(row, "nuvidio"),
         quality: findQualityForDate(row.metric_date),
         updatedAt: row.updated_at,
+        calls_approved: Number(row.calls_nuvidio_approved || 0),
+        calls_rejected: Number(row.calls_nuvidio_rejected || 0),
+        calls_pending: 0,
+        calls_no_action: Number(row.calls_nuvidio_no_action || 0),
       });
     }
     return list;
@@ -538,7 +569,7 @@ async function loadAnalysis() {
 }
 
 async function loadHistory() {
-  const userId = isManager() && state.filters.analysisUserId === "all"
+  const userId = isManager() && (state.filters.analysisUserId === "all" || state.filters.historyUserId === "all")
     ? "all"
     : (isManager() ? state.filters.historyUserId || state.user.id : state.user.id);
   state.history = await api(`/api/history?user_id=${userId}&start=${state.filters.start}&end=${state.filters.end}`);
@@ -1030,6 +1061,7 @@ function analysisTemplate() {
 function historyTemplate() {
   const rows = getScopedHistory();
   const currentHistoryUser = getUserLabelById(state.filters.historyUserId);
+  const showOperatorColumn = isManager() && (state.filters.historyUserId === "all" || !String(state.filters.historyQuery || "").trim());
   return `
     <section class="section">
       <article class="table-card">
@@ -1054,25 +1086,36 @@ function historyTemplate() {
           <table>
             <thead>
               <tr>
+                ${showOperatorColumn ? "<th>Operador</th>" : ""}
                 <th>Data</th>
                 <th>Operação</th>
                 <th>Produção</th>
                 <th>Efetividade</th>
                 <th>Qualidade</th>
                 <th>Atualizado</th>
+                ${isManager() ? "<th>Ações</th>" : ""}
               </tr>
             </thead>
             <tbody>
               ${rows.length ? rows.map((row) => `
                 <tr>
+                  ${showOperatorColumn ? `<td>${esc(state.users.find((user) => String(user.id) === String(row.userId))?.full_name || "—")}</td>` : ""}
                   <td>${esc(formatDateBr(row.date))}</td>
                   <td><span class="pill ${row.operation === "0800" ? "amber" : "blue"}">${esc(row.operation)}</span></td>
                   <td>${integer(row.production)}</td>
                   <td>${percent(row.effectiveness)}</td>
                   <td>${number(row.quality)}</td>
                   <td>${esc(formatDateTimeBr(row.updatedAt))}</td>
+                  ${isManager() ? `
+                    <td>
+                      <div class="row-actions">
+                        <button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}">Editar</button>
+                        <button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}">Remover</button>
+                      </div>
+                    </td>
+                  ` : ""}
                 </tr>
-              `).join("") : `<tr><td colspan="6"><div class="empty">Sem resultados.</div></td></tr>`}
+              `).join("") : `<tr><td colspan="${(isManager() ? 7 : 6) + (showOperatorColumn ? 1 : 0)}"><div class="empty">Sem resultados.</div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -1437,12 +1480,17 @@ function bindShellEvents() {
     },
     "refresh-history": async () => {
       if (isManager()) {
-        const resolvedUserId = resolveHistoryUserId(state.filters.historyQuery);
-        if (!resolvedUserId) {
-          throw new Error("Selecione um operador válido para pesquisar.");
+        if (!String(state.filters.historyQuery || "").trim()) {
+          state.filters.historyUserId = "all";
+          state.filters.analysisUserId = "all";
+        } else {
+          const resolvedUserId = resolveHistoryUserId(state.filters.historyQuery);
+          if (!resolvedUserId) {
+            throw new Error("Selecione um operador válido para pesquisar.");
+          }
+          state.filters.historyUserId = resolvedUserId;
+          state.filters.historyQuery = getUserLabelById(resolvedUserId);
         }
-        state.filters.historyUserId = resolvedUserId;
-        state.filters.historyQuery = getUserLabelById(resolvedUserId);
       }
       await loadHistory();
       setFlash("success", "Histórico atualizado.");
@@ -1654,6 +1702,87 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-history-edit]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const metricId = Number(button.dataset.historyEdit);
+      const operation = String(button.dataset.historyOperation || "");
+      const baseRow = (state.history?.history || []).find((item) => Number(item.id) === metricId);
+      if (!baseRow) {
+        setFlash("error", "Registro não encontrado para edição.");
+        return;
+      }
+      const is0800 = operation === "0800";
+      const currentApproved = is0800 ? Number(baseRow.calls_0800_approved || 0) : Number(baseRow.calls_nuvidio_approved || 0);
+      const currentRejected = is0800 ? Number(baseRow.calls_0800_rejected || 0) : Number(baseRow.calls_nuvidio_rejected || 0);
+      const currentPending = is0800 ? Number(baseRow.calls_0800_pending || 0) : 0;
+      const currentNoAction = is0800 ? Number(baseRow.calls_0800_no_action || 0) : Number(baseRow.calls_nuvidio_no_action || 0);
+
+      const approved = window.prompt(`Aprovado (${operation})`, String(currentApproved));
+      if (approved === null) return;
+      const rejected = window.prompt(`Reprovado (${operation})`, String(currentRejected));
+      if (rejected === null) return;
+      let pending = String(currentPending);
+      if (is0800) {
+        const pendingPrompt = window.prompt("Pendenciado (0800)", String(currentPending));
+        if (pendingPrompt === null) return;
+        pending = pendingPrompt;
+      }
+      const noAction = window.prompt(`Sem ação (${operation})`, String(currentNoAction));
+      if (noAction === null) return;
+
+      const approvedN = Math.max(0, Number(approved || 0));
+      const rejectedN = Math.max(0, Number(rejected || 0));
+      const pendingN = Math.max(0, Number(pending || 0));
+      const noActionN = Math.max(0, Number(noAction || 0));
+      const restoreButton = setButtonProcessing(button, true, "Salvando...");
+      try {
+        const payload = is0800
+          ? {
+              production: Math.max(0, Number(baseRow.production_nuvidio || 0)) + approvedN + rejectedN + pendingN + noActionN,
+              calls_0800_approved: approvedN,
+              calls_0800_rejected: rejectedN,
+              calls_0800_pending: pendingN,
+              calls_0800_no_action: noActionN,
+            }
+          : {
+              production: Math.max(0, Number(baseRow.production_0800 || 0)) + approvedN + rejectedN + noActionN,
+              calls_nuvidio_approved: approvedN,
+              calls_nuvidio_rejected: rejectedN,
+              calls_nuvidio_no_action: noActionN,
+            };
+        await api(`/api/admin/daily-metrics/${metricId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        setFlash("success", `Registro ${operation} atualizado.`);
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-history-delete]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const metricId = Number(button.dataset.historyDelete);
+      if (!window.confirm("Remover este registro diário?")) return;
+      const restoreButton = setButtonProcessing(button, true, "Removendo...");
+      try {
+        await api(`/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
+        await Promise.all([loadOverview(), loadAnalysis(), loadHistory()]);
+        setFlash("success", "Registro removido com sucesso.");
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   });

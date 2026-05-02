@@ -1200,6 +1200,12 @@ body.theme-contrast .modal-card {
   min-width: 124px;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .chart {
   min-height: 146px;
 }
