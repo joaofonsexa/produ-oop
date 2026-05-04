@@ -2130,6 +2130,8 @@ function bindShellEvents() {
     baseImportForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
+      const submitButton = baseImportForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Importando...");
       try {
         const response = await fetch("/api/admin/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
@@ -2145,11 +2147,14 @@ function bindShellEvents() {
           state.filters.historyQuery = "";
           state.filters.operation = "all";
         }
+        state.route = "history";
         await loadBootstrap();
         setFlash("success", `Base importada: ${data.processed} registro(s), ${data.rejected} rejeição(ões).`);
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }
