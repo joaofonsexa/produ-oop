@@ -292,14 +292,15 @@ function getOperatorUsers() {
 function ensureManagerUserFilters() {
   if (!isManager()) return;
   const operators = getOperatorUsers();
-  const firstOperatorId = operators[0] ? String(operators[0].id) : "";
   if (state.filters.analysisUserId !== "all" && !operators.some((user) => String(user.id) === String(state.filters.analysisUserId))) {
     state.filters.analysisUserId = "all";
   }
-  if (!operators.some((user) => String(user.id) === String(state.filters.historyUserId))) {
-    state.filters.historyUserId = firstOperatorId;
+  if (state.filters.historyUserId !== "all" && !operators.some((user) => String(user.id) === String(state.filters.historyUserId))) {
+    state.filters.historyUserId = "all";
   }
-  if (!state.filters.historyQuery || !operators.some((user) => user.full_name === state.filters.historyQuery)) {
+  if (state.filters.historyUserId === "all") {
+    state.filters.historyQuery = "";
+  } else if (!state.filters.historyQuery || !operators.some((user) => user.full_name === state.filters.historyQuery)) {
     state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || "";
   }
 }
@@ -311,6 +312,7 @@ function getUserLabelById(userId) {
 function resolveHistoryUserId(query) {
   const normalized = String(query || "").trim().toLowerCase();
   if (!normalized) return "";
+  if (normalized === "todos os operadores") return "all";
   const exact = getOperatorUsers().find((user) => user.full_name.trim().toLowerCase() === normalized);
   if (exact) return String(exact.id);
   const partial = getOperatorUsers().find((user) => user.full_name.trim().toLowerCase().includes(normalized));
@@ -675,13 +677,13 @@ async function boot() {
     if (auth.app_settings) state.appSettings = auth.app_settings;
     if (state.user) {
       applyUserPreferences();
-      state.filters.historyUserId = String(state.user.id);
+      state.filters.historyUserId = isManager() ? "all" : String(state.user.id);
       if (!isManager()) state.filters.analysisUserId = String(state.user.id);
       enforceOperatorScope();
       if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
         await loadAll();
       }
-      state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
+      state.filters.historyQuery = isManager() ? "" : (getUserLabelById(state.filters.historyUserId) || state.user.full_name);
       state.forcePasswordChange = Boolean(state.user.must_change_password);
     }
   } catch {
@@ -1405,6 +1407,11 @@ function alertsTemplate() {
 function historyTemplate() {
   const rows = getScopedHistory();
   const currentHistoryUser = getUserLabelById(state.filters.historyUserId);
+  const historyInputValue = isManager()
+    ? (state.filters.historyUserId === "all" && !String(state.filters.historyQuery || "").trim()
+      ? "Todos os operadores"
+      : (state.filters.historyQuery || currentHistoryUser))
+    : (state.filters.historyQuery || currentHistoryUser);
   const showOperatorColumn = isManager() && (state.filters.historyUserId === "all" || !String(state.filters.historyQuery || "").trim());
   const userNameById = new Map((state.users || []).map((user) => [String(user.id), user.full_name]));
   return `
@@ -1418,7 +1425,7 @@ function historyTemplate() {
           <div class="filter-actions history-tools">
             ${isManager() ? `
               <label>Operador
-                <input id="history-user-search" list="history-user-options" value="${esc(state.filters.historyQuery || currentHistoryUser)}" placeholder="Pesquisar operador">
+                <input id="history-user-search" list="history-user-options" value="${esc(historyInputValue)}" placeholder="Pesquisar operador">
                 <datalist id="history-user-options">
                   ${getOperatorUsers().map((user) => `<option value="${esc(user.full_name)}"></option>`).join("")}
                 </datalist>
@@ -1689,14 +1696,14 @@ function bindLogin() {
       if (response.app_settings) state.appSettings = response.app_settings;
       applyUserPreferences();
       state.forcePasswordChange = Boolean(state.user.must_change_password);
-      state.filters.historyUserId = String(state.user.id);
+      state.filters.historyUserId = isManager() ? "all" : String(state.user.id);
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
       enforceOperatorScope();
       render();
       if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
         loadAll()
           .then(() => {
-            state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.user.full_name;
+            state.filters.historyQuery = isManager() ? "" : (getUserLabelById(state.filters.historyUserId) || state.user.full_name);
             render();
           })
           .catch((error) => {
