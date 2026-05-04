@@ -31,6 +31,7 @@
   },
 };
 
+const DEFAULT_PASSWORD_HINT = "Trocar@01";
 const app = document.getElementById("app");
 const bootLoader = document.createElement("div");
 bootLoader.className = "boot-loader";
@@ -648,22 +649,23 @@ function buildAnalysisModel() {
     ...item,
     share: statusTotal ? (item.value / statusTotal) * 100 : 0,
   }));
-  const buildStatusBreakdown = (bucket) => {
-    const total = bucket.approved + bucket.pending + bucket.rejected + bucket.noAction + (bucket.empty || 0);
-    const breakdown = [
+  const buildStatusBreakdown = (bucket, visibleKeys = ["approved", "rejected", "pending", "noAction", "empty"]) => {
+    const breakdownBase = [
       { key: "approved", label: "Aprovado", value: bucket.approved, tone: "green" },
       { key: "rejected", label: "Reprovado", value: bucket.rejected, tone: "red" },
       { key: "pending", label: "Pendenciado", value: bucket.pending, tone: "amber" },
       { key: "noAction", label: "Sem ação", value: bucket.noAction, tone: "blue" },
       { key: "empty", label: "Vazio", value: bucket.empty || 0, tone: "muted" },
-    ].map((item) => ({
+    ].filter((item) => visibleKeys.includes(item.key));
+    const total = breakdownBase.reduce((sum, item) => sum + Number(item.value || 0), 0);
+    const breakdown = breakdownBase.map((item) => ({
       ...item,
       share: total ? (item.value / total) * 100 : 0,
     }));
     return { total, breakdown };
   };
-  const tags0800 = buildStatusBreakdown(status0800);
-  const tagsNuvidio = buildStatusBreakdown(statusNuvidio);
+  const tags0800 = buildStatusBreakdown(status0800, ["approved", "rejected", "pending", "noAction"]);
+  const tagsNuvidio = buildStatusBreakdown(statusNuvidio, ["approved", "rejected", "noAction", "empty"]);
   const byDate0800 = new Map();
   const byDateNuvidio = new Map();
   historyRows.forEach((row) => {
@@ -1110,7 +1112,32 @@ function loginTemplate() {
           <label>Login<input name="login" required></label>
           <label>Senha<input name="password" type="password" required></label>
           <button class="btn" type="submit">Acessar</button>
+          <button class="btn-secondary" type="button" id="open-self-reset-modal">Esqueci minha senha</button>
         </form>
+      </div>
+      <div class="modal-backdrop" id="self-reset-modal" hidden>
+        <div class="modal-card">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Acesso</span>
+              <h3>Redefinir minha senha</h3>
+            </div>
+            <button class="icon-close" type="button" id="close-self-reset-modal" aria-label="Fechar">×</button>
+          </div>
+          <form id="self-reset-form" class="section compact-form">
+            <div class="info-box">Confirme seus dados cadastrados para definir uma nova senha.</div>
+            <label>Login<input name="login" required></label>
+            <label>Nome completo<input name="full_name" required></label>
+            <label>ID 0800 (opcional)<input name="platform_0800_id"></label>
+            <label>Qual seu usuário da Nuvidio?<input name="nuvidio_id"></label>
+            <label>Nova senha<input name="new_password" type="password" minlength="4" required></label>
+            <label>Confirmar nova senha<input name="confirm_password" type="password" minlength="4" required></label>
+            <div class="action-grid">
+              <button class="btn-secondary" type="button" id="cancel-self-reset-modal">Cancelar</button>
+              <button class="btn" type="submit">Salvar nova senha</button>
+            </div>
+          </form>
+        </div>
       </div>
       ${flashTemplate()}
     </section>
@@ -1736,6 +1763,7 @@ function adminTemplate() {
                     ${user.is_active ? "Ativo" : "Inativo"}
                   </button>
                   <button class="btn-secondary btn-small" type="button" data-user-edit="${user.id}">Editar</button>
+                  <button class="btn-secondary btn-small" type="button" data-user-reset="${user.id}">Resetar senha</button>
                   <button class="btn-secondary btn-small danger-outline" type="button" data-user-delete="${user.id}">Apagar</button>
                 </div>
               </div>
@@ -1747,7 +1775,47 @@ function adminTemplate() {
   `;
 }
 function bindLogin() {
-  document.getElementById("login-form").addEventListener("submit", async (event) => {
+  const loginForm = document.getElementById("login-form");
+  const selfResetModal = document.getElementById("self-reset-modal");
+  const selfResetForm = document.getElementById("self-reset-form");
+  const closeSelfResetModal = () => {
+    if (!selfResetModal) return;
+    selfResetModal.hidden = true;
+    if (selfResetForm) selfResetForm.reset();
+  };
+
+  document.getElementById("open-self-reset-modal")?.addEventListener("click", () => {
+    if (selfResetModal) selfResetModal.hidden = false;
+  });
+  document.querySelectorAll("#close-self-reset-modal, #cancel-self-reset-modal").forEach((button) => {
+    button.addEventListener("click", closeSelfResetModal);
+  });
+  if (selfResetModal) {
+    selfResetModal.addEventListener("click", (event) => {
+      if (event.target === selfResetModal) closeSelfResetModal();
+    });
+  }
+  if (selfResetForm) {
+    selfResetForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
+      try {
+        await api("/api/auth/reset-self", {
+          method: "POST",
+          body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget).entries())),
+        });
+        closeSelfResetModal();
+        setFlash("success", "Senha redefinida com sucesso. Faça login com a nova senha.");
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
+      }
+    });
+  }
+
+  loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const submitButton = event.currentTarget.querySelector('button[type="submit"]');
@@ -2407,6 +2475,27 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-user-reset]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const user = state.users.find((item) => String(item.id) === String(button.dataset.userReset));
+      if (!user) return;
+      if (!window.confirm(`Resetar a senha de ${user.full_name} para ${DEFAULT_PASSWORD_HINT}?`)) return;
+      const restoreButton = setButtonProcessing(button, true, "Resetando...");
+      try {
+        const data = await api(`/api/admin/users/${user.id}/reset-password`, {
+          method: "POST",
+        });
+        await loadUsers();
+        setFlash("success", `Senha resetada para ${data.default_password}. O usuário deverá trocar no próximo login.`);
+        render();
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   });

@@ -2059,6 +2059,50 @@ async function handleApi(request, url, db, env = {}) {
     );
   }
 
+  if (url.pathname === "/api/auth/reset-self" && request.method === "POST") {
+    const payload = await request.json();
+    const login = String(payload.login || "").trim();
+    const fullName = String(payload.full_name || "").trim();
+    const id0800 = String(payload.platform_0800_id || "").trim();
+    const nuvidioId = String(payload.nuvidio_id || "").trim();
+    const newPassword = String(payload.new_password || "").trim();
+    const confirmPassword = String(payload.confirm_password || "").trim();
+    const user = db.users.find((entry) => entry.login === login && entry.is_active);
+
+    if (!login || !fullName || !newPassword || !confirmPassword) {
+      return jsonResponse({ error: "Preencha login, nome completo e a nova senha." }, 400);
+    }
+    if (!user) {
+      return jsonResponse({ error: "Usuário não encontrado." }, 404);
+    }
+    if (normalizeComparable(user.full_name) !== normalizeComparable(fullName)) {
+      return jsonResponse({ error: "Nome completo não confere com o cadastro." }, 400);
+    }
+    if (newPassword.length < 4) {
+      return jsonResponse({ error: "A nova senha deve ter pelo menos 4 caracteres" }, 400);
+    }
+    if (newPassword !== confirmPassword) {
+      return jsonResponse({ error: "A confirmação da senha não confere" }, 400);
+    }
+
+    const has0800 = String(user.platform_0800_id || "").trim();
+    const hasNuvidio = String(user.nuvidio_id || "").trim();
+    const matches0800 = has0800 && id0800 && normalizeComparable(has0800) === normalizeComparable(id0800);
+    const matchesNuvidio = hasNuvidio && nuvidioId && normalizeComparable(hasNuvidio) === normalizeComparable(nuvidioId);
+    const managerFallback = user.role === "manager" && !has0800 && !hasNuvidio;
+
+    if (!matches0800 && !matchesNuvidio && !managerFallback) {
+      return jsonResponse({ error: "Informe um ID vinculado válido para confirmar sua identidade." }, 400);
+    }
+
+    user.password_hash = await hashPassword(newPassword);
+    user.password_plain = newPassword;
+    user.must_change_password = false;
+    user.updated_at = nowIso();
+    await persistSingleUserChange(db, env, user, false);
+    return jsonResponse({ ok: true });
+  }
+
   if (url.pathname === "/api/auth/logout" && request.method === "POST") {
     return jsonResponse({ ok: true }, 200, {
       "set-cookie": `${SESSION_NAME}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`,
@@ -2281,6 +2325,24 @@ async function handleApi(request, url, db, env = {}) {
     }
     await persistSingleUserChange(db, env, user, false);
     return jsonResponse({ user: serializeUser(user) });
+  }
+
+  if (url.pathname.startsWith("/api/admin/users/") && url.pathname.endsWith("/reset-password") && request.method === "POST") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const userId = Number(url.pathname.split("/").slice(-2, -1)[0]);
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) return jsonResponse({ error: "Usuario nao encontrado" }, 404);
+    user.password_hash = await hashPassword(DEFAULT_PASSWORD);
+    user.password_plain = DEFAULT_PASSWORD;
+    user.must_change_password = true;
+    user.updated_at = nowIso();
+    await persistSingleUserChange(db, env, user, false);
+    return jsonResponse({
+      ok: true,
+      user: serializeUser(user),
+      default_password: DEFAULT_PASSWORD,
+    });
   }
 
   if (url.pathname.startsWith("/api/admin/users/") && request.method === "DELETE") {
