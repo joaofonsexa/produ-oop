@@ -1895,36 +1895,24 @@ function buildAlerts(db, user, url) {
     });
   }
 
-  function pushNoActionPenalty(scoreParts, reasons, noActionShare, avgProduction) {
+  function pushNoActionPenalty(scoreParts, _reasons, noActionShare, avgProduction) {
     if (!Number.isFinite(noActionShare) || noActionShare <= 0) return;
     let penalty = 0;
-    let tone = "amber";
     if (noActionShare >= 25) {
       penalty = 4.5;
-      tone = "red";
     } else if (noActionShare >= 20) {
       penalty = 3;
-      tone = "amber";
     } else if (noActionShare >= 15) {
       penalty = 2;
-      tone = "amber";
     } else if (noActionShare >= 10) {
       penalty = 1.2;
-      tone = "amber";
     } else if (noActionShare >= 5) {
       penalty = 0.6;
-      tone = "amber";
     }
     if (!penalty) return;
     if (avgProduction >= metricRules.production.amber_max) penalty = clampScore(penalty + 0.5);
     else if (avgProduction >= metricRules.production.red_max) penalty = clampScore(penalty + 0.3);
     scoreParts.push(penalty);
-    reasons.push({
-      tone,
-      text: tone === "red"
-        ? `Sem ação / vazio muito alto para o volume lançado (${Math.round(noActionShare)}%).`
-        : `Sem ação / vazio acima do ideal (${Math.round(noActionShare)}%).`,
-    });
   }
 
   for (const entry of users) {
