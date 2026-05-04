@@ -2040,9 +2040,11 @@ function buildAlerts(db, user, url) {
     summary: {
       monitored: scoredOperators.length,
       total: alerts.length,
-      average_score: scoredOperators.length
-        ? Number((scoredOperators.reduce((sum, value) => sum + value, 0) / scoredOperators.length).toFixed(1))
-        : 0,
+      average_score: alerts.length
+        ? Number((alerts.reduce((sum, item) => sum + Number(item.alert_score || 0), 0) / alerts.length).toFixed(1))
+        : (scoredOperators.length
+          ? Number((scoredOperators.reduce((sum, value) => sum + value, 0) / scoredOperators.length).toFixed(1))
+          : 0),
       max_score: alerts.length ? alerts[0].alert_score : 10,
     },
     alerts,
