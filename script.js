@@ -22,8 +22,8 @@
   theme: "dark",
   filters: {
     today: new Date().toISOString().slice(0, 10),
-    start: new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+    start: "",
+    end: "",
     historyUserId: "",
     historyQuery: "",
     analysisUserId: "all",
@@ -2132,8 +2132,8 @@ function bindShellEvents() {
       }
     },
     "reset-analysis": async () => {
-      state.filters.start = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-      state.filters.end = new Date().toISOString().slice(0, 10);
+      state.filters.start = "";
+      state.filters.end = "";
       state.filters.operation = "all";
       state.filters.analysisUserId = isManager() ? "all" : String(state.user.id);
       await loadBootstrap();

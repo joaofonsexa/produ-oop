@@ -92,6 +92,19 @@ function monthRef(dateValue) {
   return String(dateValue).slice(0, 7);
 }
 
+function resolveDateRange(metrics = [], requestedStart = "", requestedEnd = "") {
+  const dates = metrics
+    .map((item) => String(item.metric_date || "").trim())
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort((a, b) => a.localeCompare(b));
+  const fallbackStart = dates[0] || todayIso();
+  const fallbackEnd = dates[dates.length - 1] || fallbackStart;
+  return {
+    start: String(requestedStart || "").trim() || fallbackStart,
+    end: String(requestedEnd || "").trim() || fallbackEnd,
+  };
+}
+
 function isSaturdayIsoDate(dateValue) {
   const raw = String(dateValue || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
@@ -1637,10 +1650,11 @@ function import0800SummaryRows(db, users, rows, sourceName) {
 }
 
 function buildOverview(db, user, url) {
-  const dateValue = url.searchParams.get("date") || todayIso();
-  const start = url.searchParams.get("start") || shiftDate(-29);
-  const end = url.searchParams.get("end") || todayIso();
   const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
+  const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
+  const start = range.start;
+  const end = range.end;
+  const dateValue = String(url.searchParams.get("date") || "").trim() || end;
   const todayRows = scopedMetrics.filter((metric) => metric.metric_date === dateValue);
   const monthRows = db.qualityScores.filter((score) => score.reference_month === monthRef(dateValue) && (user.role === "manager" || score.user_id === user.id));
   const trendRows = scopedMetrics
@@ -1756,8 +1770,10 @@ function buildMetricTop(db, user, url) {
 }
 
 function buildAnalysis(db, user, url) {
-  const start = url.searchParams.get("start") || shiftDate(-29);
-  const end = url.searchParams.get("end") || todayIso();
+  const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
+  const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
+  const start = range.start;
+  const end = range.end;
   const users = db.users.filter((entry) => entry.is_active && (user.role === "manager" || entry.id === user.id));
   const ranking = users.map((entry) => {
     const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
@@ -1787,13 +1803,15 @@ function buildBootstrap(db, user, url) {
 }
 
 function buildAlerts(db, user, url) {
-  const start = url.searchParams.get("start") || shiftDate(-29);
-  const end = url.searchParams.get("end") || todayIso();
   const requestedRawUserId = String(url.searchParams.get("user_id") || "all").trim().toLowerCase();
   const includeAllUsers = requestedRawUserId === "all";
   const requestedUserId = Number(requestedRawUserId || 0);
   const users = db.users.filter((entry) => entry.is_active && entry.role === "operator")
     .filter((entry) => includeAllUsers || entry.id === requestedUserId);
+  const scopedMetrics = db.dailyMetrics.filter((metric) => users.some((entry) => entry.id === metric.user_id));
+  const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
+  const start = range.start;
+  const end = range.end;
   const metricRules = serializeAppSettings(db).metric_rules;
   const qualityByUser = new Map();
   for (const score of (db.qualityScores || []).slice().sort((a, b) => b.reference_month.localeCompare(a.reference_month) || b.updated_at.localeCompare(a.updated_at))) {
@@ -1953,14 +1971,16 @@ function buildAlerts(db, user, url) {
 }
 
 function buildHistory(db, user, url) {
-  const start = url.searchParams.get("start") || shiftDate(-29);
-  const end = url.searchParams.get("end") || todayIso();
-  const startMonth = String(start).slice(0, 7);
-  const endMonth = String(end).slice(0, 7);
   const requestedRawUserId = String(url.searchParams.get("user_id") || user.id).trim().toLowerCase();
   const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
   const requestedUserId = Number(requestedRawUserId || user.id);
   const targetUserId = user.role === "manager" ? requestedUserId : user.id;
+  const scopedMetrics = db.dailyMetrics.filter((metric) => (includeAllUsers ? true : metric.user_id === targetUserId));
+  const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
+  const start = range.start;
+  const end = range.end;
+  const startMonth = String(start).slice(0, 7);
+  const endMonth = String(end).slice(0, 7);
   const history = db.dailyMetrics
     .filter((row) => {
       if (row.metric_date < start || row.metric_date > end) return false;
