@@ -169,11 +169,25 @@ async function api(path, options = {}) {
 }
 
 function esc(value) {
-  return String(value ?? "")
+  return repairTextEncoding(String(value ?? ""))
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function repairTextEncoding(value) {
+  const raw = String(value ?? "");
+  if (!raw || !/[ÃÂâ]/.test(raw)) return raw;
+  try {
+    const bytes = Uint8Array.from([...raw].map((char) => char.charCodeAt(0) & 0xff));
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+    const originalNoise = (raw.match(/[ÃÂâ]/g) || []).length;
+    const decodedNoise = (decoded.match(/[ÃÂâ�]/g) || []).length;
+    return decodedNoise < originalNoise ? decoded : raw;
+  } catch {
+    return raw;
+  }
 }
 
 function number(value) {
@@ -207,7 +221,19 @@ function metricTone(value, metricType) {
 }
 
 function initials(name) {
-  return String(name || "KR").split(" ").filter(Boolean).slice(0, 2).map((item) => item[0]).join("").toUpperCase();
+  return repairTextEncoding(String(name || "KR")).split(" ").filter(Boolean).slice(0, 2).map((item) => item[0]).join("").toUpperCase();
+}
+
+function normalizeUserPayload(user) {
+  if (!user) return user;
+  return {
+    ...user,
+    full_name: repairTextEncoding(user.full_name),
+  };
+}
+
+function normalizeUsersPayload(users) {
+  return Array.isArray(users) ? users.map(normalizeUserPayload) : [];
 }
 
 function average(values, options = {}) {
@@ -249,7 +275,7 @@ async function saveUserPreferences(partial) {
     method: "PATCH",
     body: JSON.stringify(partial),
   });
-  state.user = response.user;
+  state.user = normalizeUserPayload(response.user);
 }
 
 function enforceOperatorScope() {
@@ -645,7 +671,7 @@ async function boot() {
   }
   try {
     const auth = await api("/api/auth/me");
-    state.user = auth.user;
+    state.user = normalizeUserPayload(auth.user);
     if (auth.app_settings) state.appSettings = auth.app_settings;
     if (state.user) {
       applyUserPreferences();
@@ -700,7 +726,7 @@ async function loadBootstrap() {
   state.history = data.history;
   if (data.app_settings) state.appSettings = data.app_settings;
   if (isManager() && Array.isArray(data.users) && data.users.length) {
-    state.users = data.users;
+    state.users = normalizeUsersPayload(data.users);
     ensureManagerUserFilters();
     state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.filters.historyQuery;
   }
@@ -717,7 +743,7 @@ async function loadAlerts() {
 
 async function loadUsers() {
   const response = await api("/api/admin/users");
-  state.users = response.users;
+  state.users = normalizeUsersPayload(response.users);
   if (isManager()) {
     ensureManagerUserFilters();
     state.filters.historyQuery = getUserLabelById(state.filters.historyUserId) || state.filters.historyQuery;
@@ -1659,7 +1685,7 @@ function bindLogin() {
         method: "POST",
         body: JSON.stringify({ login: form.get("login"), password: form.get("password") }),
       });
-      state.user = response.user;
+      state.user = normalizeUserPayload(response.user);
       if (response.app_settings) state.appSettings = response.app_settings;
       applyUserPreferences();
       state.forcePasswordChange = Boolean(state.user.must_change_password);
@@ -2256,7 +2282,7 @@ function bindShellEvents() {
         });
         await loadUsers();
         if (String(state.user?.id) === String(data.user.id)) {
-          state.user = { ...state.user, ...data.user };
+          state.user = normalizeUserPayload({ ...state.user, ...data.user });
         }
         closeUserModal();
         setFlash("success", "Usuário atualizado com sucesso.");
@@ -2282,7 +2308,7 @@ function bindShellEvents() {
         });
         await loadUsers();
         if (String(state.user?.id) === String(data.user.id)) {
-          state.user = { ...state.user, ...data.user };
+          state.user = normalizeUserPayload({ ...state.user, ...data.user });
         }
         setFlash("success", `Usuário ${data.user.is_active ? "ativado" : "desativado"} com sucesso.`);
         render();

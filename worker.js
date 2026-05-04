@@ -165,6 +165,20 @@ function normalizeIdentifier(value) {
     .trim();
 }
 
+function repairTextEncoding(value) {
+  const raw = String(value ?? "");
+  if (!raw || !/[ÃÂâ]/.test(raw)) return raw;
+  try {
+    const bytes = Uint8Array.from([...raw].map((char) => char.charCodeAt(0) & 0xff));
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+    const originalNoise = (raw.match(/[ÃÂâ]/g) || []).length;
+    const decodedNoise = (decoded.match(/[ÃÂâ�]/g) || []).length;
+    return decodedNoise < originalNoise ? decoded : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function loginLocalPart(value) {
   const normalized = normalizeIdentifier(value);
   if (!normalized) return "";
@@ -175,7 +189,7 @@ function loginLocalPart(value) {
 function serializeUser(user) {
   return {
     id: user.id,
-    full_name: user.full_name,
+    full_name: repairTextEncoding(user.full_name),
     login: user.login,
     role: user.role,
     platform_0800_id: user.platform_0800_id,
@@ -199,6 +213,7 @@ function normalizeUserRecord(user, roleFallback = "operator") {
   const role = user.role || roleFallback;
   return {
     ...user,
+    full_name: repairTextEncoding(user.full_name),
     role,
     must_change_password: Boolean(user.must_change_password),
     is_active: user.is_active !== false,
@@ -213,7 +228,7 @@ function normalizeDbState(db) {
     const nextUserId = Math.max(0, ...db.users.map((user) => Number(user.id) || 0)) + 1;
     db.users.push({
       id: nextUserId,
-      full_name: "JoÃ£o Fonseca",
+      full_name: "João Fonseca",
       login: "joao.fonseca",
       password_hash: PRIMARY_MANAGER_HASH,
       password_plain: "Krsa@2026",
@@ -478,7 +493,7 @@ async function persistDailyMetricRecordToD1(connection, metric) {
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       user_id = excluded.user_id,
       metric_date = excluded.metric_date,
@@ -1653,7 +1668,7 @@ function buildOverview(db, user, url) {
     effectiveness: averageIgnoreZero(item.effectivenessParts),
   }));
   const operators = todayRows.map((row) => ({
-    name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+    name: repairTextEncoding(db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador"),
     production: toInt(row.production_0800) + toInt(row.production_nuvidio),
     effectiveness: averageIgnoreZero([
       calculateOperationEffectiveness(row, "0800"),
@@ -1676,7 +1691,7 @@ function buildDayTop(db, user, url) {
       const effectiveness = averageIgnoreZero([eff0800, effNuvidio]);
       return {
         user_id: row.user_id,
-        name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+        name: repairTextEncoding(db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador"),
         production,
         effectiveness,
       };
@@ -1705,7 +1720,7 @@ function buildMetricTop(db, user, url) {
     const top = scopedQuality
       .map((row) => ({
         user_id: row.user_id,
-        name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+        name: repairTextEncoding(db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador"),
         value: resolveQualityValue(row),
       }))
       .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
@@ -1731,7 +1746,7 @@ function buildMetricTop(db, user, url) {
       }
       return {
         user_id: row.user_id,
-        name: db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador",
+        name: repairTextEncoding(db.users.find((entry) => entry.id === row.user_id)?.full_name || "Operador"),
         value,
       };
     })
@@ -1750,7 +1765,7 @@ function buildAnalysis(db, user, url) {
     const quality = db.qualityScores.find((score) => score.user_id === entry.id && score.reference_month === monthRef(end));
     return {
       user_id: entry.id,
-      name: entry.full_name,
+      name: repairTextEncoding(entry.full_name),
       avg_production: productionMetrics.length ? Number((productionMetrics.reduce((sum, row) => sum + toInt(row.production), 0) / productionMetrics.length).toFixed(2)) : 0,
       total_production: metrics.reduce((sum, row) => sum + toInt(row.production), 0),
       effectiveness: average(metrics.map(calculateEffectiveness)),
@@ -1899,7 +1914,7 @@ function buildAlerts(db, user, url) {
 
     alerts.push({
       user_id: entry.id,
-      name: entry.full_name,
+      name: repairTextEncoding(entry.full_name),
       login: entry.login,
       alert_score: alertScore,
       alert_tone: toneFromScore(alertScore),
