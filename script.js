@@ -640,15 +640,21 @@ function buildAnalysisModel() {
   };
   const tags0800 = buildStatusBreakdown(status0800);
   const tagsNuvidio = buildStatusBreakdown(statusNuvidio);
+  const latestHistoryDate = (state.history?.history || []).reduce((max, row) => {
+    const date = String(row.metric_date || "").trim();
+    return date && (!max || date > max) ? date : max;
+  }, "");
   const effectivenessValues = [];
-  (state.history?.history || []).forEach((row) => {
+  (state.history?.history || [])
+    .filter((row) => !latestHistoryDate || String(row.metric_date || "").trim() === latestHistoryDate)
+    .forEach((row) => {
     if (state.filters.operation === "all" || state.filters.operation === "0800") {
       effectivenessValues.push(calcOperationEffectiveness(row, "0800"));
     }
     if (state.filters.operation === "all" || state.filters.operation === "nuvidio") {
       effectivenessValues.push(calcOperationEffectiveness(row, "nuvidio"));
     }
-  });
+    });
   return {
     trend,
     qualityMonths,
