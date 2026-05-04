@@ -547,6 +547,7 @@ function buildAnalysisModel() {
   const selectedUser = state.filters.analysisUserId;
   const filteredRanking = selectedUser === "all" ? ranking : ranking.filter((item) => String(item.user_id) === String(selectedUser));
   const trend = state.overview?.trend || [];
+  const historyRows = state.history?.history || [];
   const qualityRows = (state.history?.quality || []).slice().sort((a, b) => a.reference_month.localeCompare(b.reference_month));
   const qualityByMonthMap = new Map();
   const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";
@@ -584,21 +585,21 @@ function buildAnalysisModel() {
       final_score: final,
     };
   }).sort((a, b) => a.reference_month.localeCompare(b.reference_month));
-  const status0800 = (state.history?.history || []).reduce((acc, row) => {
+  const status0800 = historyRows.reduce((acc, row) => {
     acc.approved += Number(row.calls_0800_approved || 0);
     acc.pending += Number(row.calls_0800_pending || 0);
     acc.rejected += Number(row.calls_0800_rejected || 0);
     acc.noAction += Number(row.calls_0800_no_action || 0);
     return acc;
   }, { approved: 0, pending: 0, rejected: 0, noAction: 0 });
-  const statusNuvidio = (state.history?.history || []).reduce((acc, row) => {
+  const statusNuvidio = historyRows.reduce((acc, row) => {
     acc.approved += Number(row.calls_nuvidio_approved || 0);
     acc.rejected += Number(row.calls_nuvidio_rejected || 0);
     acc.noAction += Number(row.calls_nuvidio_no_action || 0);
     acc.empty += Number(row.calls_nuvidio_empty || 0);
     return acc;
   }, { approved: 0, pending: 0, rejected: 0, noAction: 0, empty: 0 });
-  const status = (state.history?.history || []).reduce((acc, row) => {
+  const status = historyRows.reduce((acc, row) => {
     if (state.filters.operation === "all" || state.filters.operation === "0800") {
       acc.approved += Number(row.calls_0800_approved || 0);
       acc.pending += Number(row.calls_0800_pending || 0);
@@ -640,23 +641,50 @@ function buildAnalysisModel() {
   };
   const tags0800 = buildStatusBreakdown(status0800);
   const tagsNuvidio = buildStatusBreakdown(statusNuvidio);
-  const latestHistoryDate = (state.history?.history || []).reduce((max, row) => {
+  const byDate0800 = new Map();
+  const byDateNuvidio = new Map();
+  historyRows.forEach((row) => {
     const date = String(row.metric_date || "").trim();
-    return date && (!max || date > max) ? date : max;
-  }, "");
-  const effectivenessValues = [];
-  (state.history?.history || [])
-    .filter((row) => !latestHistoryDate || String(row.metric_date || "").trim() === latestHistoryDate)
-    .forEach((row) => {
-    if (state.filters.operation === "all" || state.filters.operation === "0800") {
-      effectivenessValues.push(calcOperationEffectiveness(row, "0800"));
-    }
-    if (state.filters.operation === "all" || state.filters.operation === "nuvidio") {
-      effectivenessValues.push(calcOperationEffectiveness(row, "nuvidio"));
-    }
-    });
+    if (!date) return;
+    const current0800 = byDate0800.get(date) || { date, production: 0, effectivenessParts: [] };
+    const currentNuvidio = byDateNuvidio.get(date) || { date, production: 0, effectivenessParts: [] };
+    current0800.production += Number(row.production_0800 || 0);
+    currentNuvidio.production += Number(row.production_nuvidio || 0);
+    current0800.effectivenessParts.push(calcOperationEffectiveness(row, "0800"));
+    currentNuvidio.effectivenessParts.push(calcOperationEffectiveness(row, "nuvidio"));
+    byDate0800.set(date, current0800);
+    byDateNuvidio.set(date, currentNuvidio);
+  });
+  const trend0800 = [...byDate0800.values()]
+    .map((item) => ({
+      date: item.date,
+      production: item.production,
+      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const trendNuvidio = [...byDateNuvidio.values()]
+    .map((item) => ({
+      date: item.date,
+      production: item.production,
+      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const latestTrendDate = [...new Set([...trend0800.map((item) => item.date), ...trendNuvidio.map((item) => item.date)])]
+    .sort((a, b) => a.localeCompare(b))
+    .pop() || "";
+  const latest0800 = trend0800.find((item) => item.date === latestTrendDate);
+  const latestNuvidio = trendNuvidio.find((item) => item.date === latestTrendDate);
+  const latestEffectivenessValues = [];
+  if (state.filters.operation === "all" || state.filters.operation === "0800") {
+    latestEffectivenessValues.push(Number(latest0800?.effectiveness || 0));
+  }
+  if (state.filters.operation === "all" || state.filters.operation === "nuvidio") {
+    latestEffectivenessValues.push(Number(latestNuvidio?.effectiveness || 0));
+  }
   return {
     trend,
+    trend0800,
+    trendNuvidio,
     qualityMonths,
     filteredRanking,
     status,
@@ -666,7 +694,7 @@ function buildAnalysisModel() {
     tagsNuvidio,
     summary: {
       production: average(filteredRanking.map((item) => item.avg_production), { ignoreZero: true }),
-      effectiveness: average(effectivenessValues, { ignoreZero: true }),
+      effectiveness: average(latestEffectivenessValues, { ignoreZero: true }),
     },
   };
 }
@@ -1180,43 +1208,8 @@ function analysisTemplate() {
     Number(item.monitoria_4 || 0),
     Number(item.final_score || item.score || 0),
   ]), 10);
-  const historyRows = state.history?.history || [];
-  const byDate0800 = new Map();
-  const byDateNuvidio = new Map();
-  historyRows.forEach((row) => {
-    const date = row.metric_date;
-    if (!date) return;
-    const current0800 = byDate0800.get(date) || {
-      date,
-      production: 0,
-      effectivenessParts: [],
-    };
-    const currentNuvidio = byDateNuvidio.get(date) || {
-      date,
-      production: 0,
-      effectivenessParts: [],
-    };
-    current0800.production += Number(row.production_0800 || 0);
-    currentNuvidio.production += Number(row.production_nuvidio || 0);
-    current0800.effectivenessParts.push(calcOperationEffectiveness(row, "0800"));
-    currentNuvidio.effectivenessParts.push(calcOperationEffectiveness(row, "nuvidio"));
-    byDate0800.set(date, current0800);
-    byDateNuvidio.set(date, currentNuvidio);
-  });
-  const trend0800 = [...byDate0800.values()]
-    .map((item) => ({
-      date: item.date,
-      production: item.production,
-      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
-    }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const trendNuvidio = [...byDateNuvidio.values()]
-    .map((item) => ({
-      date: item.date,
-      production: item.production,
-      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
-    }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const trend0800 = model.trend0800 || [];
+  const trendNuvidio = model.trendNuvidio || [];
   const maxProd0800 = Math.max(...trend0800.map((item) => Number(item.production || 0)), 1);
   const maxEff0800 = Math.max(...trend0800.map((item) => Number(item.effectiveness || 0)), 1);
   const maxProdNuvidio = Math.max(...trendNuvidio.map((item) => Number(item.production || 0)), 1);
