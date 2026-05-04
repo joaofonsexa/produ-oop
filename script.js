@@ -8,6 +8,13 @@
       effectiveness: { red_max: 70, amber_max: 90 },
       quality: { red_max: 70, amber_max: 90 },
     },
+    alert_rules: {
+      production_nuvidio: { critical_min: 70 },
+      production_0800: { critical_min: 70 },
+      effectiveness_0800: { critical_min: 70 },
+      effectiveness_nuvidio: { critical_min: 70 },
+      quality: { critical_min: 70 },
+    },
   },
   dayTopCache: {},
   analysisTopCache: {},
@@ -27,6 +34,7 @@
     historyUserId: "",
     historyQuery: "",
     analysisUserId: "all",
+    usersQuery: "",
     operation: "all",
   },
 };
@@ -154,6 +162,38 @@ function setButtonProcessing(button, processing, processingText = "Processando..
   };
 }
 
+function enhancePasswordFields(root = document) {
+  root.querySelectorAll('input[type="password"]').forEach((input) => {
+    if (input.dataset.passwordEnhanced === "true") return;
+    const parent = input.parentElement;
+    if (!parent) return;
+    input.dataset.passwordEnhanced = "true";
+    const wrapper = document.createElement("div");
+    wrapper.className = "password-input-wrap";
+    parent.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "password-toggle-btn";
+    toggle.setAttribute("aria-label", "Mostrar senha");
+    toggle.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M2.2 12c2.1-3.9 5.7-6.1 9.8-6.1s7.7 2.2 9.8 6.1c-2.1 3.9-5.7 6.1-9.8 6.1S4.3 15.9 2.2 12Z"></path>
+        <circle cx="12" cy="12" r="3.2"></circle>
+      </svg>`;
+    toggle.addEventListener("click", () => {
+      const visible = input.type === "text";
+      input.type = visible ? "password" : "text";
+      toggle.classList.toggle("is-active", !visible);
+      toggle.setAttribute("aria-label", visible ? "Mostrar senha" : "Ocultar senha");
+      input.focus({ preventScroll: true });
+      const length = input.value.length;
+      input.setSelectionRange(length, length);
+    });
+    wrapper.appendChild(toggle);
+  });
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
@@ -208,6 +248,16 @@ function metricRules() {
     production: { red_max: 70, amber_max: 100 },
     effectiveness: { red_max: 70, amber_max: 90 },
     quality: { red_max: 70, amber_max: 90 },
+  };
+}
+
+function alertRules() {
+  return state.appSettings?.alert_rules || {
+    production_nuvidio: { critical_min: 70 },
+    production_0800: { critical_min: 70 },
+    effectiveness_0800: { critical_min: 70 },
+    effectiveness_nuvidio: { critical_min: 70 },
+    quality: { critical_min: 70 },
   };
 }
 
@@ -288,6 +338,19 @@ function enforceOperatorScope() {
 
 function getOperatorUsers() {
   return state.users.filter((user) => user.role === "operator" && user.is_active);
+}
+
+function getFilteredUsers() {
+  const query = repairTextEncoding(String(state.filters.usersQuery || ""))
+    .trim()
+    .toLocaleLowerCase("pt-BR");
+  if (!query) return state.users;
+  return state.users.filter((user) => {
+    const fullName = repairTextEncoding(String(user.full_name || "")).toLocaleLowerCase("pt-BR");
+    const login = repairTextEncoding(String(user.login || "")).toLocaleLowerCase("pt-BR");
+    const role = user.role === "manager" ? "gestor" : "operador";
+    return fullName.includes(query) || login.includes(query) || role.includes(query);
+  });
 }
 
 function ensureManagerUserFilters() {
@@ -845,7 +908,7 @@ function navMeta() {
   return {
     overview: "Visão geral",
     analysis: "Análises",
-    alerts: "Alertas",
+    alerts: "Ofensores",
     history: "Histórico",
     admin: "Gestão",
   };
@@ -921,7 +984,7 @@ function shellTemplate() {
   const titles = {
     overview: { title: isManager() ? "Visão da operação" : "Performance do operador", desc: "" },
     analysis: { title: "Análises", desc: "" },
-    alerts: { title: "Alertas", desc: "" },
+    alerts: { title: "Ofensores", desc: "" },
     history: { title: "Histórico", desc: "" },
     admin: { title: "Gestão", desc: "" },
   };
@@ -1390,7 +1453,7 @@ function alertsTemplate() {
         <article class="panel">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">Alertas</span>
+              <span class="eyebrow">Ofensores</span>
               <h3>Leitura de risco operacional</h3>
             </div>
           </div>
@@ -1577,6 +1640,7 @@ function adminTemplate() {
   const currentReferenceMonth = new Date().toISOString().slice(0, 7);
   const [defaultYear, defaultMonth] = currentReferenceMonth.split("-");
   const operatorUsers = getOperatorUsers();
+  const filteredUsers = getFilteredUsers();
   return `
     <section class="section">
       <div class="hero-grid">
@@ -1613,8 +1677,20 @@ function adminTemplate() {
                 </div>
               </div>
             </div>
+            <div class="mini-grid">
+              <div class="mini-card">
+                <span class="muted">Ofensores · crítico até</span>
+                <div class="form-grid">
+                  <label>Produção Nuvidio <input type="number" id="alert-production-nuvidio" value="${Number(alertRules().production_nuvidio.critical_min ?? 70)}"></label>
+                  <label>Produção 0800 <input type="number" id="alert-production-0800" value="${Number(alertRules().production_0800.critical_min ?? 70)}"></label>
+                  <label>Efetividade 0800 <input type="number" id="alert-effectiveness-0800" value="${Number(alertRules().effectiveness_0800.critical_min ?? 70)}"></label>
+                  <label>Efetividade Nuvidio <input type="number" id="alert-effectiveness-nuvidio" value="${Number(alertRules().effectiveness_nuvidio.critical_min ?? 70)}"></label>
+                  <label>Qualidade <input type="number" id="alert-quality" value="${Number(alertRules().quality.critical_min ?? 70)}"></label>
+                </div>
+              </div>
+            </div>
             <div class="action-grid">
-              <button class="btn" type="submit">Salvar manutenção</button>
+              <button class="btn" type="submit">Salvar metas</button>
             </div>
           </form>
         </article>
@@ -1751,8 +1827,13 @@ function adminTemplate() {
         </article>
         <article class="panel">
           <div class="panel-head"><div><span class="eyebrow">Usuários</span><h3>Cadastrados</h3></div></div>
+          <div class="management-user-search">
+            <label>Pesquisar usuário
+              <input id="management-user-search" value="${esc(state.filters.usersQuery)}" placeholder="Nome, login ou perfil">
+            </label>
+          </div>
           <div class="list">
-            ${state.users.length ? state.users.map((user) => `
+            ${filteredUsers.length ? filteredUsers.map((user) => `
               <div class="list-row">
                 <div class="list-row-copy">
                   <strong>${esc(user.full_name)}</strong>
@@ -1767,7 +1848,7 @@ function adminTemplate() {
                   <button class="btn-secondary btn-small danger-outline" type="button" data-user-delete="${user.id}">Apagar</button>
                 </div>
               </div>
-            `).join("") : `<div class="empty">Nenhum usuário cadastrado.</div>`}
+            `).join("") : `<div class="empty">${state.users.length ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}</div>`}
           </div>
         </article>
       </div>
@@ -1775,6 +1856,7 @@ function adminTemplate() {
   `;
 }
 function bindLogin() {
+  enhancePasswordFields();
   const loginForm = document.getElementById("login-form");
   const selfResetModal = document.getElementById("self-reset-modal");
   const selfResetForm = document.getElementById("self-reset-form");
@@ -1860,6 +1942,7 @@ function bindLogin() {
 }
 
 function bindShellEvents() {
+  enhancePasswordFields();
   const profileMenuTrigger = document.getElementById("profile-menu-trigger");
   const profileMenuPopover = document.getElementById("profile-menu-popover");
   const passwordModal = document.getElementById("password-modal");
@@ -2141,6 +2224,14 @@ function bindShellEvents() {
   if (historyUserSearch) {
     historyUserSearch.addEventListener("input", (event) => {
       state.filters.historyQuery = event.target.value;
+    });
+  }
+
+  const managementUserSearch = document.getElementById("management-user-search");
+  if (managementUserSearch) {
+    managementUserSearch.addEventListener("input", (event) => {
+      state.filters.usersQuery = event.target.value;
+      render();
     });
   }
 
@@ -2643,42 +2734,88 @@ function bindShellEvents() {
 
   const maintenanceForm = document.getElementById("admin-maintenance-form");
   if (maintenanceForm) {
+    const maintenanceToggle = document.getElementById("maintenance-toggle");
+    const maintenanceMessage = document.getElementById("maintenance-message");
+    const metricProductionRed = document.getElementById("metric-production-red");
+    const metricProductionAmber = document.getElementById("metric-production-amber");
+    const metricEffectivenessRed = document.getElementById("metric-effectiveness-red");
+    const metricEffectivenessAmber = document.getElementById("metric-effectiveness-amber");
+    const metricQualityRed = document.getElementById("metric-quality-red");
+    const metricQualityAmber = document.getElementById("metric-quality-amber");
+    const alertProductionNuvidio = document.getElementById("alert-production-nuvidio");
+    const alertProduction0800 = document.getElementById("alert-production-0800");
+    const alertEffectiveness0800 = document.getElementById("alert-effectiveness-0800");
+    const alertEffectivenessNuvidio = document.getElementById("alert-effectiveness-nuvidio");
+    const alertQuality = document.getElementById("alert-quality");
+    const buildMetricRulesPayload = () => ({
+      production: {
+        red_max: Number(metricProductionRed?.value || 70),
+        amber_max: Number(metricProductionAmber?.value || 100),
+      },
+      effectiveness: {
+        red_max: Number(metricEffectivenessRed?.value || 70),
+        amber_max: Number(metricEffectivenessAmber?.value || 90),
+      },
+        quality: {
+          red_max: Number(metricQualityRed?.value || 70),
+          amber_max: Number(metricQualityAmber?.value || 90),
+        },
+      });
+    const buildAlertRulesPayload = () => ({
+      production_nuvidio: {
+        critical_min: Number(alertProductionNuvidio?.value || 70),
+      },
+      production_0800: {
+        critical_min: Number(alertProduction0800?.value || 70),
+      },
+      effectiveness_0800: {
+        critical_min: Number(alertEffectiveness0800?.value || 70),
+      },
+      effectiveness_nuvidio: {
+        critical_min: Number(alertEffectivenessNuvidio?.value || 70),
+      },
+      quality: {
+        critical_min: Number(alertQuality?.value || 70),
+      },
+    });
+
+    if (maintenanceToggle) {
+      maintenanceToggle.addEventListener("change", async () => {
+        maintenanceToggle.disabled = true;
+        try {
+          const response = await api("/api/admin/settings", {
+            method: "PATCH",
+            body: JSON.stringify({
+              maintenance_for_operators: Boolean(maintenanceToggle.checked),
+            }),
+          });
+          state.appSettings = response.app_settings || state.appSettings;
+          setFlash("success", maintenanceToggle.checked ? "Manutenção ativada." : "Manutenção desativada.");
+          render();
+        } catch (error) {
+          maintenanceToggle.checked = !maintenanceToggle.checked;
+          setFlash("error", error.message);
+        } finally {
+          maintenanceToggle.disabled = false;
+        }
+      });
+    }
+
     maintenanceForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const maintenanceToggle = document.getElementById("maintenance-toggle");
-      const maintenanceMessage = document.getElementById("maintenance-message");
-      const metricProductionRed = document.getElementById("metric-production-red");
-      const metricProductionAmber = document.getElementById("metric-production-amber");
-      const metricEffectivenessRed = document.getElementById("metric-effectiveness-red");
-      const metricEffectivenessAmber = document.getElementById("metric-effectiveness-amber");
-      const metricQualityRed = document.getElementById("metric-quality-red");
-      const metricQualityAmber = document.getElementById("metric-quality-amber");
       const submitButton = maintenanceForm.querySelector('button[type="submit"]');
       const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const response = await api("/api/admin/settings", {
           method: "PATCH",
           body: JSON.stringify({
-            maintenance_for_operators: Boolean(maintenanceToggle?.checked),
             maintenance_message: String(maintenanceMessage?.value || "").trim(),
-            metric_rules: {
-              production: {
-                red_max: Number(metricProductionRed?.value || 70),
-                amber_max: Number(metricProductionAmber?.value || 100),
-              },
-              effectiveness: {
-                red_max: Number(metricEffectivenessRed?.value || 70),
-                amber_max: Number(metricEffectivenessAmber?.value || 90),
-              },
-              quality: {
-                red_max: Number(metricQualityRed?.value || 70),
-                amber_max: Number(metricQualityAmber?.value || 90),
-              },
-            },
+            metric_rules: buildMetricRulesPayload(),
+            alert_rules: buildAlertRulesPayload(),
           }),
         });
         state.appSettings = response.app_settings || state.appSettings;
-        setFlash("success", "Modo de manutenção atualizado.");
+        setFlash("success", "Metas salvas com sucesso.");
         render();
       } catch (error) {
         setFlash("error", error.message);

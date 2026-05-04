@@ -280,6 +280,13 @@ function normalizeDbState(db) {
       effectiveness: { red_max: 70, amber_max: 90 },
       quality: { red_max: 70, amber_max: 90 },
     },
+    alert_rules: {
+      production_nuvidio: { critical_min: 70 },
+      production_0800: { critical_min: 70 },
+      effectiveness_0800: { critical_min: 70 },
+      effectiveness_nuvidio: { critical_min: 70 },
+      quality: { critical_min: 70 },
+    },
     ...(db.appSettings || {}),
   };
   const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
@@ -858,6 +865,13 @@ function seedState() {
         effectiveness: { red_max: 70, amber_max: 90 },
         quality: { red_max: 70, amber_max: 90 },
       },
+      alert_rules: {
+        production_nuvidio: { critical_min: 70 },
+        production_0800: { critical_min: 70 },
+        effectiveness_0800: { critical_min: 70 },
+        effectiveness_nuvidio: { critical_min: 70 },
+        quality: { critical_min: 70 },
+      },
     },
   };
 }
@@ -869,6 +883,7 @@ function serializeAppSettings(db) {
     quality: { red_max: 70, amber_max: 90 },
   };
   const sourceRules = db?.appSettings?.metric_rules || {};
+  const sourceAlertRules = db?.appSettings?.alert_rules || {};
   const metricRules = {
     production: {
       red_max: Number(sourceRules?.production?.red_max ?? fallback.production.red_max),
@@ -883,12 +898,30 @@ function serializeAppSettings(db) {
       amber_max: Number(sourceRules?.quality?.amber_max ?? fallback.quality.amber_max),
     },
   };
+  const alertRules = {
+    production_nuvidio: {
+      critical_min: Number(sourceAlertRules?.production_nuvidio?.critical_min ?? 70),
+    },
+    production_0800: {
+      critical_min: Number(sourceAlertRules?.production_0800?.critical_min ?? 70),
+    },
+    effectiveness_0800: {
+      critical_min: Number(sourceAlertRules?.effectiveness_0800?.critical_min ?? 70),
+    },
+    effectiveness_nuvidio: {
+      critical_min: Number(sourceAlertRules?.effectiveness_nuvidio?.critical_min ?? 70),
+    },
+    quality: {
+      critical_min: Number(sourceAlertRules?.quality?.critical_min ?? 70),
+    },
+  };
   return {
     maintenance_for_operators: Boolean(db?.appSettings?.maintenance_for_operators),
     maintenance_message: String(
       db?.appSettings?.maintenance_message || "Portal em manutenção. Tente novamente em instantes.",
     ),
     metric_rules: metricRules,
+    alert_rules: alertRules,
   };
 }
 
@@ -1813,6 +1846,7 @@ function buildAlerts(db, user, url) {
   const start = range.start;
   const end = range.end;
   const metricRules = serializeAppSettings(db).metric_rules;
+  const alertRules = serializeAppSettings(db).alert_rules;
   const qualityByUser = new Map();
   for (const score of (db.qualityScores || []).slice().sort((a, b) => b.reference_month.localeCompare(a.reference_month) || b.updated_at.localeCompare(a.updated_at))) {
     if (!qualityByUser.has(score.user_id)) qualityByUser.set(score.user_id, score);
@@ -1837,14 +1871,35 @@ function buildAlerts(db, user, url) {
     return "Baixo";
   }
 
+  function pushCriticalMinRisk(scoreParts, reasons, actual, threshold, label, unit = "") {
+    if (!Number.isFinite(actual) || actual <= 0 || !Number.isFinite(threshold) || threshold <= 0) return;
+    if (actual < threshold) {
+      scoreParts.push(10);
+      reasons.push({
+        tone: "red",
+        text: `${label} crítico${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`,
+      });
+      return;
+    }
+    const warningBuffer = unit === "%" ? 5 : 10;
+    if (actual < threshold + warningBuffer) {
+      scoreParts.push(5.5);
+      reasons.push({
+        tone: "amber",
+        text: `${label} em atenção${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`,
+      });
+    }
+  }
+
   for (const entry of users) {
     const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
     const productionMetrics = metrics.filter((row) => !isSaturdayIsoDate(row.metric_date));
+    const avgProduction0800 = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_0800)));
+    const avgProductionNuvidio = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_nuvidio)));
     const avgProduction = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_0800) + toInt(row.production_nuvidio)));
-    const effectiveness = averageIgnoreZero(metrics.flatMap((row) => [
-      calculateOperationEffectiveness(row, "0800"),
-      calculateOperationEffectiveness(row, "nuvidio"),
-    ]));
+    const effectiveness0800 = averageIgnoreZero(metrics.map((row) => calculateOperationEffectiveness(row, "0800")));
+    const effectivenessNuvidio = averageIgnoreZero(metrics.map((row) => calculateOperationEffectiveness(row, "nuvidio")));
+    const effectiveness = averageIgnoreZero([effectiveness0800, effectivenessNuvidio]);
     const totalNoAction = metrics.reduce((sum, row) => sum + toInt(row.calls_0800_no_action) + toInt(row.calls_nuvidio_no_action) + toInt(row.calls_nuvidio_empty), 0);
     const totalActionable = metrics.reduce((sum, row) => (
       sum
@@ -1860,6 +1915,37 @@ function buildAlerts(db, user, url) {
     const qualityScore = latestQuality ? toFloat(latestQuality.score) : 0;
     const reasons = [];
     const scoreParts = [];
+
+    pushCriticalMinRisk(
+      scoreParts,
+      reasons,
+      avgProduction0800,
+      Number(alertRules.production_0800.critical_min),
+      "Produção 0800",
+    );
+    pushCriticalMinRisk(
+      scoreParts,
+      reasons,
+      avgProductionNuvidio,
+      Number(alertRules.production_nuvidio.critical_min),
+      "Produção Nuvidio",
+    );
+    pushCriticalMinRisk(
+      scoreParts,
+      reasons,
+      effectiveness0800,
+      Number(alertRules.effectiveness_0800.critical_min),
+      "Efetividade 0800",
+      "%",
+    );
+    pushCriticalMinRisk(
+      scoreParts,
+      reasons,
+      effectivenessNuvidio,
+      Number(alertRules.effectiveness_nuvidio.critical_min),
+      "Efetividade Nuvidio",
+      "%",
+    );
 
     if (totalContacts > 0) {
       let noActionRisk = 0;
@@ -1886,42 +1972,21 @@ function buildAlerts(db, user, url) {
       }
 
       let effectivenessRisk = 0;
-      if (effectiveness <= metricRules.effectiveness.red_max) effectivenessRisk = 10;
-      else if (effectiveness <= metricRules.effectiveness.amber_max) effectivenessRisk = 6.5;
-      else if (effectiveness < 95) effectivenessRisk = 3;
+      if (effectiveness <= metricRules.effectiveness.red_max) effectivenessRisk = 8;
+      else if (effectiveness <= metricRules.effectiveness.amber_max) effectivenessRisk = 5.5;
+      else if (effectiveness < 95) effectivenessRisk = 2.5;
 
-      scoreParts.push(effectivenessRisk);
-      if (effectivenessRisk >= 7) {
-        reasons.push({
-          tone: "red",
-          text: `Efetividade crítica (${Math.round(effectiveness)}%).`,
-        });
-      } else if (effectivenessRisk >= 4) {
-        reasons.push({
-          tone: "amber",
-          text: `Efetividade abaixo do ideal (${Math.round(effectiveness)}%).`,
-        });
-      }
+      if (effectivenessRisk > 0) scoreParts.push(effectivenessRisk);
     }
 
     if (latestQuality) {
-      let qualityRisk = 0;
-      if (qualityScore <= metricRules.quality.red_max) qualityRisk = 10;
-      else if (qualityScore <= metricRules.quality.amber_max) qualityRisk = 6.5;
-      else if (qualityScore < 95) qualityRisk = 3;
-
-      scoreParts.push(qualityRisk);
-      if (qualityRisk >= 7) {
-        reasons.push({
-          tone: "red",
-          text: `Qualidade crítica (${Math.round(qualityScore)}).`,
-        });
-      } else if (qualityRisk >= 4) {
-        reasons.push({
-          tone: "amber",
-          text: `Qualidade em atenção (${Math.round(qualityScore)}).`,
-        });
-      }
+      pushCriticalMinRisk(
+        scoreParts,
+        reasons,
+        qualityScore,
+        Number(alertRules.quality.critical_min),
+        "Qualidade",
+      );
     }
 
     const availableScores = scoreParts.filter((value) => Number.isFinite(value));
@@ -1938,7 +2003,11 @@ function buildAlerts(db, user, url) {
       alert_tone: toneFromScore(alertScore),
       alert_label: labelFromScore(alertScore),
       avg_production: Number(avgProduction.toFixed(2)),
+      avg_production_0800: Number(avgProduction0800.toFixed(2)),
+      avg_production_nuvidio: Number(avgProductionNuvidio.toFixed(2)),
       effectiveness: Number(effectiveness.toFixed(2)),
+      effectiveness_0800: Number(effectiveness0800.toFixed(2)),
+      effectiveness_nuvidio: Number(effectivenessNuvidio.toFixed(2)),
       quality: qualityScore,
       no_action_share: noActionShare,
       total_contacts: totalContacts,
@@ -2185,6 +2254,30 @@ async function handleApi(request, url, db, env = {}) {
         quality: {
           red_max: toNumber(payload.metric_rules?.quality?.red_max, current.quality.red_max),
           amber_max: toNumber(payload.metric_rules?.quality?.amber_max, current.quality.amber_max),
+        },
+      };
+    }
+    if (payload.alert_rules && typeof payload.alert_rules === "object") {
+      const currentAlertRules = serializeAppSettings(db).alert_rules;
+      const toNumber = (value, fallbackValue) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallbackValue;
+      };
+      db.appSettings.alert_rules = {
+        production_nuvidio: {
+          critical_min: toNumber(payload.alert_rules?.production_nuvidio?.critical_min, currentAlertRules.production_nuvidio.critical_min),
+        },
+        production_0800: {
+          critical_min: toNumber(payload.alert_rules?.production_0800?.critical_min, currentAlertRules.production_0800.critical_min),
+        },
+        effectiveness_0800: {
+          critical_min: toNumber(payload.alert_rules?.effectiveness_0800?.critical_min, currentAlertRules.effectiveness_0800.critical_min),
+        },
+        effectiveness_nuvidio: {
+          critical_min: toNumber(payload.alert_rules?.effectiveness_nuvidio?.critical_min, currentAlertRules.effectiveness_nuvidio.critical_min),
+        },
+        quality: {
+          critical_min: toNumber(payload.alert_rules?.quality?.critical_min, currentAlertRules.quality.critical_min),
         },
       };
     }

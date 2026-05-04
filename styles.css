@@ -145,6 +145,52 @@ select {
   min-height: var(--control-height);
 }
 
+.password-input-wrap {
+  position: relative;
+  display: grid;
+}
+
+.password-input-wrap input {
+  padding-right: 48px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.password-toggle-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.password-toggle-btn:active {
+  transform: translateY(-50%) scale(0.96);
+}
+
+.password-toggle-btn.is-active {
+  color: var(--blue);
+}
+
+.password-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -1295,6 +1341,14 @@ body.theme-contrast .modal-card {
 
 .history-tools input {
   min-width: 0;
+}
+
+.management-user-search {
+  margin-bottom: 14px;
+}
+
+.management-user-search label {
+  max-width: 320px;
 }
 
 .history-tools .btn,
