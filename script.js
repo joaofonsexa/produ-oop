@@ -135,7 +135,7 @@ function refreshDashboardInBackground(successMessage = "") {
   if (successMessage) setFlash("success", successMessage);
   loadBootstrap()
     .then(async () => {
-      if (state.route === "alerts" && isManager()) {
+      if (state.route === "alerts") {
         await loadAlerts();
       }
       render();
@@ -310,7 +310,7 @@ function normalizeRoute(route, role = state.user?.role) {
   const value = String(route || "").trim();
   const allowed = role === "manager"
     ? ["overview", "analysis", "alerts", "history", "admin"]
-    : ["overview", "analysis", "history"];
+    : ["overview", "analysis", "alerts", "history"];
   return allowed.includes(value) ? value : "overview";
 }
 
@@ -351,6 +351,23 @@ function getFilteredUsers() {
     const role = user.role === "manager" ? "gestor" : "operador";
     return fullName.includes(query) || login.includes(query) || role.includes(query);
   });
+}
+
+function applyManagementUserFilter() {
+  const query = repairTextEncoding(String(state.filters.usersQuery || ""))
+    .trim()
+    .toLocaleLowerCase("pt-BR");
+  const rows = [...document.querySelectorAll("[data-management-user-search]")];
+  const emptyState = document.getElementById("management-users-empty");
+  if (!rows.length) return;
+  let visible = 0;
+  rows.forEach((row) => {
+    const haystack = String(row.dataset.managementUserSearch || "").toLocaleLowerCase("pt-BR");
+    const matches = !query || haystack.includes(query);
+    row.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  if (emptyState) emptyState.hidden = visible > 0;
 }
 
 function ensureManagerUserFilters() {
@@ -850,7 +867,7 @@ async function loadAll() {
     await loadUsers();
   }
   await loadBootstrap();
-  if (isManager() && state.route === "alerts") {
+  if (state.route === "alerts") {
     await loadAlerts();
   }
 }
@@ -887,11 +904,7 @@ async function loadBootstrap() {
 }
 
 async function loadAlerts() {
-  if (!isManager()) {
-    state.alerts = null;
-    return;
-  }
-  const userId = state.filters.analysisUserId || "all";
+  const userId = isManager() ? (state.filters.analysisUserId || "all") : String(state.user?.id || "");
   state.alerts = await api(`/api/alerts?start=${state.filters.start}&end=${state.filters.end}&user_id=${encodeURIComponent(userId)}`);
 }
 
@@ -1009,7 +1022,7 @@ function shellTemplate() {
           </div>
         </div>
         <nav class="nav">
-          ${Object.entries(navMeta()).filter(([key]) => (key !== "admin" && key !== "alerts") || isManager()).map(([key, label]) => `
+          ${Object.entries(navMeta()).filter(([key]) => key !== "admin" || isManager()).map(([key, label]) => `
             <button class="${state.route === key ? "active" : ""}" data-route="${key}">${label}</button>
           `).join("")}
         </nav>
@@ -1467,7 +1480,8 @@ function alertsTemplate() {
   const alerts = state.alerts.alerts || [];
   const selectedName = isManager() && state.filters.analysisUserId !== "all"
     ? (getOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador")
-    : "Todos os operadores";
+    : (isManager() ? "Todos os operadores" : state.user.full_name);
+  const selfScope = !isManager() || state.alerts.scope === "self";
 
   return `
     <section class="section">
@@ -1476,7 +1490,7 @@ function alertsTemplate() {
           <div class="panel-head">
             <div>
               <span class="eyebrow">Monitoramento</span>
-              <h3>Operadores em alerta</h3>
+              <h3>${selfScope ? "Seus principais ofensores" : "Operadores em alerta"}</h3>
             </div>
           </div>
           <div class="mini-grid">
@@ -1494,23 +1508,23 @@ function alertsTemplate() {
           <div class="panel-head">
             <div>
               <span class="eyebrow">Resumo</span>
-              <h3>Média da operação</h3>
+              <h3>${selfScope ? "Seu resultado atual" : "Média da operação"}</h3>
             </div>
           </div>
           <div class="mini-grid">
             <div class="mini-card"><span class="muted">Monitorados</span><div class="metric-value">${integer(summary.monitored)}</div></div>
             <div class="mini-card"><span class="muted">Em alerta</span><div class="metric-value">${integer(summary.total)}</div></div>
             <div class="mini-card"><span class="muted">Nota média</span><div class="metric-value">${number(summary.average_score)}</div></div>
-            <div class="mini-card"><span class="muted">Maior nota</span><div class="metric-value">${number(summary.max_score)}</div></div>
+            <div class="mini-card"><span class="muted">Menor nota</span><div class="metric-value">${number(summary.max_score)}</div></div>
           </div>
         </article>
       </div>
 
       <article class="panel">
-        <div class="panel-head">
+          <div class="panel-head">
           <div>
             <span class="eyebrow">Prioridade</span>
-            <h3>Pontos de atenção por operador</h3>
+            <h3>${selfScope ? "Itens que mais prejudicam seu resultado" : "Pontos de atenção por operador"}</h3>
           </div>
         </div>
         ${alerts.length ? `
@@ -1527,24 +1541,28 @@ function alertsTemplate() {
                   </div>
                   <div class="alert-metrics">
                     <div class="mini-card">
-                      <span class="muted">Nota de alerta</span>
+                      <span class="muted">Nota do operador</span>
                       <div class="metric-value">${number(item.alert_score)}</div>
                     </div>
                     <div class="mini-card">
-                      <span class="muted">Produção média</span>
-                      <div class="metric-value">${integer(item.avg_production)}</div>
+                      <span class="muted">Produção média 0800</span>
+                      <div class="metric-value">${integer(item.avg_production_0800)}</div>
                     </div>
                     <div class="mini-card">
-                      <span class="muted">Efetividade</span>
-                      <div class="metric-value">${percent(item.effectiveness)}</div>
+                      <span class="muted">Efetividade 0800</span>
+                      <div class="metric-value">${percent(item.effectiveness_0800)}</div>
+                    </div>
+                    <div class="mini-card">
+                      <span class="muted">Produção média Nuvidio</span>
+                      <div class="metric-value">${integer(item.avg_production_nuvidio)}</div>
+                    </div>
+                    <div class="mini-card">
+                      <span class="muted">Efetividade Nuvidio</span>
+                      <div class="metric-value">${percent(item.effectiveness_nuvidio)}</div>
                     </div>
                     <div class="mini-card">
                       <span class="muted">Qualidade</span>
                       <div class="metric-value">${item.quality ? number(item.quality) : "--"}</div>
-                    </div>
-                    <div class="mini-card">
-                      <span class="muted">Sem ação / vazio</span>
-                      <div class="metric-value">${percent(item.no_action_share)}</div>
                     </div>
                   </div>
                   <div class="alert-reasons">
@@ -1558,7 +1576,7 @@ function alertsTemplate() {
               `;
             }).join("")}
           </div>
-        ` : `<div class="empty">Nenhum operador em alerta no recorte atual.</div>`}
+        ` : `<div class="empty">${selfScope ? "Nenhum item crítico encontrado no seu resultado neste período." : "Nenhum operador em alerta no recorte atual."}</div>`}
       </article>
     </section>
   `;
@@ -1640,7 +1658,6 @@ function adminTemplate() {
   const currentReferenceMonth = new Date().toISOString().slice(0, 7);
   const [defaultYear, defaultMonth] = currentReferenceMonth.split("-");
   const operatorUsers = getOperatorUsers();
-  const filteredUsers = getFilteredUsers();
   return `
     <section class="section">
       <div class="hero-grid">
@@ -1833,8 +1850,8 @@ function adminTemplate() {
             </label>
           </div>
           <div class="list">
-            ${filteredUsers.length ? filteredUsers.map((user) => `
-              <div class="list-row">
+            ${state.users.length ? state.users.map((user) => `
+              <div class="list-row" data-management-user-search="${esc(`${user.full_name} ${user.login} ${user.role === "manager" ? "gestor" : "operador"}`)}">
                 <div class="list-row-copy">
                   <strong>${esc(user.full_name)}</strong>
                   <span>${esc(user.login)} · ${user.role === "manager" ? "Gestor" : "Operador"}</span>
@@ -1848,7 +1865,8 @@ function adminTemplate() {
                   <button class="btn-secondary btn-small danger-outline" type="button" data-user-delete="${user.id}">Apagar</button>
                 </div>
               </div>
-            `).join("") : `<div class="empty">${state.users.length ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}</div>`}
+            `).join("") : ""}
+            <div class="empty" id="management-users-empty" ${state.users.length ? "hidden" : ""}>${state.users.length ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}</div>
           </div>
         </article>
       </div>
@@ -2206,7 +2224,7 @@ function bindShellEvents() {
       if (state.route === "alerts") state.alerts = null;
       render();
       try {
-        if (state.route === "alerts" && isManager()) {
+        if (state.route === "alerts") {
           await loadAlerts();
           render();
         }
@@ -2229,9 +2247,10 @@ function bindShellEvents() {
 
   const managementUserSearch = document.getElementById("management-user-search");
   if (managementUserSearch) {
+    applyManagementUserFilter();
     managementUserSearch.addEventListener("input", (event) => {
       state.filters.usersQuery = event.target.value;
-      render();
+      applyManagementUserFilter();
     });
   }
 

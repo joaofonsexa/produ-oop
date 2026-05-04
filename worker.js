@@ -218,7 +218,7 @@ function normalizeRouteForRole(route, role = "operator") {
   const safeRoute = String(route || "").trim();
   const allowed = role === "manager"
     ? ["overview", "analysis", "alerts", "history", "admin"]
-    : ["overview", "analysis", "history"];
+    : ["overview", "analysis", "alerts", "history"];
   return allowed.includes(safeRoute) ? safeRoute : "overview";
 }
 
@@ -1837,8 +1837,8 @@ function buildBootstrap(db, user, url) {
 
 function buildAlerts(db, user, url) {
   const requestedRawUserId = String(url.searchParams.get("user_id") || "all").trim().toLowerCase();
-  const includeAllUsers = requestedRawUserId === "all";
-  const requestedUserId = Number(requestedRawUserId || 0);
+  const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
+  const requestedUserId = user.role === "manager" ? Number(requestedRawUserId || 0) : user.id;
   const users = db.users.filter((entry) => entry.is_active && entry.role === "operator")
     .filter((entry) => includeAllUsers || entry.id === requestedUserId);
   const scopedMetrics = db.dailyMetrics.filter((metric) => users.some((entry) => entry.id === metric.user_id));
@@ -1859,36 +1859,72 @@ function buildAlerts(db, user, url) {
   }
 
   function toneFromScore(score) {
-    if (score >= 7) return "red";
-    if (score >= 4) return "amber";
+    if (score <= 4) return "red";
+    if (score <= 7) return "amber";
     return "green";
   }
 
   function labelFromScore(score) {
-    if (score >= 8.5) return "Crítico";
-    if (score >= 7) return "Alto";
-    if (score >= 4) return "Atenção";
-    return "Baixo";
+    if (score <= 3) return "Crítico";
+    if (score <= 5) return "Alto risco";
+    if (score <= 7) return "Atenção";
+    if (score <= 8.5) return "Bom";
+    return "Excelente";
   }
 
   function pushCriticalMinRisk(scoreParts, reasons, actual, threshold, label, unit = "") {
     if (!Number.isFinite(actual) || actual <= 0 || !Number.isFinite(threshold) || threshold <= 0) return;
-    if (actual < threshold) {
-      scoreParts.push(10);
-      reasons.push({
-        tone: "red",
-        text: `${label} crítico${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`,
-      });
-      return;
+    if (actual >= threshold) return;
+    const gap = (threshold - actual) / threshold;
+    let penalty = 1.5;
+    let tone = "amber";
+    let text = `${label} abaixo da meta${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`;
+    if (gap >= 0.2) {
+      penalty = 4.5;
+      tone = "red";
+      text = `${label} crítico${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`;
+    } else if (gap >= 0.1) {
+      penalty = 3;
+      tone = "red";
+      text = `${label} abaixo da meta crítica${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`;
     }
-    const warningBuffer = unit === "%" ? 5 : 10;
-    if (actual < threshold + warningBuffer) {
-      scoreParts.push(5.5);
-      reasons.push({
-        tone: "amber",
-        text: `${label} em atenção${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`,
-      });
+    scoreParts.push(penalty);
+    reasons.push({
+      tone,
+      text,
+    });
+  }
+
+  function pushNoActionPenalty(scoreParts, reasons, noActionShare, avgProduction) {
+    if (!Number.isFinite(noActionShare) || noActionShare <= 0) return;
+    let penalty = 0;
+    let tone = "amber";
+    if (noActionShare >= 25) {
+      penalty = 4.5;
+      tone = "red";
+    } else if (noActionShare >= 20) {
+      penalty = 3;
+      tone = "amber";
+    } else if (noActionShare >= 15) {
+      penalty = 2;
+      tone = "amber";
+    } else if (noActionShare >= 10) {
+      penalty = 1.2;
+      tone = "amber";
+    } else if (noActionShare >= 5) {
+      penalty = 0.6;
+      tone = "amber";
     }
+    if (!penalty) return;
+    if (avgProduction >= metricRules.production.amber_max) penalty = clampScore(penalty + 0.5);
+    else if (avgProduction >= metricRules.production.red_max) penalty = clampScore(penalty + 0.3);
+    scoreParts.push(penalty);
+    reasons.push({
+      tone,
+      text: tone === "red"
+        ? `Sem ação / vazio muito alto para o volume lançado (${Math.round(noActionShare)}%).`
+        : `Sem ação / vazio acima do ideal (${Math.round(noActionShare)}%).`,
+    });
   }
 
   for (const entry of users) {
@@ -1947,37 +1983,7 @@ function buildAlerts(db, user, url) {
       "%",
     );
 
-    if (totalContacts > 0) {
-      let noActionRisk = 0;
-      if (noActionShare >= 25) noActionRisk = 10;
-      else if (noActionShare >= 20) noActionRisk = 8.5;
-      else if (noActionShare >= 15) noActionRisk = 6.5;
-      else if (noActionShare >= 10) noActionRisk = 4.5;
-      else if (noActionShare >= 5) noActionRisk = 2.5;
-
-      if (noActionRisk > 0 && avgProduction >= metricRules.production.amber_max) noActionRisk = clampScore(noActionRisk + 1);
-      else if (noActionRisk > 0 && avgProduction >= metricRules.production.red_max) noActionRisk = clampScore(noActionRisk + 0.5);
-
-      scoreParts.push(noActionRisk);
-      if (noActionRisk >= 7) {
-        reasons.push({
-          tone: "red",
-          text: `Sem ação / vazio muito alto para o volume lançado (${Math.round(noActionShare)}%).`,
-        });
-      } else if (noActionRisk >= 4) {
-        reasons.push({
-          tone: "amber",
-          text: `Sem ação / vazio acima do ideal (${Math.round(noActionShare)}%).`,
-        });
-      }
-
-      let effectivenessRisk = 0;
-      if (effectiveness <= metricRules.effectiveness.red_max) effectivenessRisk = 8;
-      else if (effectiveness <= metricRules.effectiveness.amber_max) effectivenessRisk = 5.5;
-      else if (effectiveness < 95) effectivenessRisk = 2.5;
-
-      if (effectivenessRisk > 0) scoreParts.push(effectivenessRisk);
-    }
+    if (totalContacts > 0) pushNoActionPenalty(scoreParts, reasons, noActionShare, avgProduction);
 
     if (latestQuality) {
       pushCriticalMinRisk(
@@ -1990,10 +1996,13 @@ function buildAlerts(db, user, url) {
     }
 
     const availableScores = scoreParts.filter((value) => Number.isFinite(value));
-    if (!availableScores.length) continue;
-    const alertScore = Number((availableScores.reduce((sum, value) => sum + value, 0) / availableScores.length).toFixed(1));
+    const alertScore = Number(clampScore(10 - availableScores.reduce((sum, value) => sum + value, 0)).toFixed(1));
+    if (!availableScores.length) {
+      scoredOperators.push(10);
+      continue;
+    }
     scoredOperators.push(alertScore);
-    if (alertScore <= 0) continue;
+    if (alertScore >= 9.9) continue;
 
     alerts.push({
       user_id: entry.id,
@@ -2018,7 +2027,7 @@ function buildAlerts(db, user, url) {
   }
 
   alerts.sort((a, b) =>
-    b.alert_score - a.alert_score
+    a.alert_score - b.alert_score
     || b.no_action_share - a.no_action_share
     || a.quality - b.quality
     || b.avg_production - a.avg_production
@@ -2027,13 +2036,14 @@ function buildAlerts(db, user, url) {
 
   return {
     period: { start, end },
+    scope: user.role === "manager" ? "operation" : "self",
     summary: {
       monitored: scoredOperators.length,
       total: alerts.length,
       average_score: scoredOperators.length
         ? Number((scoredOperators.reduce((sum, value) => sum + value, 0) / scoredOperators.length).toFixed(1))
         : 0,
-      max_score: alerts.length ? alerts[0].alert_score : 0,
+      max_score: alerts.length ? alerts[0].alert_score : 10,
     },
     alerts,
   };
@@ -2322,7 +2332,7 @@ async function handleApi(request, url, db, env = {}) {
   }
 
   if (url.pathname === "/api/alerts" && request.method === "GET") {
-    const auth = await requireManager(request, db, env);
+    const auth = await requireAuth(request, db, env);
     if (auth.error) return auth.error;
     return jsonResponse(buildAlerts(db, auth.user, url));
   }
