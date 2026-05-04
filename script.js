@@ -1150,19 +1150,37 @@ function analysisTemplate() {
   historyRows.forEach((row) => {
     const date = row.metric_date;
     if (!date) return;
-    byDate0800.set(date, {
+    const current0800 = byDate0800.get(date) || {
       date,
-      production: Number(row.production_0800 || 0),
-      effectiveness: calcOperationEffectiveness(row, "0800"),
-    });
-    byDateNuvidio.set(date, {
+      production: 0,
+      effectivenessParts: [],
+    };
+    const currentNuvidio = byDateNuvidio.get(date) || {
       date,
-      production: Number(row.production_nuvidio || 0),
-      effectiveness: calcOperationEffectiveness(row, "nuvidio"),
-    });
+      production: 0,
+      effectivenessParts: [],
+    };
+    current0800.production += Number(row.production_0800 || 0);
+    currentNuvidio.production += Number(row.production_nuvidio || 0);
+    current0800.effectivenessParts.push(calcOperationEffectiveness(row, "0800"));
+    currentNuvidio.effectivenessParts.push(calcOperationEffectiveness(row, "nuvidio"));
+    byDate0800.set(date, current0800);
+    byDateNuvidio.set(date, currentNuvidio);
   });
-  const trend0800 = [...byDate0800.values()].sort((a, b) => a.date.localeCompare(b.date));
-  const trendNuvidio = [...byDateNuvidio.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const trend0800 = [...byDate0800.values()]
+    .map((item) => ({
+      date: item.date,
+      production: item.production,
+      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const trendNuvidio = [...byDateNuvidio.values()]
+    .map((item) => ({
+      date: item.date,
+      production: item.production,
+      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
   const maxProd0800 = Math.max(...trend0800.map((item) => Number(item.production || 0)), 1);
   const maxEff0800 = Math.max(...trend0800.map((item) => Number(item.effectiveness || 0)), 1);
   const maxProdNuvidio = Math.max(...trendNuvidio.map((item) => Number(item.production || 0)), 1);
