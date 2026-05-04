@@ -219,6 +219,12 @@ function average(values, options = {}) {
   return numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length;
 }
 
+function isSaturday(dateValue) {
+  const raw = String(dateValue || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  return new Date(`${raw}T00:00:00`).getDay() === 6;
+}
+
 function isManager() {
   return state.user?.role === "manager";
 }
@@ -390,7 +396,7 @@ function calcOperationEffectiveness(row, operation) {
     return total ? (actionable / total) * 100 : 0;
   }
   const actionable = Number(row.calls_nuvidio_approved) + Number(row.calls_nuvidio_rejected);
-  const total = actionable + Number(row.calls_nuvidio_no_action);
+  const total = actionable + Number(row.calls_nuvidio_no_action) + Number(row.calls_nuvidio_empty || 0);
   return total ? (actionable / total) * 100 : 0;
 }
 
@@ -440,6 +446,7 @@ function getScopedHistory() {
         calls_rejected: Number(row.calls_nuvidio_rejected || 0),
         calls_pending: 0,
         calls_no_action: Number(row.calls_nuvidio_no_action || 0),
+        calls_empty: Number(row.calls_nuvidio_empty || 0),
       });
     }
     return list;
@@ -468,13 +475,14 @@ function getScopedHistory() {
 
 function buildOverviewModel() {
   const trend = state.overview?.trend || [];
+  const productionTrend = trend.filter((item) => !isSaturday(item.date));
   const ranking = state.analysis?.ranking || [];
   const quality = state.history?.quality || [];
   const latest = trend[trend.length - 1];
   const previous = trend[trend.length - 2];
   return {
     totalAttended: trend.reduce((sum, item) => sum + Number(item.production || 0), 0),
-    avgProduction: average(trend.map((item) => item.production), { ignoreZero: true }),
+    avgProduction: average(productionTrend.map((item) => item.production), { ignoreZero: true }),
     avgEffectiveness: average(trend.map((item) => item.effectiveness), { ignoreZero: true }),
     avgQuality: average(quality.map((item) => item.score)),
     latest,
@@ -538,8 +546,9 @@ function buildAnalysisModel() {
     acc.approved += Number(row.calls_nuvidio_approved || 0);
     acc.rejected += Number(row.calls_nuvidio_rejected || 0);
     acc.noAction += Number(row.calls_nuvidio_no_action || 0);
+    acc.empty += Number(row.calls_nuvidio_empty || 0);
     return acc;
-  }, { approved: 0, pending: 0, rejected: 0, noAction: 0 });
+  }, { approved: 0, pending: 0, rejected: 0, noAction: 0, empty: 0 });
   const status = (state.history?.history || []).reduce((acc, row) => {
     if (state.filters.operation === "all" || state.filters.operation === "0800") {
       acc.approved += Number(row.calls_0800_approved || 0);
@@ -551,26 +560,29 @@ function buildAnalysisModel() {
       acc.approved += Number(row.calls_nuvidio_approved || 0);
       acc.rejected += Number(row.calls_nuvidio_rejected || 0);
       acc.noAction += Number(row.calls_nuvidio_no_action || 0);
+      acc.empty += Number(row.calls_nuvidio_empty || 0);
     }
     return acc;
-  }, { approved: 0, pending: 0, rejected: 0, noAction: 0 });
-  const statusTotal = status.approved + status.pending + status.rejected + status.noAction;
+  }, { approved: 0, pending: 0, rejected: 0, noAction: 0, empty: 0 });
+  const statusTotal = status.approved + status.pending + status.rejected + status.noAction + status.empty;
   const statusBreakdown = [
     { key: "approved", label: "Aprovado", value: status.approved, tone: "green" },
     { key: "rejected", label: "Reprovado", value: status.rejected, tone: "red" },
     { key: "pending", label: "Pendenciado", value: status.pending, tone: "amber" },
     { key: "noAction", label: "Sem ação", value: status.noAction, tone: "blue" },
+    { key: "empty", label: "Vazio", value: status.empty, tone: "muted" },
   ].map((item) => ({
     ...item,
     share: statusTotal ? (item.value / statusTotal) * 100 : 0,
   }));
   const buildStatusBreakdown = (bucket) => {
-    const total = bucket.approved + bucket.pending + bucket.rejected + bucket.noAction;
+    const total = bucket.approved + bucket.pending + bucket.rejected + bucket.noAction + (bucket.empty || 0);
     const breakdown = [
       { key: "approved", label: "Aprovado", value: bucket.approved, tone: "green" },
       { key: "rejected", label: "Reprovado", value: bucket.rejected, tone: "red" },
       { key: "pending", label: "Pendenciado", value: bucket.pending, tone: "amber" },
       { key: "noAction", label: "Sem ação", value: bucket.noAction, tone: "blue" },
+      { key: "empty", label: "Vazio", value: bucket.empty || 0, tone: "muted" },
     ].map((item) => ({
       ...item,
       share: total ? (item.value / total) * 100 : 0,
@@ -939,6 +951,7 @@ function shellTemplate() {
               <label>Reprovado<input type="number" min="0" step="1" id="history-edit-rejected" name="rejected"></label>
               <label class="history-edit-pending">Pendenciado<input type="number" min="0" step="1" id="history-edit-pending" name="pending"></label>
               <label>Sem ação<input type="number" min="0" step="1" id="history-edit-no-action" name="no_action"></label>
+              <label class="history-edit-empty">Vazio<input type="number" min="0" step="1" id="history-edit-empty" name="empty"></label>
             </div>
             <div class="form-grid history-edit-quality-fields" hidden>
               <label>Monitoria 1<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-1" name="monitoria_1"></label>
@@ -1342,7 +1355,7 @@ function alertsTemplate() {
                       <div class="metric-value">${item.quality ? number(item.quality) : "--"}</div>
                     </div>
                     <div class="mini-card">
-                      <span class="muted">Sem ação</span>
+                      <span class="muted">Sem ação / vazio</span>
                       <div class="metric-value">${percent(item.no_action_share)}</div>
                     </div>
                   </div>
@@ -1519,6 +1532,7 @@ function adminTemplate() {
               <label>Reprovado<input type="number" min="0" step="1" name="rejected" value="0" required></label>
               <label>Sem ação<input type="number" min="0" step="1" name="no_action" value="0" required></label>
               <label class="pending-only">Pendenciado<input type="number" min="0" step="1" name="pending" value="0"></label>
+              <label class="empty-only">Vazio<input type="number" min="0" step="1" name="empty" value="0"></label>
             </div>
             <div class="action-grid">
               <button class="btn" type="submit">Salvar lançamento</button>
@@ -2137,9 +2151,9 @@ function bindShellEvents() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Erro ao importar base.");
         if (data.period?.start && data.period?.end) {
-          state.filters.start = data.period.start;
-          state.filters.end = data.period.end;
-          state.filters.today = data.period.end;
+          state.filters.start = state.filters.start ? (state.filters.start < data.period.start ? state.filters.start : data.period.start) : data.period.start;
+          state.filters.end = state.filters.end ? (state.filters.end > data.period.end ? state.filters.end : data.period.end) : data.period.end;
+          state.filters.today = state.filters.end;
         }
         if (isManager()) {
           state.filters.analysisUserId = "all";
@@ -2172,9 +2186,11 @@ function bindShellEvents() {
   if (manualTagForm) {
     const operationSelect = manualTagForm.querySelector('select[name="operation"]');
     const pendingField = manualTagForm.querySelector(".pending-only");
+    const emptyField = manualTagForm.querySelector(".empty-only");
     const syncPendingVisibility = () => {
-      if (!operationSelect || !pendingField) return;
+      if (!operationSelect) return;
       pendingField.style.display = operationSelect.value === "0800" ? "grid" : "none";
+      if (emptyField) emptyField.style.display = operationSelect.value === "nuvidio" ? "grid" : "none";
     };
     syncPendingVisibility();
     if (operationSelect) operationSelect.addEventListener("change", syncPendingVisibility);
@@ -2310,6 +2326,7 @@ function bindShellEvents() {
       const metricFields = document.querySelector(".history-edit-metric-fields");
       const qualityFields = document.querySelector(".history-edit-quality-fields");
       const pendingRow = document.querySelector(".history-edit-pending");
+      const emptyRow = document.querySelector(".history-edit-empty");
       const submitButton = document.querySelector("#history-edit-form button[type='submit']");
       setField("history-edit-metric-id", metricId);
       setField("history-edit-type", entryType);
@@ -2335,7 +2352,9 @@ function bindShellEvents() {
         setField("history-edit-rejected", Number(historyRow.calls_rejected || 0));
         setField("history-edit-pending", Number(historyRow.calls_pending || 0));
         setField("history-edit-no-action", Number(historyRow.calls_no_action || 0));
+        setField("history-edit-empty", Number(historyRow.calls_empty || 0));
         if (pendingRow) pendingRow.style.display = is0800 ? "grid" : "none";
+        if (emptyRow) emptyRow.style.display = is0800 ? "none" : "grid";
       }
       if (historyEditModal) historyEditModal.hidden = false;
     });
@@ -2375,6 +2394,7 @@ function bindShellEvents() {
           const rejectedN = Math.max(0, Number(form.get("rejected") || 0));
           const pendingN = Math.max(0, Number(form.get("pending") || 0));
           const noActionN = Math.max(0, Number(form.get("no_action") || 0));
+          const emptyN = Math.max(0, Number(form.get("empty") || 0));
           const payload = is0800
             ? {
                 production: Math.max(0, Number(historyRow.production_nuvidio || 0)) + approvedN + rejectedN + pendingN + noActionN,
@@ -2384,10 +2404,11 @@ function bindShellEvents() {
                 calls_0800_no_action: noActionN,
               }
             : {
-                production: Math.max(0, Number(historyRow.production_0800 || 0)) + approvedN + rejectedN + noActionN,
+                production: Math.max(0, Number(historyRow.production_0800 || 0)) + approvedN + rejectedN + noActionN + emptyN,
                 calls_nuvidio_approved: approvedN,
                 calls_nuvidio_rejected: rejectedN,
                 calls_nuvidio_no_action: noActionN,
+                calls_nuvidio_empty: emptyN,
               };
           await api(`/api/admin/daily-metrics/${metricId}`, {
             method: "PUT",

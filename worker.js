@@ -8,7 +8,7 @@ const D1_SCHEMA_STATEMENTS = [
   "CREATE TABLE IF NOT EXISTS app_state (id INTEGER PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, login TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, password_plain TEXT, role TEXT NOT NULL, platform_0800_id TEXT, nuvidio_id TEXT, must_change_password INTEGER NOT NULL DEFAULT 1, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_users_login ON users(login)",
-  "CREATE TABLE IF NOT EXISTS daily_metrics (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, metric_date TEXT NOT NULL, production INTEGER NOT NULL DEFAULT 0, production_0800 INTEGER NOT NULL DEFAULT 0, production_nuvidio INTEGER NOT NULL DEFAULT 0, calls_0800_approved INTEGER NOT NULL DEFAULT 0, calls_0800_rejected INTEGER NOT NULL DEFAULT 0, calls_0800_pending INTEGER NOT NULL DEFAULT 0, calls_0800_no_action INTEGER NOT NULL DEFAULT 0, calls_nuvidio_approved INTEGER NOT NULL DEFAULT 0, calls_nuvidio_rejected INTEGER NOT NULL DEFAULT 0, calls_nuvidio_no_action INTEGER NOT NULL DEFAULT 0, import_source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS daily_metrics (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, metric_date TEXT NOT NULL, production INTEGER NOT NULL DEFAULT 0, production_0800 INTEGER NOT NULL DEFAULT 0, production_nuvidio INTEGER NOT NULL DEFAULT 0, calls_0800_approved INTEGER NOT NULL DEFAULT 0, calls_0800_rejected INTEGER NOT NULL DEFAULT 0, calls_0800_pending INTEGER NOT NULL DEFAULT 0, calls_0800_no_action INTEGER NOT NULL DEFAULT 0, calls_nuvidio_approved INTEGER NOT NULL DEFAULT 0, calls_nuvidio_rejected INTEGER NOT NULL DEFAULT 0, calls_nuvidio_no_action INTEGER NOT NULL DEFAULT 0, calls_nuvidio_empty INTEGER NOT NULL DEFAULT 0, import_source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_daily_metrics_user_date ON daily_metrics(user_id, metric_date)",
   "CREATE TABLE IF NOT EXISTS quality_scores (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, reference_month TEXT NOT NULL, score REAL NOT NULL DEFAULT 0, monitoria_1 REAL, monitoria_2 REAL, monitoria_3 REAL, monitoria_4 REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_quality_scores_user_month ON quality_scores(user_id, reference_month)",
@@ -90,6 +90,12 @@ function todayIso() {
 
 function monthRef(dateValue) {
   return String(dateValue).slice(0, 7);
+}
+
+function isSaturdayIsoDate(dateValue) {
+  const raw = String(dateValue || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  return new Date(`${raw}T00:00:00`).getDay() === 6;
 }
 
 function normalizeHeader(value) {
@@ -288,6 +294,7 @@ function normalizeD1DailyMetricRow(row) {
     calls_nuvidio_approved: toInt(row.calls_nuvidio_approved),
     calls_nuvidio_rejected: toInt(row.calls_nuvidio_rejected),
     calls_nuvidio_no_action: toInt(row.calls_nuvidio_no_action),
+    calls_nuvidio_empty: toInt(row.calls_nuvidio_empty),
     import_source: String(row.import_source || "").trim(),
     created_at: row.created_at || nowIso(),
     updated_at: row.updated_at || nowIso(),
@@ -369,6 +376,7 @@ async function loadDailyMetricsFromD1(connection) {
       calls_nuvidio_approved,
       calls_nuvidio_rejected,
       calls_nuvidio_no_action,
+      calls_nuvidio_empty,
       import_source,
       created_at,
       updated_at
@@ -465,6 +473,7 @@ async function persistDailyMetricRecordToD1(connection, metric) {
       calls_nuvidio_approved,
       calls_nuvidio_rejected,
       calls_nuvidio_no_action,
+      calls_nuvidio_empty,
       import_source,
       created_at,
       updated_at
@@ -483,6 +492,7 @@ async function persistDailyMetricRecordToD1(connection, metric) {
       calls_nuvidio_approved = excluded.calls_nuvidio_approved,
       calls_nuvidio_rejected = excluded.calls_nuvidio_rejected,
       calls_nuvidio_no_action = excluded.calls_nuvidio_no_action,
+      calls_nuvidio_empty = excluded.calls_nuvidio_empty,
       import_source = excluded.import_source,
       created_at = excluded.created_at,
       updated_at = excluded.updated_at
@@ -500,6 +510,7 @@ async function persistDailyMetricRecordToD1(connection, metric) {
     toInt(metric.calls_nuvidio_approved),
     toInt(metric.calls_nuvidio_rejected),
     toInt(metric.calls_nuvidio_no_action),
+    toInt(metric.calls_nuvidio_empty),
     String(metric.import_source || "").trim(),
     metric.created_at || nowIso(),
     metric.updated_at || nowIso(),
@@ -660,6 +671,9 @@ async function ensureD1Schema(connection) {
   if (!dailyMetricsColumns.has("calls_nuvidio_no_action")) {
     await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_nuvidio_no_action INTEGER NOT NULL DEFAULT 0");
   }
+  if (!dailyMetricsColumns.has("calls_nuvidio_empty")) {
+    await connection.exec("ALTER TABLE daily_metrics ADD COLUMN calls_nuvidio_empty INTEGER NOT NULL DEFAULT 0");
+  }
   if (!dailyMetricsColumns.has("import_source")) {
     await connection.exec("ALTER TABLE daily_metrics ADD COLUMN import_source TEXT");
   }
@@ -702,7 +716,7 @@ function calculateEffectiveness(metric) {
     toInt(metric.calls_0800_pending) +
     toInt(metric.calls_nuvidio_approved) +
     toInt(metric.calls_nuvidio_rejected);
-  const total = actionable + toInt(metric.calls_0800_no_action) + toInt(metric.calls_nuvidio_no_action);
+  const total = actionable + toInt(metric.calls_0800_no_action) + toInt(metric.calls_nuvidio_no_action) + toInt(metric.calls_nuvidio_empty);
   if (!total) return 0;
   return Number(((actionable / total) * 100).toFixed(2));
 }
@@ -714,7 +728,7 @@ function calculateOperationEffectiveness(metric, operation) {
     return total ? Number(((actionable / total) * 100).toFixed(2)) : 0;
   }
   const actionable = toInt(metric.calls_nuvidio_approved) + toInt(metric.calls_nuvidio_rejected);
-  const total = actionable + toInt(metric.calls_nuvidio_no_action);
+  const total = actionable + toInt(metric.calls_nuvidio_no_action) + toInt(metric.calls_nuvidio_empty);
   return total ? Number(((actionable / total) * 100).toFixed(2)) : 0;
 }
 
@@ -1165,7 +1179,7 @@ function detectImportSchema(row, fileName = "") {
   if (hasFields(row, normalizedFields)) return "normalized";
   if (hasFields(row, ["motivo", "numero_do_protocolo", "data_abertura_ocorrencia", "usuario_de_abertura_da_ocorrencia"])) return "0800";
   if (hasFields(row, ["protocolo", "data_abreviada", "email_do_atendente", "tag"])) return "nuvidio";
-  if (hasFields(row, ["usuario_nuvidio", "nuvidio_aprovadas", "nuvidio_reprovadas", "nuvidio_sem_acao", "data"])) return "nuvidio_summary";
+  if (hasFields(row, ["usuario_nuvidio", "nuvidio_aprovadas", "nuvidio_reprovadas", "nuvidio_sem_acao", "nuvidio_vazio", "data"])) return "nuvidio_summary";
   if (hasFields(row, ["usuario_0800", "0800_aprovadas", "0800_reprovadas", "0800_pendenciadas", "0800_sem_acao", "data"])) return "0800_summary";
   if (lowerName.includes("0800")) return "0800";
   if (lowerName.includes("nuvidio")) return "nuvidio";
@@ -1271,6 +1285,7 @@ function upsertDailyMetric(db, userId, metricDate, values, sourceName) {
       calls_nuvidio_approved: 0,
       calls_nuvidio_rejected: 0,
       calls_nuvidio_no_action: 0,
+      calls_nuvidio_empty: 0,
       import_source: sourceName,
       created_at: nowIso(),
       updated_at: nowIso(),
@@ -1307,6 +1322,7 @@ function importNormalizedRows(db, users, rows, sourceName) {
     "nuvidio_aprovada",
     "nuvidio_reprovada",
     "nuvidio_sem_acao",
+    "nuvidio_vazio",
   ];
   const first = rows[0] || {};
   const missing = required.filter((field) => !(field in first));
@@ -1335,6 +1351,7 @@ function importNormalizedRows(db, users, rows, sourceName) {
           calls_nuvidio_approved: toInt(row["nuvidio_aprovada"]),
           calls_nuvidio_rejected: toInt(row["nuvidio_reprovada"]),
           calls_nuvidio_no_action: toInt(row["nuvidio_sem_acao"]),
+          calls_nuvidio_empty: toInt(row["nuvidio_vazio"]),
         },
         sourceName,
       );
@@ -1429,11 +1446,13 @@ function importNuvidioRows(db, users, rows, sourceName) {
         calls_nuvidio_approved: 0,
         calls_nuvidio_rejected: 0,
         calls_nuvidio_no_action: 0,
+        calls_nuvidio_empty: 0,
       };
       current.production_nuvidio += 1;
       const tag = normalizeNuvidioTag(row.tag);
       if (tag === "aprovada" || tag === "aprovado") current.calls_nuvidio_approved += 1;
       else if (tag === "reprovada" || tag === "reprovado") current.calls_nuvidio_rejected += 1;
+      else if (!tag || tag === "vazio" || tag === "vazia") current.calls_nuvidio_empty += 1;
       else current.calls_nuvidio_no_action += 1;
       aggregates.set(key, current);
     } catch (error) {
@@ -1451,6 +1470,7 @@ function importNuvidioRows(db, users, rows, sourceName) {
         calls_nuvidio_approved: aggregate.calls_nuvidio_approved,
         calls_nuvidio_rejected: aggregate.calls_nuvidio_rejected,
         calls_nuvidio_no_action: aggregate.calls_nuvidio_no_action,
+        calls_nuvidio_empty: aggregate.calls_nuvidio_empty,
       },
       sourceName,
     );
@@ -1483,10 +1503,12 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
           production_nuvidio:
             toInt(row.nuvidio_aprovadas) +
             toInt(row.nuvidio_reprovadas) +
-            toInt(row.nuvidio_sem_acao),
+            toInt(row.nuvidio_sem_acao) +
+            toInt(row.nuvidio_vazio),
           calls_nuvidio_approved: toInt(row.nuvidio_aprovadas),
           calls_nuvidio_rejected: toInt(row.nuvidio_reprovadas),
           calls_nuvidio_no_action: toInt(row.nuvidio_sem_acao),
+          calls_nuvidio_empty: toInt(row.nuvidio_vazio),
         },
         sourceName,
       );
@@ -1516,14 +1538,14 @@ function buildBaseTemplateCsv(users = [], model = "nuvidio") {
   const is0800 = String(model || "").toLowerCase() === "0800";
   const header = is0800
     ? "Usuário 0800;0800 Aprovadas;0800 Reprovadas;0800 Pendenciadas;0800 Sem ação;Data"
-    : "Usuário Nuvidio;Nuvidio Aprovadas;Nuvidio Reprovadas;Nuvidio Sem ação;Data";
+    : "Usuário Nuvidio;Nuvidio Aprovadas;Nuvidio Reprovadas;Nuvidio Sem ação;Nuvidio Vazio;Data";
   const rows = users.map((user) => {
     if (is0800) {
       const id0800 = String(user.platform_0800_id || user.login || "").replaceAll('"', '""');
       return `"${id0800}";0;0;0;0;2026-01-01`;
     }
     const nuvidio = String(user.nuvidio_id || user.login || "").replaceAll('"', '""');
-    return `"${nuvidio}";0;0;0;2026-01-01`;
+    return `"${nuvidio}";0;0;0;0;2026-01-01`;
   });
   return [header, ...rows].join("\n");
 }
@@ -1550,6 +1572,7 @@ function buildManualValues(operation, tag, quantity) {
   values.production_nuvidio = qty;
   if (normalizedTag.includes("aprova")) values.calls_nuvidio_approved = qty;
   else if (normalizedTag.includes("reprova")) values.calls_nuvidio_rejected = qty;
+  else if (normalizedTag.includes("vazi")) values.calls_nuvidio_empty = qty;
   else values.calls_nuvidio_no_action = qty;
   return values;
 }
@@ -1723,11 +1746,12 @@ function buildAnalysis(db, user, url) {
   const users = db.users.filter((entry) => entry.is_active && (user.role === "manager" || entry.id === user.id));
   const ranking = users.map((entry) => {
     const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
+    const productionMetrics = metrics.filter((row) => !isSaturdayIsoDate(row.metric_date));
     const quality = db.qualityScores.find((score) => score.user_id === entry.id && score.reference_month === monthRef(end));
     return {
       user_id: entry.id,
       name: entry.full_name,
-      avg_production: metrics.length ? Number((metrics.reduce((sum, row) => sum + toInt(row.production), 0) / metrics.length).toFixed(2)) : 0,
+      avg_production: productionMetrics.length ? Number((productionMetrics.reduce((sum, row) => sum + toInt(row.production), 0) / productionMetrics.length).toFixed(2)) : 0,
       total_production: metrics.reduce((sum, row) => sum + toInt(row.production), 0),
       effectiveness: average(metrics.map(calculateEffectiveness)),
       quality: toFloat(quality?.score),
@@ -1782,12 +1806,13 @@ function buildAlerts(db, user, url) {
 
   for (const entry of users) {
     const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
-    const avgProduction = averageIgnoreZero(metrics.map((row) => toInt(row.production_0800) + toInt(row.production_nuvidio)));
+    const productionMetrics = metrics.filter((row) => !isSaturdayIsoDate(row.metric_date));
+    const avgProduction = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_0800) + toInt(row.production_nuvidio)));
     const effectiveness = averageIgnoreZero(metrics.flatMap((row) => [
       calculateOperationEffectiveness(row, "0800"),
       calculateOperationEffectiveness(row, "nuvidio"),
     ]));
-    const totalNoAction = metrics.reduce((sum, row) => sum + toInt(row.calls_0800_no_action) + toInt(row.calls_nuvidio_no_action), 0);
+    const totalNoAction = metrics.reduce((sum, row) => sum + toInt(row.calls_0800_no_action) + toInt(row.calls_nuvidio_no_action) + toInt(row.calls_nuvidio_empty), 0);
     const totalActionable = metrics.reduce((sum, row) => (
       sum
       + toInt(row.calls_0800_approved)
@@ -1818,12 +1843,12 @@ function buildAlerts(db, user, url) {
       if (noActionRisk >= 7) {
         reasons.push({
           tone: "red",
-          text: `Sem ação muito alto para o volume lançado (${Math.round(noActionShare)}%).`,
+          text: `Sem ação / vazio muito alto para o volume lançado (${Math.round(noActionShare)}%).`,
         });
       } else if (noActionRisk >= 4) {
         reasons.push({
           tone: "amber",
-          text: `Sem ação acima do ideal (${Math.round(noActionShare)}%).`,
+          text: `Sem ação / vazio acima do ideal (${Math.round(noActionShare)}%).`,
         });
       }
 
@@ -2473,6 +2498,7 @@ async function handleApi(request, url, db, env = {}) {
     const rejected = Math.max(0, toInt(payload.rejected));
     const noAction = Math.max(0, toInt(payload.no_action));
     const pending = Math.max(0, toInt(payload.pending));
+    const empty = Math.max(0, toInt(payload.empty));
     if (!userId || !operation) {
       return jsonResponse({ error: "Preencha operador, data e operação." }, 400);
     }
@@ -2487,10 +2513,11 @@ async function handleApi(request, url, db, env = {}) {
           calls_0800_no_action: noAction,
         }
       : {
-          production_nuvidio: approved + rejected + noAction,
+          production_nuvidio: approved + rejected + noAction + empty,
           calls_nuvidio_approved: approved,
           calls_nuvidio_rejected: rejected,
           calls_nuvidio_no_action: noAction,
+          calls_nuvidio_empty: empty,
         };
     upsertDailyMetric(db, user.id, metricDate, values, "manual_tag");
     const metric = db.dailyMetrics.find((entry) => entry.user_id === user.id && entry.metric_date === metricDate);
@@ -2513,8 +2540,9 @@ async function handleApi(request, url, db, env = {}) {
     metric.calls_nuvidio_approved = toInt(payload.calls_nuvidio_approved ?? metric.calls_nuvidio_approved);
     metric.calls_nuvidio_rejected = toInt(payload.calls_nuvidio_rejected ?? metric.calls_nuvidio_rejected);
     metric.calls_nuvidio_no_action = toInt(payload.calls_nuvidio_no_action ?? metric.calls_nuvidio_no_action);
+    metric.calls_nuvidio_empty = toInt(payload.calls_nuvidio_empty ?? metric.calls_nuvidio_empty);
     metric.production_0800 = toInt(metric.calls_0800_approved) + toInt(metric.calls_0800_rejected) + toInt(metric.calls_0800_pending) + toInt(metric.calls_0800_no_action);
-    metric.production_nuvidio = toInt(metric.calls_nuvidio_approved) + toInt(metric.calls_nuvidio_rejected) + toInt(metric.calls_nuvidio_no_action);
+    metric.production_nuvidio = toInt(metric.calls_nuvidio_approved) + toInt(metric.calls_nuvidio_rejected) + toInt(metric.calls_nuvidio_no_action) + toInt(metric.calls_nuvidio_empty);
     metric.production = toInt(metric.production_0800) + toInt(metric.production_nuvidio);
     metric.updated_at = nowIso();
     await persistSingleDailyMetricChange(db, env, metric, false);

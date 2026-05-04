@@ -973,6 +973,7 @@ body.theme-contrast .select-wrap select:disabled {
 .tag-split-fill.red { background: var(--red); }
 .tag-split-fill.amber { background: var(--amber); }
 .tag-split-fill.blue { background: var(--blue); }
+.tag-split-fill.muted { background: var(--muted-2); }
 
 .switch-row {
   display: flex;
