@@ -509,32 +509,55 @@ function buildOverviewModel() {
   const historyRows = state.history?.history || [];
   const latest = trend[trend.length - 1];
   const previous = trend[trend.length - 2];
-  const latestMetricDate = historyRows.reduce((max, row) => {
+  const byDate0800 = new Map();
+  const byDateNuvidio = new Map();
+  historyRows.forEach((row) => {
     const date = String(row.metric_date || "").trim();
-    return date && (!max || date > max) ? date : max;
-  }, "");
-  const latestMetricRows = latestMetricDate
-    ? historyRows.filter((row) => String(row.metric_date || "").trim() === latestMetricDate)
-    : [];
-  const latestEffectivenessParts = latestMetricRows.flatMap((row) => ([
-    calcOperationEffectiveness(row, "0800"),
-    calcOperationEffectiveness(row, "nuvidio"),
-  ]));
-  const latestProduction = latestMetricRows.reduce(
-    (sum, row) => sum + Number(row.production_0800 || 0) + Number(row.production_nuvidio || 0),
-    0,
-  );
+    if (!date) return;
+    const current0800 = byDate0800.get(date) || { date, production: 0, effectivenessParts: [] };
+    const currentNuvidio = byDateNuvidio.get(date) || { date, production: 0, effectivenessParts: [] };
+    current0800.production += Number(row.production_0800 || 0);
+    currentNuvidio.production += Number(row.production_nuvidio || 0);
+    current0800.effectivenessParts.push(calcOperationEffectiveness(row, "0800"));
+    currentNuvidio.effectivenessParts.push(calcOperationEffectiveness(row, "nuvidio"));
+    byDate0800.set(date, current0800);
+    byDateNuvidio.set(date, currentNuvidio);
+  });
+  const trend0800 = [...byDate0800.values()]
+    .map((item) => ({
+      date: item.date,
+      production: item.production,
+      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const trendNuvidio = [...byDateNuvidio.values()]
+    .map((item) => ({
+      date: item.date,
+      production: item.production,
+      effectiveness: average(item.effectivenessParts, { ignoreZero: true }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const latestMetricDate = [...new Set([...trend0800.map((item) => item.date), ...trendNuvidio.map((item) => item.date)])]
+    .sort((a, b) => a.localeCompare(b))
+    .pop() || "";
+  const latest0800 = trend0800.find((item) => item.date === latestMetricDate);
+  const latestNuvidio = trendNuvidio.find((item) => item.date === latestMetricDate);
+  const latestEffectivenessValues = [
+    Number(latest0800?.effectiveness || 0),
+    Number(latestNuvidio?.effectiveness || 0),
+  ];
+  const latestProduction = Number(latest0800?.production || 0) + Number(latestNuvidio?.production || 0);
   return {
     totalAttended: trend.reduce((sum, item) => sum + Number(item.production || 0), 0),
     avgProduction: average(productionTrend.map((item) => item.production), { ignoreZero: true }),
-    avgEffectiveness: latestMetricRows.length
-      ? average(latestEffectivenessParts, { ignoreZero: true })
+    avgEffectiveness: latestMetricDate
+      ? average(latestEffectivenessValues, { ignoreZero: true })
       : average(trend.map((item) => item.effectiveness), { ignoreZero: true }),
     avgQuality: average(quality.map((item) => item.score)),
     latest,
     latestDate: latestMetricDate || latest?.date || latest?.metric_date || "",
     latestProduction,
-    latestEffectiveness: average(latestEffectivenessParts, { ignoreZero: true }),
+    latestEffectiveness: average(latestEffectivenessValues, { ignoreZero: true }),
     daysTracked: trend.length,
     prodDelta: latest && previous ? percentageDelta(previous.production, latest.production) : 0,
     effDelta: latest && previous ? percentageDelta(previous.effectiveness, latest.effectiveness) : 0,
