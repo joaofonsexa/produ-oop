@@ -506,14 +506,35 @@ function buildOverviewModel() {
   const productionTrend = trend.filter((item) => !isSaturday(item.date));
   const ranking = state.analysis?.ranking || [];
   const quality = state.history?.quality || [];
+  const historyRows = state.history?.history || [];
   const latest = trend[trend.length - 1];
   const previous = trend[trend.length - 2];
+  const latestMetricDate = historyRows.reduce((max, row) => {
+    const date = String(row.metric_date || "").trim();
+    return date && (!max || date > max) ? date : max;
+  }, "");
+  const latestMetricRows = latestMetricDate
+    ? historyRows.filter((row) => String(row.metric_date || "").trim() === latestMetricDate)
+    : [];
+  const latestEffectivenessParts = latestMetricRows.flatMap((row) => ([
+    calcOperationEffectiveness(row, "0800"),
+    calcOperationEffectiveness(row, "nuvidio"),
+  ]));
+  const latestProduction = latestMetricRows.reduce(
+    (sum, row) => sum + Number(row.production_0800 || 0) + Number(row.production_nuvidio || 0),
+    0,
+  );
   return {
     totalAttended: trend.reduce((sum, item) => sum + Number(item.production || 0), 0),
     avgProduction: average(productionTrend.map((item) => item.production), { ignoreZero: true }),
-    avgEffectiveness: average(trend.map((item) => item.effectiveness), { ignoreZero: true }),
+    avgEffectiveness: latestMetricRows.length
+      ? average(latestEffectivenessParts, { ignoreZero: true })
+      : average(trend.map((item) => item.effectiveness), { ignoreZero: true }),
     avgQuality: average(quality.map((item) => item.score)),
     latest,
+    latestDate: latestMetricDate || latest?.date || latest?.metric_date || "",
+    latestProduction,
+    latestEffectiveness: average(latestEffectivenessParts, { ignoreZero: true }),
     daysTracked: trend.length,
     prodDelta: latest && previous ? percentageDelta(previous.production, latest.production) : 0,
     effDelta: latest && previous ? percentageDelta(previous.effectiveness, latest.effectiveness) : 0,
@@ -619,6 +640,15 @@ function buildAnalysisModel() {
   };
   const tags0800 = buildStatusBreakdown(status0800);
   const tagsNuvidio = buildStatusBreakdown(statusNuvidio);
+  const effectivenessValues = [];
+  (state.history?.history || []).forEach((row) => {
+    if (state.filters.operation === "all" || state.filters.operation === "0800") {
+      effectivenessValues.push(calcOperationEffectiveness(row, "0800"));
+    }
+    if (state.filters.operation === "all" || state.filters.operation === "nuvidio") {
+      effectivenessValues.push(calcOperationEffectiveness(row, "nuvidio"));
+    }
+  });
   return {
     trend,
     qualityMonths,
@@ -630,7 +660,7 @@ function buildAnalysisModel() {
     tagsNuvidio,
     summary: {
       production: average(filteredRanking.map((item) => item.avg_production), { ignoreZero: true }),
-      effectiveness: average(filteredRanking.map((item) => item.effectiveness), { ignoreZero: true }),
+      effectiveness: average(effectivenessValues, { ignoreZero: true }),
     },
   };
 }
@@ -1042,9 +1072,9 @@ function overviewTemplate() {
   const model = buildOverviewModel();
   const trendRows = state.overview?.trend || [];
   const maxTrendProduction = Math.max(...trendRows.map((row) => Number(row.production || 0)), 1);
-  const latestDate = formatDateBr(model.latest?.date || model.latest?.metric_date || "--");
-  const latestProduction = model.latest ? integer(model.latest.production) : "--";
-  const latestEffectiveness = model.latest ? percent(model.latest.effectiveness) : "--%";
+  const latestDate = formatDateBr(model.latestDate || "--");
+  const latestProduction = model.latestDate ? integer(model.latestProduction) : "--";
+  const latestEffectiveness = model.latestDate ? percent(model.latestEffectiveness) : "--%";
   const cards = [
     { label: "Total atendido", value: integer(model.totalAttended) },
     { label: "Média de produção", value: integer(model.avgProduction) || "--" },
