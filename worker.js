@@ -1289,6 +1289,13 @@ function upsertDailyMetric(db, userId, metricDate, values, sourceName) {
   return metric;
 }
 
+function extendImportedPeriod(period, metricDate) {
+  if (!metricDate) return period;
+  if (!period.start || metricDate < period.start) period.start = metricDate;
+  if (!period.end || metricDate > period.end) period.end = metricDate;
+  return period;
+}
+
 function importNormalizedRows(db, users, rows, sourceName) {
   const required = [
     "data",
@@ -1309,14 +1316,16 @@ function importNormalizedRows(db, users, rows, sourceName) {
   let processed = 0;
   let rejected = 0;
   const errors = [];
+  const period = { start: "", end: "" };
   rows.forEach((row, index) => {
     try {
       const user = matchUser(users, row);
       if (!user) throw new Error("Operador nao encontrado para os identificadores informados.");
+      const metricDate = parseDate(row.data);
       upsertDailyMetric(
         db,
         user.id,
-        parseDate(row.data),
+        metricDate,
         {
           production: toInt(row.producao),
           calls_0800_approved: toInt(row["0800_aprovado"]),
@@ -1329,18 +1338,20 @@ function importNormalizedRows(db, users, rows, sourceName) {
         },
         sourceName,
       );
+      extendImportedPeriod(period, metricDate);
       processed += 1;
     } catch (error) {
       rejected += 1;
       errors.push({ row: index + 2, error: error.message });
     }
   });
-  return { processed, rejected, errors };
+  return { processed, rejected, errors, period };
 }
 
 function import0800Rows(db, users, rows, sourceName) {
   const aggregates = new Map();
   const errors = [];
+  const period = { start: "", end: "" };
   rows.forEach((row, index) => {
     try {
       const rawOperator = resolve0800OperatorRaw(row);
@@ -1353,6 +1364,7 @@ function import0800Rows(db, users, rows, sourceName) {
       });
       if (!user) throw new Error(`Operador do 0800 nao encontrado no cadastro: ${rawOperator || "sem identificador"}`);
       const metricDate = parseDate(row.data_abertura_ocorrencia);
+      extendImportedPeriod(period, metricDate);
       const key = `${user.id}::${metricDate}`;
       const current = aggregates.get(key) || {
         userId: user.id,
@@ -1391,12 +1403,13 @@ function import0800Rows(db, users, rows, sourceName) {
     );
   }
 
-  return { processed: aggregates.size, rejected: errors.length, errors };
+  return { processed: aggregates.size, rejected: errors.length, errors, period };
 }
 
 function importNuvidioRows(db, users, rows, sourceName) {
   const aggregates = new Map();
   const errors = [];
+  const period = { start: "", end: "" };
   rows.forEach((row, index) => {
     try {
       const user = matchUser(users, {
@@ -1407,6 +1420,7 @@ function importNuvidioRows(db, users, rows, sourceName) {
       });
       if (!user) throw new Error("Operador da Nuvidio nao encontrado no cadastro.");
       const metricDate = parseDate(row.data_abreviada);
+      extendImportedPeriod(period, metricDate);
       const key = `${user.id}::${metricDate}`;
       const current = aggregates.get(key) || {
         userId: user.id,
@@ -1442,13 +1456,14 @@ function importNuvidioRows(db, users, rows, sourceName) {
     );
   }
 
-  return { processed: aggregates.size, rejected: errors.length, errors };
+  return { processed: aggregates.size, rejected: errors.length, errors, period };
 }
 
 function importNuvidioSummaryRows(db, users, rows, sourceName) {
   let processed = 0;
   let rejected = 0;
   const errors = [];
+  const period = { start: "", end: "" };
 
   rows.forEach((row, index) => {
     try {
@@ -1475,6 +1490,7 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
         },
         sourceName,
       );
+      extendImportedPeriod(period, metricDate);
       processed += 1;
     } catch (error) {
       rejected += 1;
@@ -1482,7 +1498,7 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
     }
   });
 
-  return { processed, rejected, errors };
+  return { processed, rejected, errors, period };
 }
 
 function registerImportLog(db, userId, sourceName, processed, rejected) {
@@ -1542,6 +1558,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
   let processed = 0;
   let rejected = 0;
   const errors = [];
+  const period = { start: "", end: "" };
 
   rows.forEach((row, index) => {
     try {
@@ -1570,6 +1587,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
         },
         sourceName,
       );
+      extendImportedPeriod(period, metricDate);
       processed += 1;
     } catch (error) {
       rejected += 1;
@@ -1577,7 +1595,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
     }
   });
 
-  return { processed, rejected, errors };
+  return { processed, rejected, errors, period };
 }
 
 function buildOverview(db, user, url) {
@@ -1897,6 +1915,8 @@ function buildAlerts(db, user, url) {
 function buildHistory(db, user, url) {
   const start = url.searchParams.get("start") || shiftDate(-29);
   const end = url.searchParams.get("end") || todayIso();
+  const startMonth = String(start).slice(0, 7);
+  const endMonth = String(end).slice(0, 7);
   const requestedRawUserId = String(url.searchParams.get("user_id") || user.id).trim().toLowerCase();
   const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
   const requestedUserId = Number(requestedRawUserId || user.id);
@@ -1911,6 +1931,7 @@ function buildHistory(db, user, url) {
     .map((row) => ({ ...row, effectiveness: calculateEffectiveness(row) }));
   const quality = db.qualityScores
     .filter((item) => {
+      if (String(item.reference_month || "") < startMonth || String(item.reference_month || "") > endMonth) return false;
       if (includeAllUsers) return true;
       return item.user_id === targetUserId;
     })
@@ -2272,6 +2293,50 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ quality: score });
   }
 
+  if (url.pathname.startsWith("/api/admin/quality/") && request.method === "PUT") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const qualityId = Number(url.pathname.split("/").pop());
+    const score = db.qualityScores.find((entry) => entry.id === qualityId);
+    if (!score) return jsonResponse({ error: "Registro de qualidade nao encontrado" }, 404);
+    const payload = await request.json();
+    const monitoria1 = payload.monitoria_1 === "" ? null : toOptionalMonitoria(payload.monitoria_1 ?? score.monitoria_1);
+    const monitoria2 = payload.monitoria_2 === "" ? null : toOptionalMonitoria(payload.monitoria_2 ?? score.monitoria_2);
+    const monitoria3 = payload.monitoria_3 === "" ? null : toOptionalMonitoria(payload.monitoria_3 ?? score.monitoria_3);
+    const monitoria4 = payload.monitoria_4 === "" ? null : toOptionalMonitoria(payload.monitoria_4 ?? score.monitoria_4);
+    const monitorias = [monitoria1, monitoria2, monitoria3, monitoria4]
+      .filter((value) => value !== null && Number.isFinite(value) && value >= 0 && value <= 100);
+    const resolvedScore = monitorias.length
+      ? Number((monitorias.reduce((sum, value) => sum + Number(value || 0), 0) / monitorias.length).toFixed(2))
+      : 0;
+    score.monitoria_1 = monitoria1;
+    score.monitoria_2 = monitoria2;
+    score.monitoria_3 = monitoria3;
+    score.monitoria_4 = monitoria4;
+    score.score = resolvedScore;
+    score.notes = String(payload.notes ?? score.notes ?? "").trim();
+    score.updated_at = nowIso();
+    await persistSingleQualityScoreChange(db, env, score, true);
+    return jsonResponse({ quality: score });
+  }
+
+  if (url.pathname.startsWith("/api/admin/quality/") && request.method === "DELETE") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const qualityId = Number(url.pathname.split("/").pop());
+    const index = db.qualityScores.findIndex((entry) => entry.id === qualityId);
+    if (index === -1) return jsonResponse({ error: "Registro de qualidade nao encontrado" }, 404);
+    db.qualityScores.splice(index, 1);
+    if (env?.DB) {
+      await ensureD1Schema(env.DB);
+      await env.DB.prepare("DELETE FROM quality_scores WHERE id = ?").bind(qualityId).run();
+      rememberStorage(db);
+    } else {
+      await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: false });
+    }
+    return jsonResponse({ ok: true });
+  }
+
   if (url.pathname === "/api/admin/quality/template" && request.method === "GET") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
@@ -2613,10 +2678,10 @@ async function handleApi(request, url, db, env = {}) {
     else if (schema === "0800_summary") outcome = import0800SummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
     else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
     else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
-    const { processed, rejected, errors } = outcome;
+    const { processed, rejected, errors, period } = outcome;
     registerImportLog(db, auth.user.id, file.name, processed, rejected);
     await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: true });
-    return jsonResponse({ processed, rejected, errors: errors.slice(0, 20) });
+    return jsonResponse({ processed, rejected, period, errors: errors.slice(0, 20) });
   }
 
   return jsonResponse({ error: "Rota nao encontrada" }, 404);

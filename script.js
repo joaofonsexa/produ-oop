@@ -396,18 +396,23 @@ function calcOperationEffectiveness(row, operation) {
 
 function getScopedHistory() {
   const rows = state.history?.history || [];
+  const qualityRows = state.history?.quality || [];
   const operation = state.filters.operation;
-  const qualityByMonth = new Map((state.history?.quality || []).map((item) => [item.reference_month, item.score || 0]));
-  return rows.flatMap((row) => {
+  const qualityByMonth = new Map(qualityRows.map((item) => [item.reference_month, item.score || 0]));
+  const metricRows = rows.flatMap((row) => {
     const list = [];
     const qualityScore = qualityByMonth.get(String(row.metric_date || "").slice(0, 7)) || 0;
     if (operation === "all" || operation === "0800") {
       list.push({
+        entryType: "metric",
         metricId: row.id,
         userId: row.user_id,
         date: row.metric_date,
+        dateLabel: formatDateBr(row.metric_date),
         operation: "0800",
         production: Number(row.production_0800 || 0),
+        production_0800: Number(row.production_0800 || 0),
+        production_nuvidio: Number(row.production_nuvidio || 0),
         effectiveness: calcOperationEffectiveness(row, "0800"),
         quality: qualityScore,
         updatedAt: row.updated_at,
@@ -419,11 +424,15 @@ function getScopedHistory() {
     }
     if (operation === "all" || operation === "nuvidio") {
       list.push({
+        entryType: "metric",
         metricId: row.id,
         userId: row.user_id,
         date: row.metric_date,
+        dateLabel: formatDateBr(row.metric_date),
         operation: "Nuvidio",
         production: Number(row.production_nuvidio || 0),
+        production_0800: Number(row.production_0800 || 0),
+        production_nuvidio: Number(row.production_nuvidio || 0),
         effectiveness: calcOperationEffectiveness(row, "nuvidio"),
         quality: qualityScore,
         updatedAt: row.updated_at,
@@ -435,6 +444,26 @@ function getScopedHistory() {
     }
     return list;
   });
+  const historyQualityRows = qualityRows.map((row) => ({
+    entryType: "quality",
+    metricId: row.id,
+    userId: row.user_id,
+    date: `${row.reference_month}-01`,
+    dateLabel: formatMonthLabel(row.reference_month),
+    operation: "Qualidade",
+    production: null,
+    effectiveness: null,
+    quality: Number(row.score || 0),
+    updatedAt: row.updated_at,
+    referenceMonth: row.reference_month,
+    monitoria_1: row.monitoria_1,
+    monitoria_2: row.monitoria_2,
+    monitoria_3: row.monitoria_3,
+    monitoria_4: row.monitoria_4,
+    notes: row.notes || "",
+  }));
+  return [...metricRows, ...historyQualityRows]
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
 
 function buildOverviewModel() {
@@ -897,16 +926,26 @@ function shellTemplate() {
             <button class="icon-close" type="button" id="close-history-edit-modal" aria-label="Fechar">×</button>
           </div>
           <form id="history-edit-form" class="section compact-form">
+            <input type="hidden" id="history-edit-type" name="entry_type">
             <input type="hidden" id="history-edit-metric-id" name="metric_id">
             <input type="hidden" id="history-edit-operation" name="operation">
             <div class="form-grid">
               <label>Operador<input id="history-edit-operator" readonly></label>
               <label>Data<input id="history-edit-date" readonly></label>
               <label>Operação<input id="history-edit-operation-label" readonly></label>
-              <label>Aprovado<input type="number" min="0" step="1" id="history-edit-approved" name="approved" required></label>
-              <label>Reprovado<input type="number" min="0" step="1" id="history-edit-rejected" name="rejected" required></label>
+            </div>
+            <div class="form-grid history-edit-metric-fields">
+              <label>Aprovado<input type="number" min="0" step="1" id="history-edit-approved" name="approved"></label>
+              <label>Reprovado<input type="number" min="0" step="1" id="history-edit-rejected" name="rejected"></label>
               <label class="history-edit-pending">Pendenciado<input type="number" min="0" step="1" id="history-edit-pending" name="pending"></label>
-              <label>Sem ação<input type="number" min="0" step="1" id="history-edit-no-action" name="no_action" required></label>
+              <label>Sem ação<input type="number" min="0" step="1" id="history-edit-no-action" name="no_action"></label>
+            </div>
+            <div class="form-grid history-edit-quality-fields" hidden>
+              <label>Monitoria 1<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-1" name="monitoria_1"></label>
+              <label>Monitoria 2<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-2" name="monitoria_2"></label>
+              <label>Monitoria 3<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-3" name="monitoria_3"></label>
+              <label>Monitoria 4<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-4" name="monitoria_4"></label>
+              <label>Observações<input id="history-edit-notes" name="notes"></label>
             </div>
             <div class="action-grid">
               <button class="btn-secondary" type="button" id="cancel-history-edit-modal">Cancelar</button>
@@ -1367,17 +1406,17 @@ function historyTemplate() {
               ${rows.length ? rows.map((row) => `
                 <tr>
                   ${showOperatorColumn ? `<td>${esc(userNameById.get(String(row.userId)) || "—")}</td>` : ""}
-                  <td>${esc(formatDateBr(row.date))}</td>
-                  <td><span class="pill ${row.operation === "0800" ? "amber" : "blue"}">${esc(row.operation)}</span></td>
-                  <td>${integer(row.production)}</td>
-                  <td>${percent(row.effectiveness)}</td>
+                  <td>${esc(row.dateLabel || formatDateBr(row.date))}</td>
+                  <td><span class="pill ${row.operation === "0800" ? "amber" : row.operation === "Qualidade" ? "green" : "blue"}">${esc(row.operation)}</span></td>
+                  <td>${row.production === null ? "—" : integer(row.production)}</td>
+                  <td>${row.effectiveness === null ? "—" : percent(row.effectiveness)}</td>
                   <td>${number(row.quality)}</td>
                   <td>${esc(formatDateTimeBr(row.updatedAt))}</td>
                   ${isManager() ? `
                     <td>
                       <div class="row-actions">
-                        <button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}">Editar</button>
-                        <button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}">Remover</button>
+                        <button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Editar</button>
+                        <button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Remover</button>
                       </div>
                     </td>
                   ` : ""}
@@ -2095,6 +2134,17 @@ function bindShellEvents() {
         const response = await fetch("/api/admin/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Erro ao importar base.");
+        if (data.period?.start && data.period?.end) {
+          state.filters.start = data.period.start;
+          state.filters.end = data.period.end;
+          state.filters.today = data.period.end;
+        }
+        if (isManager()) {
+          state.filters.analysisUserId = "all";
+          state.filters.historyUserId = "all";
+          state.filters.historyQuery = "";
+          state.filters.operation = "all";
+        }
         await loadBootstrap();
         setFlash("success", `Base importada: ${data.processed} registro(s), ${data.rejected} rejeição(ões).`);
         render();
@@ -2241,28 +2291,47 @@ function bindShellEvents() {
     button.addEventListener("click", () => {
       const metricId = Number(button.dataset.historyEdit);
       const operation = String(button.dataset.historyOperation || "");
-      const baseRow = (state.history?.history || []).find((item) => Number(item.id) === metricId);
-      if (!baseRow) {
+      const entryType = String(button.dataset.historyType || "metric");
+      const historyRow = getScopedHistory().find((item) => Number(item.metricId) === metricId && String(item.entryType) === entryType);
+      if (!historyRow) {
         setFlash("error", "Registro não encontrado para edição.");
         return;
       }
-      const is0800 = operation === "0800";
       const setField = (id, value) => {
         const input = document.getElementById(id);
         if (input) input.value = value ?? "";
       };
-      const operatorName = state.users.find((user) => String(user.id) === String(baseRow.user_id))?.full_name || "Operador";
+      const operatorName = state.users.find((user) => String(user.id) === String(historyRow.userId))?.full_name || "Operador";
+      const metricFields = document.querySelector(".history-edit-metric-fields");
+      const qualityFields = document.querySelector(".history-edit-quality-fields");
+      const pendingRow = document.querySelector(".history-edit-pending");
+      const submitButton = document.querySelector("#history-edit-form button[type='submit']");
       setField("history-edit-metric-id", metricId);
+      setField("history-edit-type", entryType);
       setField("history-edit-operation", operation);
       setField("history-edit-operator", operatorName);
-      setField("history-edit-date", formatDateBr(baseRow.metric_date));
+      setField("history-edit-date", historyRow.dateLabel || formatDateBr(historyRow.date));
       setField("history-edit-operation-label", operation);
-      setField("history-edit-approved", is0800 ? Number(baseRow.calls_0800_approved || 0) : Number(baseRow.calls_nuvidio_approved || 0));
-      setField("history-edit-rejected", is0800 ? Number(baseRow.calls_0800_rejected || 0) : Number(baseRow.calls_nuvidio_rejected || 0));
-      setField("history-edit-pending", is0800 ? Number(baseRow.calls_0800_pending || 0) : 0);
-      setField("history-edit-no-action", is0800 ? Number(baseRow.calls_0800_no_action || 0) : Number(baseRow.calls_nuvidio_no_action || 0));
-      const pendingRow = document.querySelector(".history-edit-pending");
-      if (pendingRow) pendingRow.style.display = is0800 ? "grid" : "none";
+      if (entryType === "quality") {
+        if (metricFields) metricFields.hidden = true;
+        if (qualityFields) qualityFields.hidden = false;
+        if (submitButton) submitButton.textContent = "Salvar qualidade";
+        setField("history-edit-monitoria-1", historyRow.monitoria_1 ?? "");
+        setField("history-edit-monitoria-2", historyRow.monitoria_2 ?? "");
+        setField("history-edit-monitoria-3", historyRow.monitoria_3 ?? "");
+        setField("history-edit-monitoria-4", historyRow.monitoria_4 ?? "");
+        setField("history-edit-notes", historyRow.notes ?? "");
+      } else {
+        const is0800 = operation === "0800";
+        if (metricFields) metricFields.hidden = false;
+        if (qualityFields) qualityFields.hidden = true;
+        if (submitButton) submitButton.textContent = "Salvar lançamento";
+        setField("history-edit-approved", Number(historyRow.calls_approved || 0));
+        setField("history-edit-rejected", Number(historyRow.calls_rejected || 0));
+        setField("history-edit-pending", Number(historyRow.calls_pending || 0));
+        setField("history-edit-no-action", Number(historyRow.calls_no_action || 0));
+        if (pendingRow) pendingRow.style.display = is0800 ? "grid" : "none";
+      }
       if (historyEditModal) historyEditModal.hidden = false;
     });
   });
@@ -2274,39 +2343,54 @@ function bindShellEvents() {
       const form = new FormData(event.currentTarget);
       const metricId = Number(form.get("metric_id"));
       const operation = String(form.get("operation") || "");
-      const baseRow = (state.history?.history || []).find((item) => Number(item.id) === metricId);
-      if (!baseRow) {
+      const entryType = String(form.get("entry_type") || "metric");
+      const historyRow = getScopedHistory().find((item) => Number(item.metricId) === metricId && String(item.entryType) === entryType);
+      if (!historyRow) {
         setFlash("error", "Registro não encontrado para edição.");
         return;
       }
-      const is0800 = operation === "0800";
-      const approvedN = Math.max(0, Number(form.get("approved") || 0));
-      const rejectedN = Math.max(0, Number(form.get("rejected") || 0));
-      const pendingN = Math.max(0, Number(form.get("pending") || 0));
-      const noActionN = Math.max(0, Number(form.get("no_action") || 0));
       const submitButton = historyEditForm.querySelector('button[type="submit"]');
       const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
-        const payload = is0800
-          ? {
-              production: Math.max(0, Number(baseRow.production_nuvidio || 0)) + approvedN + rejectedN + pendingN + noActionN,
-              calls_0800_approved: approvedN,
-              calls_0800_rejected: rejectedN,
-              calls_0800_pending: pendingN,
-              calls_0800_no_action: noActionN,
-            }
-          : {
-              production: Math.max(0, Number(baseRow.production_0800 || 0)) + approvedN + rejectedN + noActionN,
-              calls_nuvidio_approved: approvedN,
-              calls_nuvidio_rejected: rejectedN,
-              calls_nuvidio_no_action: noActionN,
-            };
-        await api(`/api/admin/daily-metrics/${metricId}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
+        if (entryType === "quality") {
+          const payload = {
+            monitoria_1: form.get("monitoria_1"),
+            monitoria_2: form.get("monitoria_2"),
+            monitoria_3: form.get("monitoria_3"),
+            monitoria_4: form.get("monitoria_4"),
+            notes: form.get("notes"),
+          };
+          await api(`/api/admin/quality/${metricId}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+        } else {
+          const is0800 = operation === "0800";
+          const approvedN = Math.max(0, Number(form.get("approved") || 0));
+          const rejectedN = Math.max(0, Number(form.get("rejected") || 0));
+          const pendingN = Math.max(0, Number(form.get("pending") || 0));
+          const noActionN = Math.max(0, Number(form.get("no_action") || 0));
+          const payload = is0800
+            ? {
+                production: Math.max(0, Number(historyRow.production_nuvidio || 0)) + approvedN + rejectedN + pendingN + noActionN,
+                calls_0800_approved: approvedN,
+                calls_0800_rejected: rejectedN,
+                calls_0800_pending: pendingN,
+                calls_0800_no_action: noActionN,
+              }
+            : {
+                production: Math.max(0, Number(historyRow.production_0800 || 0)) + approvedN + rejectedN + noActionN,
+                calls_nuvidio_approved: approvedN,
+                calls_nuvidio_rejected: rejectedN,
+                calls_nuvidio_no_action: noActionN,
+              };
+          await api(`/api/admin/daily-metrics/${metricId}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+        }
         closeHistoryEditModal();
-        refreshDashboardInBackground(`Registro ${operation} atualizado.`);
+        refreshDashboardInBackground(entryType === "quality" ? "Qualidade atualizada." : `Registro ${operation} atualizado.`);
       } catch (error) {
         setFlash("error", error.message);
       } finally {
@@ -2318,11 +2402,12 @@ function bindShellEvents() {
   document.querySelectorAll("[data-history-delete]").forEach((button) => {
     button.addEventListener("click", async () => {
       const metricId = Number(button.dataset.historyDelete);
-      if (!window.confirm("Remover este registro diário?")) return;
+      const entryType = String(button.dataset.historyType || "metric");
+      if (!window.confirm(entryType === "quality" ? "Remover este registro de qualidade?" : "Remover este registro diário?")) return;
       const restoreButton = setButtonProcessing(button, true, "Removendo...");
       try {
-        await api(`/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
-        refreshDashboardInBackground("Registro removido com sucesso.");
+        await api(entryType === "quality" ? `/api/admin/quality/${metricId}` : `/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
+        refreshDashboardInBackground(entryType === "quality" ? "Qualidade removida com sucesso." : "Registro removido com sucesso.");
       } catch (error) {
         setFlash("error", error.message);
       } finally {
