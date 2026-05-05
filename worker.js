@@ -2148,32 +2148,30 @@ function buildReportPayload(db, user, url) {
   const consolidatedRows = [];
   const consolidatedMap = new Map();
   for (const row of rows) {
-    const key = `${row.operator}::${row.operation}`;
+    const key = `${row.date}::${row.operator}::${row.operation}`;
     const current = consolidatedMap.get(key) || {
+      date: row.date,
       operator: row.operator,
       operation: row.operation,
-      days: 0,
       production_total: 0,
       effectiveness_parts: [],
     };
-    current.days += 1;
     current.production_total += toInt(row.production);
     current.effectiveness_parts.push(Number(row.effectiveness || 0));
     consolidatedMap.set(key, current);
   }
   for (const item of consolidatedMap.values()) {
     consolidatedRows.push({
+      date: item.date,
       operator: item.operator,
       operation: item.operation,
-      days: item.days,
-      avg_production: item.days ? Number((item.production_total / item.days).toFixed(2)) : 0,
       total_production: item.production_total,
       avg_effectiveness: item.effectiveness_parts.length
         ? Number((item.effectiveness_parts.reduce((sum, value) => sum + value, 0) / item.effectiveness_parts.length).toFixed(2))
         : 0,
     });
   }
-  consolidatedRows.sort((a, b) => b.total_production - a.total_production || a.operator.localeCompare(b.operator));
+  consolidatedRows.sort((a, b) => b.date.localeCompare(a.date) || a.operator.localeCompare(b.operator) || a.operation.localeCompare(b.operation));
   const alertsPayload = buildAlerts(db, user, new URL(url.toString()));
 
   return {
@@ -2192,77 +2190,27 @@ function buildReportPayload(db, user, url) {
   };
 }
 
-function renderExcelReport(payload) {
-  const reportTitle = payload.report_type === "operacional"
+function reportTitleFor(type) {
+  return type === "operacional"
     ? "Relatório operacional"
-    : payload.report_type === "qualidade"
+    : type === "qualidade"
       ? "Relatório de qualidade"
-      : payload.report_type === "ofensores"
+      : type === "ofensores"
         ? "Relatório de ofensores"
         : "Relatório consolidado";
-  const sectorTitle = payload.report_sector === "0800" ? "0800" : payload.report_sector === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
-  const operationalRows = payload.operational_rows.map((row) => `
-    <tr>
-      <td>${escapeHtml(formatDateBrServer(row.date))}</td>
-      <td>${escapeHtml(row.operator)}</td>
-      <td>${escapeHtml(row.operation)}</td>
-      <td>${escapeHtml(String(toInt(row.production)))}</td>
-      <td>${escapeHtml(`${Math.round(Number(row.effectiveness || 0))}%`)}</td>
-    </tr>`).join("");
-  const qualityRows = payload.quality_rows.map((row) => `
-    <tr>
-      <td>${escapeHtml(formatMonthBrServer(row.reference_month))}</td>
-      <td>${escapeHtml(row.operator)}</td>
-      <td>${escapeHtml(String(row.monitoria_1 ?? ""))}</td>
-      <td>${escapeHtml(String(row.monitoria_2 ?? ""))}</td>
-      <td>${escapeHtml(String(row.monitoria_3 ?? ""))}</td>
-      <td>${escapeHtml(String(row.monitoria_4 ?? ""))}</td>
-      <td>${escapeHtml(String(row.final_score ?? ""))}</td>
-      <td>${escapeHtml(row.notes || "")}</td>
-    </tr>`).join("");
-  const consolidatedRows = payload.consolidated_rows.map((row) => `
-    <tr>
-      <td>${escapeHtml(row.operator)}</td>
-      <td>${escapeHtml(row.operation)}</td>
-      <td>${escapeHtml(String(row.days))}</td>
-      <td>${escapeHtml(String(row.total_production))}</td>
-      <td>${escapeHtml(String(Math.round(row.avg_production)))}</td>
-      <td>${escapeHtml(`${Math.round(row.avg_effectiveness)}%`)}</td>
-    </tr>`).join("");
-  const offenderRows = payload.offenders_rows.map((row) => `
-    <tr>
-      <td>${escapeHtml(row.name)}</td>
-      <td>${escapeHtml(row.login)}</td>
-      <td>${escapeHtml(String(row.alert_score))}</td>
-      <td>${escapeHtml(`${Math.round(row.avg_production_0800 || 0)}`)}</td>
-      <td>${escapeHtml(`${Math.round(row.effectiveness_0800 || 0)}%`)}</td>
-      <td>${escapeHtml(`${Math.round(row.avg_production_nuvidio || 0)}`)}</td>
-      <td>${escapeHtml(`${Math.round(row.effectiveness_nuvidio || 0)}%`)}</td>
-      <td>${escapeHtml(row.quality ? String(row.quality) : "")}</td>
-    </tr>`).join("");
-  const consolidatedSection = `<h2>Consolidado</h2><table><thead><tr><th>Operador</th><th>Setor</th><th>Dias</th><th>Produção total</th><th>Produção média</th><th>Efetividade média</th></tr></thead><tbody>${consolidatedRows || '<tr><td colspan="6">Sem dados.</td></tr>'}</tbody></table>`;
-  const operationalSection = `<h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;
-  const qualitySection = `<h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th><th>Observações</th></tr></thead><tbody>${qualityRows || '<tr><td colspan="8">Sem dados.</td></tr>'}</tbody></table>`;
-  const offendersSection = `<h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8">Sem dados.</td></tr>'}</tbody></table>`;
-  const sections = payload.report_type === "operacional"
-    ? (payload.report_view === "sintetica" ? consolidatedSection : operationalSection)
-    : payload.report_type === "qualidade"
-      ? qualitySection
-      : payload.report_type === "ofensores"
-        ? offendersSection
-        : `${consolidatedSection}${payload.report_view === "detalhada" ? operationalSection : ""}${qualitySection}`;
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial,sans-serif;padding:18px}table{border-collapse:collapse;width:100%;margin:18px 0}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#e2e8f0}h1,h2{margin:0 0 8px}</style></head><body><h1>${escapeHtml(reportTitle)}</h1><p>Escopo: ${escapeHtml(payload.operator_label)}<br>Período: ${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}<br>Visão: ${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")}<br>Setor: ${escapeHtml(sectorTitle)}</p>${sections}</body></html>`;
 }
 
-function renderPdfReport(payload) {
-  const reportTitle = payload.report_type === "operacional"
-    ? "Relatório operacional"
-    : payload.report_type === "qualidade"
-      ? "Relatório de qualidade"
-      : payload.report_type === "ofensores"
-        ? "Relatório de ofensores"
-        : "Relatório consolidado";
-  const sectorTitle = payload.report_sector === "0800" ? "0800" : payload.report_sector === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+function reportSectorLabel(sector) {
+  return sector === "0800" ? "0800" : sector === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+}
+
+function reportDocumentStyles(darkMode = false) {
+  return darkMode
+    ? `body{font-family:'Segoe UI',Arial,sans-serif;margin:0;background:#0b0e13;color:#f8fafc} .page{padding:28px 30px 34px} .hero{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 24px;border-radius:24px;background:linear-gradient(180deg,#151a21 0%,#10141a 100%);border:1px solid rgba(255,255,255,.08)} .brand{display:flex;align-items:center;gap:14px} .badge{width:56px;height:56px;border-radius:18px;display:grid;place-items:center;font-size:20px;font-weight:800;letter-spacing:.04em;color:#f8fafc;background:linear-gradient(180deg,#2f3642 0%,#1c2129 100%);border:1px solid rgba(255,255,255,.08)} .brand-copy strong{display:block;font-size:22px;font-weight:800}.brand-copy span,.hero-meta span,.meta-card span{display:block;color:rgba(226,232,240,.68)} .hero-meta{text-align:right}.hero-meta strong{display:block;font-size:18px;font-weight:800;color:#f8fafc} .meta-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0 0} .meta-card{padding:16px 18px;border-radius:18px;background:#141920;border:1px solid rgba(255,255,255,.06)} .meta-card strong{display:block;margin-top:6px;font-size:16px;color:#f8fafc} h2{margin:24px 0 10px;font-size:17px} table{border-collapse:collapse;width:100%;margin-top:10px;border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;background:#12171d} th,td{padding:11px 12px;text-align:left;font-size:12px} th{background:#171d25;color:rgba(226,232,240,.72);text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid rgba(255,255,255,.08)} td{color:#f8fafc;border-bottom:1px solid rgba(255,255,255,.05)} tr:last-child td{border-bottom:0} .section{margin-top:18px} .empty{padding:18px;color:rgba(226,232,240,.72)} @media print{body{background:#fff;color:#111827}.page{padding:0}.hero,.meta-card,table{break-inside:avoid}}`
+    : `body{font-family:'Segoe UI',Arial,sans-serif;margin:0;background:#f4f7fb;color:#111827} .page{padding:28px 30px 34px} .hero{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 24px;border-radius:24px;background:linear-gradient(180deg,#ffffff 0%,#f7f9fc 100%);border:1px solid rgba(15,23,42,.08)} .brand{display:flex;align-items:center;gap:14px} .badge{width:56px;height:56px;border-radius:18px;display:grid;place-items:center;font-size:20px;font-weight:800;letter-spacing:.04em;color:#fff;background:linear-gradient(180deg,#394150 0%,#202630 100%);border:1px solid rgba(15,23,42,.08)} .brand-copy strong{display:block;font-size:22px;font-weight:800}.brand-copy span,.hero-meta span,.meta-card span{display:block;color:#667085} .hero-meta{text-align:right}.hero-meta strong{display:block;font-size:18px;font-weight:800;color:#111827} .meta-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0 0} .meta-card{padding:16px 18px;border-radius:18px;background:#fff;border:1px solid rgba(15,23,42,.08)} .meta-card strong{display:block;margin-top:6px;font-size:16px;color:#111827} h2{margin:24px 0 10px;font-size:17px} table{border-collapse:collapse;width:100%;margin-top:10px;border:1px solid #d8e0ea;border-radius:16px;overflow:hidden;background:#fff} th,td{padding:11px 12px;text-align:left;font-size:12px} th{background:#eff3f8;color:#667085;text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid #d8e0ea} td{color:#111827;border-bottom:1px solid #edf1f6} tr:last-child td{border-bottom:0} .section{margin-top:18px} .empty{padding:18px;color:#667085}`
+}
+
+function buildReportSections(payload) {
   const operationalRows = payload.operational_rows.map((row) => `
     <tr>
       <td>${escapeHtml(formatDateBrServer(row.date))}</td>
@@ -2280,14 +2228,14 @@ function renderPdfReport(payload) {
       <td>${escapeHtml(String(row.monitoria_3 ?? ""))}</td>
       <td>${escapeHtml(String(row.monitoria_4 ?? ""))}</td>
       <td>${escapeHtml(String(row.final_score ?? ""))}</td>
+      ${payload.report_type === "qualidade" ? `<td>${escapeHtml(row.notes || "")}</td>` : ""}
     </tr>`).join("");
   const consolidatedRows = payload.consolidated_rows.map((row) => `
     <tr>
+      <td>${escapeHtml(formatDateBrServer(row.date))}</td>
       <td>${escapeHtml(row.operator)}</td>
       <td>${escapeHtml(row.operation)}</td>
-      <td>${escapeHtml(String(row.days))}</td>
       <td>${escapeHtml(String(row.total_production))}</td>
-      <td>${escapeHtml(String(Math.round(row.avg_production)))}</td>
       <td>${escapeHtml(`${Math.round(row.avg_effectiveness)}%`)}</td>
     </tr>`).join("");
   const offenderRows = payload.offenders_rows.map((row) => `
@@ -2301,18 +2249,33 @@ function renderPdfReport(payload) {
       <td>${escapeHtml(`${Math.round(row.effectiveness_nuvidio || 0)}%`)}</td>
       <td>${escapeHtml(row.quality ? String(row.quality) : "")}</td>
     </tr>`).join("");
-  const consolidatedSection = `<h2>Consolidado</h2><table><thead><tr><th>Operador</th><th>Setor</th><th>Dias</th><th>Produção total</th><th>Produção média</th><th>Efetividade média</th></tr></thead><tbody>${consolidatedRows || '<tr><td colspan="6">Sem dados.</td></tr>'}</tbody></table>`;
-  const operationalSection = `<h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;
-  const qualitySection = `<h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th></tr></thead><tbody>${qualityRows || '<tr><td colspan="7">Sem dados.</td></tr>'}</tbody></table>`;
-  const offendersSection = `<h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8">Sem dados.</td></tr>'}</tbody></table>`;
-  const sections = payload.report_type === "operacional"
+  const consolidatedSection = `<div class="section"><h2>Consolidado</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Setor</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${consolidatedRows || '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
+  const operationalSection = `<div class="section"><h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
+  const qualityColumns = payload.report_type === "qualidade" ? 8 : 7;
+  const qualityNotesHeader = payload.report_type === "qualidade" ? "<th>Observações</th>" : "";
+  const qualitySection = `<div class="section"><h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th>${qualityNotesHeader}</tr></thead><tbody>${qualityRows || `<tr><td colspan="${qualityColumns}" class="empty">Sem dados.</td></tr>`}</tbody></table></div>`;
+  const offendersSection = `<div class="section"><h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
+  return payload.report_type === "operacional"
     ? (payload.report_view === "sintetica" ? consolidatedSection : operationalSection)
     : payload.report_type === "qualidade"
       ? qualitySection
       : payload.report_type === "ofensores"
         ? offendersSection
         : `${consolidatedSection}${payload.report_view === "detalhada" ? operationalSection : ""}${qualitySection}`;
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(reportTitle)}</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:32px;color:#111827}h1{margin:0 0 10px}h2{margin:24px 0 10px}p{margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border:1px solid #d1d5db;padding:8px;font-size:12px;text-align:left}th{background:#f3f4f6}@media print{body{margin:12mm}}</style></head><body><h1>${escapeHtml(reportTitle)}</h1><p><strong>Escopo:</strong> ${escapeHtml(payload.operator_label)}</p><p><strong>Período:</strong> ${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}</p><p><strong>Visão:</strong> ${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")}</p><p><strong>Setor:</strong> ${escapeHtml(sectorTitle)}</p>${sections}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),200));</script></body></html>`;
+}
+
+function renderExcelReport(payload) {
+  const reportTitle = reportTitleFor(payload.report_type);
+  const sectorTitle = reportSectorLabel(payload.report_sector);
+  const sections = buildReportSections(payload);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${reportDocumentStyles(false)}</style></head><body><div class="page"><div class="hero"><div class="brand"><div class="badge">KR</div><div class="brand-copy"><strong>PORTAL DE RESULTADOS</strong><span>Performance operacional</span></div></div><div class="hero-meta"><strong>${escapeHtml(reportTitle)}</strong><span>${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")} · ${escapeHtml(sectorTitle)}</span></div></div><div class="meta-grid"><div class="meta-card"><span>Escopo</span><strong>${escapeHtml(payload.operator_label)}</strong></div><div class="meta-card"><span>Período</span><strong>${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}</strong></div><div class="meta-card"><span>Tipo</span><strong>${escapeHtml(reportTitle)}</strong></div><div class="meta-card"><span>Setor</span><strong>${escapeHtml(sectorTitle)}</strong></div></div>${sections}</div></body></html>`;
+}
+
+function renderPdfReport(payload) {
+  const reportTitle = reportTitleFor(payload.report_type);
+  const sectorTitle = reportSectorLabel(payload.report_sector);
+  const sections = buildReportSections(payload);
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(reportTitle)}</title><style>${reportDocumentStyles(true)}</style></head><body><div class="page"><div class="hero"><div class="brand"><div class="badge">KR</div><div class="brand-copy"><strong>PORTAL DE RESULTADOS</strong><span>Performance operacional</span></div></div><div class="hero-meta"><strong>${escapeHtml(reportTitle)}</strong><span>${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")} · ${escapeHtml(sectorTitle)}</span></div></div><div class="meta-grid"><div class="meta-card"><span>Escopo</span><strong>${escapeHtml(payload.operator_label)}</strong></div><div class="meta-card"><span>Período</span><strong>${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}</strong></div><div class="meta-card"><span>Tipo</span><strong>${escapeHtml(reportTitle)}</strong></div><div class="meta-card"><span>Setor</span><strong>${escapeHtml(sectorTitle)}</strong></div></div>${sections}</div><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),200));</script></body></html>`;
 }
 
 function average(values) {

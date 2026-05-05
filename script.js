@@ -911,6 +911,13 @@ async function loadAlerts() {
   state.alerts = await api(`/api/alerts?start=${state.filters.start}&end=${state.filters.end}&user_id=${encodeURIComponent(userId)}`);
 }
 
+async function loadReportsData() {
+  await loadHistory();
+  if (state.filters.reportsType === "ofensores") {
+    await loadAlerts();
+  }
+}
+
 async function loadUsers() {
   const response = await api("/api/admin/users");
   state.users = normalizeUsersPayload(response.users);
@@ -1615,6 +1622,131 @@ function reportsTemplate() {
     ofensores: "Ofensores",
   }[state.filters.reportsType] || "Consolidado";
   const reportViewLabel = state.filters.reportsView === "sintetica" ? "Sintética" : "Detalhada";
+  const consolidatedMap = new Map();
+  reportRows.forEach((row) => {
+    const operatorName = row.operator || getUserLabelById(row.userId) || "Operador";
+    const key = `${row.date}::${operatorName}::${row.operation}`;
+    const current = consolidatedMap.get(key) || {
+      date: row.date,
+      operator: operatorName,
+      operation: row.operation,
+      totalProduction: 0,
+      effectivenessParts: [],
+    };
+    current.totalProduction += Number(row.production || 0);
+    if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
+    consolidatedMap.set(key, current);
+  });
+  const previewConsolidatedRows = [...consolidatedMap.values()]
+    .map((row) => ({
+      date: row.date,
+      operator: row.operator,
+      operation: row.operation,
+      totalProduction: row.totalProduction,
+      avgEffectiveness: row.effectivenessParts.length
+        ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
+        : 0,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.operator.localeCompare(b.operator) || a.operation.localeCompare(b.operation))
+    .slice(0, 6);
+  const previewRows = reportRows.slice(0, 5);
+  const previewQualityRows = qualityRows.slice(0, 5);
+  const previewOffenders = (state.alerts?.alerts || []).slice(0, 5);
+  const previewBody = state.filters.reportsType === "qualidade"
+    ? `
+      <table class="report-preview-table">
+        <thead>
+          <tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th></tr>
+        </thead>
+        <tbody>
+          ${previewQualityRows.length ? previewQualityRows.map((row) => `
+            <tr>
+              <td>${esc(formatMonthLabel(row.reference_month))}</td>
+              <td>${esc(row.operator || getUserLabelById(row.user_id) || "Operador")}</td>
+              <td>${esc(row.monitoria_1 ?? "")}</td>
+              <td>${esc(row.monitoria_2 ?? "")}</td>
+              <td>${esc(row.monitoria_3 ?? "")}</td>
+              <td>${esc(row.monitoria_4 ?? "")}</td>
+              <td>${esc(number(row.score || 0))}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="7">Sem dados para visualização.</td></tr>`}
+          </tbody>
+        </table>`
+      : state.filters.reportsType === "ofensores"
+      ? `
+        <table class="report-preview-table">
+          <thead>
+            <tr><th>Operador</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th></tr>
+          </thead>
+          <tbody>
+            ${previewOffenders.length ? previewOffenders.map((row) => `
+              <tr>
+                <td>${esc(row.name)}</td>
+                <td>${esc(number(row.alert_score))}</td>
+                <td>${esc(integer(row.avg_production_0800))}</td>
+                <td>${esc(percent(row.effectiveness_0800))}</td>
+                <td>${esc(integer(row.avg_production_nuvidio))}</td>
+                <td>${esc(percent(row.effectiveness_nuvidio))}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="6">Sem dados para visualização.</td></tr>`}
+          </tbody>
+        </table>`
+      : state.filters.reportsType === "consolidado"
+        ? `
+          <table class="report-preview-table">
+            <thead>
+              <tr><th>Data</th><th>Operador</th><th>Setor</th><th>Produção</th><th>Efetividade</th></tr>
+            </thead>
+            <tbody>
+              ${previewConsolidatedRows.length ? previewConsolidatedRows.map((row) => `
+                <tr>
+                  <td>${esc(formatDateBr(row.date))}</td>
+                  <td>${esc(row.operator)}</td>
+                  <td>${esc(row.operation)}</td>
+                  <td>${esc(integer(row.totalProduction))}</td>
+                  <td>${esc(percent(row.avgEffectiveness || 0))}</td>
+                </tr>
+              `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
+            </tbody>
+          </table>
+          ${state.filters.reportsView === "detalhada" ? `
+            <div class="report-preview-subsection">
+              <span class="eyebrow">Base detalhada</span>
+              <table class="report-preview-table">
+                <thead>
+                  <tr><th>Data</th><th>Operador</th><th>Setor</th><th>Produção</th><th>Efetividade</th></tr>
+                </thead>
+                <tbody>
+                  ${previewRows.length ? previewRows.map((row) => `
+                    <tr>
+                      <td>${esc(formatDateBr(row.date))}</td>
+                      <td>${esc(row.operator || getUserLabelById(row.userId) || "Operador")}</td>
+                      <td>${esc(row.operation)}</td>
+                      <td>${esc(integer(row.production || 0))}</td>
+                      <td>${esc(percent(row.effectiveness || 0))}</td>
+                    </tr>
+                  `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
+                </tbody>
+              </table>
+            </div>` : ""}
+        `
+      : `
+        <table class="report-preview-table">
+          <thead>
+            <tr><th>Data</th><th>Operador</th><th>Setor</th><th>Produção</th><th>Efetividade</th></tr>
+          </thead>
+          <tbody>
+            ${previewRows.length ? previewRows.map((row) => `
+              <tr>
+                <td>${esc(formatDateBr(row.date))}</td>
+                <td>${esc(row.operator || getUserLabelById(row.userId) || "Operador")}</td>
+                <td>${esc(row.operation)}</td>
+                <td>${esc(integer(row.production || 0))}</td>
+                <td>${esc(percent(row.effectiveness || 0))}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
+          </tbody>
+        </table>`;
   return `
     <section class="section">
       <div class="hero-grid">
@@ -1688,6 +1820,34 @@ function reportsTemplate() {
           <div class="mini-card"><span class="muted">Operacional</span><div class="helper">Base linha a linha por data, operador, setor, produção e efetividade.</div></div>
           <div class="mini-card"><span class="muted">Qualidade</span><div class="helper">M1, M2, M3, M4, média final e observações.</div></div>
           <div class="mini-card"><span class="muted">Ofensores</span><div class="helper">Nota, produção, efetividade, qualidade e principais alertas do período.</div></div>
+        </div>
+      </article>
+      <article class="panel report-preview-panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Pré-visualização</span>
+            <h3>Como o relatório será exportado</h3>
+          </div>
+        </div>
+        <div class="report-preview-shell">
+          <div class="report-preview-header">
+            <div class="report-preview-brand">
+              <div class="report-preview-badge">KR</div>
+              <div>
+                <strong>PORTAL DE RESULTADOS</strong>
+                <span>Performance operacional</span>
+              </div>
+            </div>
+            <div class="report-preview-meta">
+              <strong>${esc(reportTypeLabel)}</strong>
+              <span>${esc(reportViewLabel)} · ${esc(sectorLabel)}</span>
+            </div>
+          </div>
+          <div class="report-preview-summary">
+            <div><span>Escopo</span><strong>${esc(selectedName)}</strong></div>
+            <div><span>Período</span><strong>${esc(formatDateBr(state.filters.start) || "Todos")} - ${esc(formatDateBr(state.filters.end) || "Todos")}</strong></div>
+          </div>
+          ${previewBody}
         </div>
       </article>
     </section>
@@ -2440,7 +2600,7 @@ function bindShellEvents() {
       setFlash("success", "Período redefinido.");
     },
     "refresh-reports": async () => {
-      await loadHistory();
+      await loadReportsData();
       setFlash("success", "Relatórios atualizados.");
     },
     "reset-reports": async () => {
@@ -2449,7 +2609,7 @@ function bindShellEvents() {
       state.filters.reportsType = "consolidado";
       state.filters.reportsView = "detalhada";
       state.filters.reportsSector = "all";
-      await loadHistory();
+      await loadReportsData();
       render();
       setFlash("success", "Período redefinido.");
     },
