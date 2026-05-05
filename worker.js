@@ -2390,8 +2390,8 @@ async function renderPdfReport(payload) {
 
   addPage();
 
-  page.drawRoundedRectangle({ x: margin, y: y - 92, width: pageSize[0] - margin * 2, height: 92, radius: 18, color: panelBg, borderColor: line, borderWidth: 1 });
-  page.drawRoundedRectangle({ x: margin + 18, y: y - 68, width: 42, height: 42, radius: 12, color: panelSoft, borderColor: line, borderWidth: 1 });
+  page.drawRectangle({ x: margin, y: y - 92, width: pageSize[0] - margin * 2, height: 92, color: panelBg, borderColor: line, borderWidth: 1 });
+  page.drawRectangle({ x: margin + 18, y: y - 68, width: 42, height: 42, color: panelSoft, borderColor: line, borderWidth: 1 });
   drawTextLine("KR", margin + 29, y - 53, { size: 16, bold: true });
   drawTextLine("PORTAL DE RESULTADOS", margin + 74, y - 40, { size: 18, bold: true });
   drawTextLine("Performance operacional", margin + 74, y - 61, { size: 11, color: muted });
@@ -2409,7 +2409,7 @@ async function renderPdfReport(payload) {
   const cardW = (pageSize[0] - margin * 2 - gap * 3) / 4;
   metaCards.forEach(([label, value], index) => {
     const x = margin + index * (cardW + gap);
-    page.drawRoundedRectangle({ x, y: y - 64, width: cardW, height: 64, radius: 14, color: panelBg, borderColor: line, borderWidth: 1 });
+    page.drawRectangle({ x, y: y - 64, width: cardW, height: 64, color: panelBg, borderColor: line, borderWidth: 1 });
     drawTextLine(label, x + 14, y - 22, { size: 10, color: muted });
     drawTextLine(fitPdfText(value, 34), x + 14, y - 44, { size: 12.5, bold: true });
   });
@@ -2428,7 +2428,7 @@ async function renderPdfReport(payload) {
     const widths = section.widths.map((value) => value * scale);
 
     const drawHeader = () => {
-      page.drawRoundedRectangle({ x: tableX, y: y - headerH, width: tableW, height: headerH, radius: 10, color: panelSoft, borderColor: line, borderWidth: 1 });
+      page.drawRectangle({ x: tableX, y: y - headerH, width: tableW, height: headerH, color: panelSoft, borderColor: line, borderWidth: 1 });
       let cursorX = tableX + 10;
       section.columns.forEach((column, index) => {
         drawTextLine(column.toUpperCase(), cursorX, y - 16, { size: 9, bold: true, color: muted });
