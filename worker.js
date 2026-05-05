@@ -1873,7 +1873,7 @@ function buildAlerts(db, user, url) {
   }
 
   function pushCriticalMinRisk(scoreParts, reasons, actual, threshold, label, unit = "") {
-    if (!Number.isFinite(actual) || actual <= 0 || !Number.isFinite(threshold) || threshold <= 0) return;
+    if (!Number.isFinite(actual) || !Number.isFinite(threshold) || threshold <= 0) return;
     if (actual >= threshold) return;
     const gap = (threshold - actual) / threshold;
     let penalty = 1.5;
@@ -1917,10 +1917,27 @@ function buildAlerts(db, user, url) {
 
   for (const entry of users) {
     const metrics = db.dailyMetrics.filter((row) => row.user_id === entry.id && row.metric_date >= start && row.metric_date <= end);
-    const productionMetrics = metrics.filter((row) => !isSaturdayIsoDate(row.metric_date));
-    const avgProduction0800 = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_0800)));
-    const avgProductionNuvidio = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_nuvidio)));
-    const avgProduction = averageIgnoreZero(productionMetrics.map((row) => toInt(row.production_0800) + toInt(row.production_nuvidio)));
+    const totalProduction0800 = metrics.reduce((sum, row) => sum + toInt(row.production_0800), 0);
+    const totalProductionNuvidio = metrics.reduce((sum, row) => sum + toInt(row.production_nuvidio), 0);
+    const totalAction0800 = metrics.reduce((sum, row) => (
+      sum
+      + toInt(row.calls_0800_approved)
+      + toInt(row.calls_0800_rejected)
+      + toInt(row.calls_0800_pending)
+      + toInt(row.calls_0800_no_action)
+    ), 0);
+    const totalActionNuvidio = metrics.reduce((sum, row) => (
+      sum
+      + toInt(row.calls_nuvidio_approved)
+      + toInt(row.calls_nuvidio_rejected)
+      + toInt(row.calls_nuvidio_no_action)
+      + toInt(row.calls_nuvidio_empty)
+    ), 0);
+    const has0800Data = totalProduction0800 > 0 || totalAction0800 > 0;
+    const hasNuvidioData = totalProductionNuvidio > 0 || totalActionNuvidio > 0;
+    const avgProduction0800 = averageIgnoreZero(metrics.map((row) => toInt(row.production_0800)));
+    const avgProductionNuvidio = averageIgnoreZero(metrics.map((row) => toInt(row.production_nuvidio)));
+    const avgProduction = averageIgnoreZero(metrics.map((row) => toInt(row.production_0800) + toInt(row.production_nuvidio)));
     const effectiveness0800 = averageIgnoreZero(metrics.map((row) => calculateOperationEffectiveness(row, "0800")));
     const effectivenessNuvidio = averageIgnoreZero(metrics.map((row) => calculateOperationEffectiveness(row, "nuvidio")));
     const effectiveness = averageIgnoreZero([effectiveness0800, effectivenessNuvidio]);
@@ -1940,36 +1957,40 @@ function buildAlerts(db, user, url) {
     const reasons = [];
     const scoreParts = [];
 
-    pushCriticalMinRisk(
-      scoreParts,
-      reasons,
-      avgProduction0800,
-      Number(alertRules.production_0800.critical_min),
-      "Produção 0800",
-    );
-    pushCriticalMinRisk(
-      scoreParts,
-      reasons,
-      avgProductionNuvidio,
-      Number(alertRules.production_nuvidio.critical_min),
-      "Produção Nuvidio",
-    );
-    pushCriticalMinRisk(
-      scoreParts,
-      reasons,
-      effectiveness0800,
-      Number(alertRules.effectiveness_0800.critical_min),
-      "Efetividade 0800",
-      "%",
-    );
-    pushCriticalMinRisk(
-      scoreParts,
-      reasons,
-      effectivenessNuvidio,
-      Number(alertRules.effectiveness_nuvidio.critical_min),
-      "Efetividade Nuvidio",
-      "%",
-    );
+    if (has0800Data) {
+      pushCriticalMinRisk(
+        scoreParts,
+        reasons,
+        avgProduction0800,
+        Number(alertRules.production_0800.critical_min),
+        "Produção 0800",
+      );
+      pushCriticalMinRisk(
+        scoreParts,
+        reasons,
+        effectiveness0800,
+        Number(alertRules.effectiveness_0800.critical_min),
+        "Efetividade 0800",
+        "%",
+      );
+    }
+    if (hasNuvidioData) {
+      pushCriticalMinRisk(
+        scoreParts,
+        reasons,
+        avgProductionNuvidio,
+        Number(alertRules.production_nuvidio.critical_min),
+        "Produção Nuvidio",
+      );
+      pushCriticalMinRisk(
+        scoreParts,
+        reasons,
+        effectivenessNuvidio,
+        Number(alertRules.effectiveness_nuvidio.critical_min),
+        "Efetividade Nuvidio",
+        "%",
+      );
+    }
 
     if (totalContacts > 0) pushNoActionPenalty(scoreParts, reasons, noActionShare, avgProduction);
 
