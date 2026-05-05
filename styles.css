@@ -1339,6 +1339,18 @@ body.theme-contrast .modal-card {
   max-width: 320px;
 }
 
+.alerts-tools {
+  margin-bottom: 16px;
+}
+
+.reports-tools {
+  margin-bottom: 16px;
+}
+
+.reports-actions {
+  margin-top: 16px;
+}
+
 .history-tools input {
   min-width: 0;
 }

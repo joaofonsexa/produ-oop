@@ -217,7 +217,7 @@ function serializeUser(user) {
 function normalizeRouteForRole(route, role = "operator") {
   const safeRoute = String(route || "").trim();
   const allowed = role === "manager"
-    ? ["overview", "analysis", "alerts", "history", "admin"]
+    ? ["overview", "analysis", "alerts", "history", "reports", "admin"]
     : ["overview", "analysis", "alerts", "history"];
   return allowed.includes(safeRoute) ? safeRoute : "overview";
 }
@@ -1872,47 +1872,27 @@ function buildAlerts(db, user, url) {
     return "Excelente";
   }
 
-  function pushCriticalMinRisk(scoreParts, reasons, actual, threshold, label, unit = "") {
+  function pushThresholdScore(scoreParts, reasons, actual, threshold, label, unit = "") {
     if (!Number.isFinite(actual) || !Number.isFinite(threshold) || threshold <= 0) return;
-    if (actual >= threshold) return;
+    if (actual >= threshold) {
+      scoreParts.push(10);
+      return;
+    }
+    scoreParts.push(0);
     const gap = (threshold - actual) / threshold;
-    let penalty = 1.5;
     let tone = "amber";
     let text = `${label} abaixo da meta${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`;
     if (gap >= 0.2) {
-      penalty = 4.5;
       tone = "red";
       text = `${label} crítico${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`;
     } else if (gap >= 0.1) {
-      penalty = 3;
       tone = "red";
       text = `${label} abaixo da meta crítica${unit ? ` (${Math.round(actual)}${unit})` : ` (${Math.round(actual)})`}.`;
     }
-    scoreParts.push(penalty);
     reasons.push({
       tone,
       text,
     });
-  }
-
-  function pushNoActionPenalty(scoreParts, _reasons, noActionShare, avgProduction) {
-    if (!Number.isFinite(noActionShare) || noActionShare <= 0) return;
-    let penalty = 0;
-    if (noActionShare >= 25) {
-      penalty = 4.5;
-    } else if (noActionShare >= 20) {
-      penalty = 3;
-    } else if (noActionShare >= 15) {
-      penalty = 2;
-    } else if (noActionShare >= 10) {
-      penalty = 1.2;
-    } else if (noActionShare >= 5) {
-      penalty = 0.6;
-    }
-    if (!penalty) return;
-    if (avgProduction >= metricRules.production.amber_max) penalty = clampScore(penalty + 0.5);
-    else if (avgProduction >= metricRules.production.red_max) penalty = clampScore(penalty + 0.3);
-    scoreParts.push(penalty);
   }
 
   for (const entry of users) {
@@ -1958,14 +1938,14 @@ function buildAlerts(db, user, url) {
     const scoreParts = [];
 
     if (has0800Data) {
-      pushCriticalMinRisk(
+      pushThresholdScore(
         scoreParts,
         reasons,
         avgProduction0800,
         Number(alertRules.production_0800.critical_min),
         "Produção 0800",
       );
-      pushCriticalMinRisk(
+      pushThresholdScore(
         scoreParts,
         reasons,
         effectiveness0800,
@@ -1975,14 +1955,14 @@ function buildAlerts(db, user, url) {
       );
     }
     if (hasNuvidioData) {
-      pushCriticalMinRisk(
+      pushThresholdScore(
         scoreParts,
         reasons,
         avgProductionNuvidio,
         Number(alertRules.production_nuvidio.critical_min),
         "Produção Nuvidio",
       );
-      pushCriticalMinRisk(
+      pushThresholdScore(
         scoreParts,
         reasons,
         effectivenessNuvidio,
@@ -1992,10 +1972,8 @@ function buildAlerts(db, user, url) {
       );
     }
 
-    if (totalContacts > 0) pushNoActionPenalty(scoreParts, reasons, noActionShare, avgProduction);
-
     if (latestQuality) {
-      pushCriticalMinRisk(
+      pushThresholdScore(
         scoreParts,
         reasons,
         qualityScore,
@@ -2005,11 +1983,11 @@ function buildAlerts(db, user, url) {
     }
 
     const availableScores = scoreParts.filter((value) => Number.isFinite(value));
-    const alertScore = Number(clampScore(10 - availableScores.reduce((sum, value) => sum + value, 0)).toFixed(1));
     if (!availableScores.length) {
       scoredOperators.push(10);
       continue;
     }
+    const alertScore = Number((availableScores.reduce((sum, value) => sum + value, 0) / availableScores.length).toFixed(1));
     scoredOperators.push(alertScore);
     if (alertScore >= 9.9) continue;
 
@@ -2087,6 +2065,254 @@ function buildHistory(db, user, url) {
     })
     .sort((a, b) => b.reference_month.localeCompare(a.reference_month));
   return { history, quality };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function formatDateBrServer(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const [year, month, day] = raw.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function formatMonthBrServer(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(raw)) return raw;
+  const [year, month] = raw.split("-");
+  const labels = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  return `${labels[Number(month) - 1] || month}/${year}`;
+}
+
+function buildReportPayload(db, user, url) {
+  const historyData = buildHistory(db, user, url);
+  const reportType = String(url.searchParams.get("type") || "consolidado").trim().toLowerCase();
+  const reportView = String(url.searchParams.get("view") || "detalhada").trim().toLowerCase();
+  const reportSector = String(url.searchParams.get("sector") || "all").trim().toLowerCase();
+  const requestedRawUserId = String(url.searchParams.get("user_id") || user.id).trim().toLowerCase();
+  const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
+  const requestedUserId = user.role === "manager" ? Number(requestedRawUserId || 0) : user.id;
+  const targetUserId = user.role === "manager" ? requestedUserId : user.id;
+  const userMap = new Map(db.users.map((entry) => [entry.id, repairTextEncoding(entry.full_name)]));
+  const rows = [];
+
+  for (const row of historyData.history || []) {
+    const userName = userMap.get(row.user_id) || "Operador";
+    if (reportSector !== "nuvidio" && (toInt(row.production_0800) || toInt(row.calls_0800_approved) || toInt(row.calls_0800_rejected) || toInt(row.calls_0800_pending) || toInt(row.calls_0800_no_action))) {
+      rows.push({
+        date: row.metric_date,
+        operator: userName,
+        operation: "0800",
+        production: toInt(row.production_0800),
+        effectiveness: calculateOperationEffectiveness(row, "0800"),
+        quality: "",
+      });
+    }
+    if (reportSector !== "0800" && (toInt(row.production_nuvidio) || toInt(row.calls_nuvidio_approved) || toInt(row.calls_nuvidio_rejected) || toInt(row.calls_nuvidio_no_action) || toInt(row.calls_nuvidio_empty))) {
+      rows.push({
+        date: row.metric_date,
+        operator: userName,
+        operation: "Nuvidio",
+        production: toInt(row.production_nuvidio),
+        effectiveness: calculateOperationEffectiveness(row, "nuvidio"),
+        quality: "",
+      });
+    }
+  }
+
+  const qualityRows = (historyData.quality || []).map((row) => ({
+    reference_month: row.reference_month,
+    operator: userMap.get(row.user_id) || "Operador",
+    monitoria_1: row.monitoria_1,
+    monitoria_2: row.monitoria_2,
+    monitoria_3: row.monitoria_3,
+    monitoria_4: row.monitoria_4,
+    final_score: row.score,
+    notes: row.notes || "",
+  }));
+
+  const operatorsInScope = includeAllUsers
+    ? db.users.filter((entry) => entry.role === "operator" && entry.is_active)
+    : db.users.filter((entry) => entry.id === targetUserId);
+  const operatorLabel = includeAllUsers
+    ? "Todos os operadores"
+    : repairTextEncoding(operatorsInScope[0]?.full_name || user.full_name || "Operador");
+  const periodStart = historyData.history?.length ? historyData.history[historyData.history.length - 1].metric_date : String(url.searchParams.get("start") || "");
+  const periodEnd = historyData.history?.length ? historyData.history[0].metric_date : String(url.searchParams.get("end") || "");
+  const consolidatedRows = [];
+  const consolidatedMap = new Map();
+  for (const row of rows) {
+    const key = `${row.operator}::${row.operation}`;
+    const current = consolidatedMap.get(key) || {
+      operator: row.operator,
+      operation: row.operation,
+      days: 0,
+      production_total: 0,
+      effectiveness_parts: [],
+    };
+    current.days += 1;
+    current.production_total += toInt(row.production);
+    current.effectiveness_parts.push(Number(row.effectiveness || 0));
+    consolidatedMap.set(key, current);
+  }
+  for (const item of consolidatedMap.values()) {
+    consolidatedRows.push({
+      operator: item.operator,
+      operation: item.operation,
+      days: item.days,
+      avg_production: item.days ? Number((item.production_total / item.days).toFixed(2)) : 0,
+      total_production: item.production_total,
+      avg_effectiveness: item.effectiveness_parts.length
+        ? Number((item.effectiveness_parts.reduce((sum, value) => sum + value, 0) / item.effectiveness_parts.length).toFixed(2))
+        : 0,
+    });
+  }
+  consolidatedRows.sort((a, b) => b.total_production - a.total_production || a.operator.localeCompare(b.operator));
+  const alertsPayload = buildAlerts(db, user, new URL(url.toString()));
+
+  return {
+    operator_label: operatorLabel,
+    report_type: reportType,
+    report_view: reportView,
+    report_sector: reportSector,
+    period: {
+      start: periodStart,
+      end: periodEnd,
+    },
+    operational_rows: rows.sort((a, b) => b.date.localeCompare(a.date) || a.operation.localeCompare(b.operation) || a.operator.localeCompare(b.operator)),
+    consolidated_rows: consolidatedRows,
+    quality_rows: qualityRows.sort((a, b) => b.reference_month.localeCompare(a.reference_month) || a.operator.localeCompare(b.operator)),
+    offenders_rows: alertsPayload.alerts || [],
+  };
+}
+
+function renderExcelReport(payload) {
+  const reportTitle = payload.report_type === "operacional"
+    ? "Relatório operacional"
+    : payload.report_type === "qualidade"
+      ? "Relatório de qualidade"
+      : payload.report_type === "ofensores"
+        ? "Relatório de ofensores"
+        : "Relatório consolidado";
+  const sectorTitle = payload.report_sector === "0800" ? "0800" : payload.report_sector === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+  const operationalRows = payload.operational_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(formatDateBrServer(row.date))}</td>
+      <td>${escapeHtml(row.operator)}</td>
+      <td>${escapeHtml(row.operation)}</td>
+      <td>${escapeHtml(String(toInt(row.production)))}</td>
+      <td>${escapeHtml(`${Math.round(Number(row.effectiveness || 0))}%`)}</td>
+    </tr>`).join("");
+  const qualityRows = payload.quality_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(formatMonthBrServer(row.reference_month))}</td>
+      <td>${escapeHtml(row.operator)}</td>
+      <td>${escapeHtml(String(row.monitoria_1 ?? ""))}</td>
+      <td>${escapeHtml(String(row.monitoria_2 ?? ""))}</td>
+      <td>${escapeHtml(String(row.monitoria_3 ?? ""))}</td>
+      <td>${escapeHtml(String(row.monitoria_4 ?? ""))}</td>
+      <td>${escapeHtml(String(row.final_score ?? ""))}</td>
+      <td>${escapeHtml(row.notes || "")}</td>
+    </tr>`).join("");
+  const consolidatedRows = payload.consolidated_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.operator)}</td>
+      <td>${escapeHtml(row.operation)}</td>
+      <td>${escapeHtml(String(row.days))}</td>
+      <td>${escapeHtml(String(row.total_production))}</td>
+      <td>${escapeHtml(String(Math.round(row.avg_production)))}</td>
+      <td>${escapeHtml(`${Math.round(row.avg_effectiveness)}%`)}</td>
+    </tr>`).join("");
+  const offenderRows = payload.offenders_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.name)}</td>
+      <td>${escapeHtml(row.login)}</td>
+      <td>${escapeHtml(String(row.alert_score))}</td>
+      <td>${escapeHtml(`${Math.round(row.avg_production_0800 || 0)}`)}</td>
+      <td>${escapeHtml(`${Math.round(row.effectiveness_0800 || 0)}%`)}</td>
+      <td>${escapeHtml(`${Math.round(row.avg_production_nuvidio || 0)}`)}</td>
+      <td>${escapeHtml(`${Math.round(row.effectiveness_nuvidio || 0)}%`)}</td>
+      <td>${escapeHtml(row.quality ? String(row.quality) : "")}</td>
+    </tr>`).join("");
+  const consolidatedSection = `<h2>Consolidado</h2><table><thead><tr><th>Operador</th><th>Setor</th><th>Dias</th><th>Produção total</th><th>Produção média</th><th>Efetividade média</th></tr></thead><tbody>${consolidatedRows || '<tr><td colspan="6">Sem dados.</td></tr>'}</tbody></table>`;
+  const operationalSection = `<h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;
+  const qualitySection = `<h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th><th>Observações</th></tr></thead><tbody>${qualityRows || '<tr><td colspan="8">Sem dados.</td></tr>'}</tbody></table>`;
+  const offendersSection = `<h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8">Sem dados.</td></tr>'}</tbody></table>`;
+  const sections = payload.report_type === "operacional"
+    ? (payload.report_view === "sintetica" ? consolidatedSection : operationalSection)
+    : payload.report_type === "qualidade"
+      ? qualitySection
+      : payload.report_type === "ofensores"
+        ? offendersSection
+        : `${consolidatedSection}${payload.report_view === "detalhada" ? operationalSection : ""}${qualitySection}`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial,sans-serif;padding:18px}table{border-collapse:collapse;width:100%;margin:18px 0}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#e2e8f0}h1,h2{margin:0 0 8px}</style></head><body><h1>${escapeHtml(reportTitle)}</h1><p>Escopo: ${escapeHtml(payload.operator_label)}<br>Período: ${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}<br>Visão: ${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")}<br>Setor: ${escapeHtml(sectorTitle)}</p>${sections}</body></html>`;
+}
+
+function renderPdfReport(payload) {
+  const reportTitle = payload.report_type === "operacional"
+    ? "Relatório operacional"
+    : payload.report_type === "qualidade"
+      ? "Relatório de qualidade"
+      : payload.report_type === "ofensores"
+        ? "Relatório de ofensores"
+        : "Relatório consolidado";
+  const sectorTitle = payload.report_sector === "0800" ? "0800" : payload.report_sector === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+  const operationalRows = payload.operational_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(formatDateBrServer(row.date))}</td>
+      <td>${escapeHtml(row.operator)}</td>
+      <td>${escapeHtml(row.operation)}</td>
+      <td>${escapeHtml(String(toInt(row.production)))}</td>
+      <td>${escapeHtml(`${Math.round(Number(row.effectiveness || 0))}%`)}</td>
+    </tr>`).join("");
+  const qualityRows = payload.quality_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(formatMonthBrServer(row.reference_month))}</td>
+      <td>${escapeHtml(row.operator)}</td>
+      <td>${escapeHtml(String(row.monitoria_1 ?? ""))}</td>
+      <td>${escapeHtml(String(row.monitoria_2 ?? ""))}</td>
+      <td>${escapeHtml(String(row.monitoria_3 ?? ""))}</td>
+      <td>${escapeHtml(String(row.monitoria_4 ?? ""))}</td>
+      <td>${escapeHtml(String(row.final_score ?? ""))}</td>
+    </tr>`).join("");
+  const consolidatedRows = payload.consolidated_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.operator)}</td>
+      <td>${escapeHtml(row.operation)}</td>
+      <td>${escapeHtml(String(row.days))}</td>
+      <td>${escapeHtml(String(row.total_production))}</td>
+      <td>${escapeHtml(String(Math.round(row.avg_production)))}</td>
+      <td>${escapeHtml(`${Math.round(row.avg_effectiveness)}%`)}</td>
+    </tr>`).join("");
+  const offenderRows = payload.offenders_rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.name)}</td>
+      <td>${escapeHtml(row.login)}</td>
+      <td>${escapeHtml(String(row.alert_score))}</td>
+      <td>${escapeHtml(String(Math.round(row.avg_production_0800 || 0)))}</td>
+      <td>${escapeHtml(`${Math.round(row.effectiveness_0800 || 0)}%`)}</td>
+      <td>${escapeHtml(String(Math.round(row.avg_production_nuvidio || 0)))}</td>
+      <td>${escapeHtml(`${Math.round(row.effectiveness_nuvidio || 0)}%`)}</td>
+      <td>${escapeHtml(row.quality ? String(row.quality) : "")}</td>
+    </tr>`).join("");
+  const consolidatedSection = `<h2>Consolidado</h2><table><thead><tr><th>Operador</th><th>Setor</th><th>Dias</th><th>Produção total</th><th>Produção média</th><th>Efetividade média</th></tr></thead><tbody>${consolidatedRows || '<tr><td colspan="6">Sem dados.</td></tr>'}</tbody></table>`;
+  const operationalSection = `<h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;
+  const qualitySection = `<h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th></tr></thead><tbody>${qualityRows || '<tr><td colspan="7">Sem dados.</td></tr>'}</tbody></table>`;
+  const offendersSection = `<h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8">Sem dados.</td></tr>'}</tbody></table>`;
+  const sections = payload.report_type === "operacional"
+    ? (payload.report_view === "sintetica" ? consolidatedSection : operationalSection)
+    : payload.report_type === "qualidade"
+      ? qualitySection
+      : payload.report_type === "ofensores"
+        ? offendersSection
+        : `${consolidatedSection}${payload.report_view === "detalhada" ? operationalSection : ""}${qualitySection}`;
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(reportTitle)}</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:32px;color:#111827}h1{margin:0 0 10px}h2{margin:24px 0 10px}p{margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border:1px solid #d1d5db;padding:8px;font-size:12px;text-align:left}th{background:#f3f4f6}@media print{body{margin:12mm}}</style></head><body><h1>${escapeHtml(reportTitle)}</h1><p><strong>Escopo:</strong> ${escapeHtml(payload.operator_label)}</p><p><strong>Período:</strong> ${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}</p><p><strong>Visão:</strong> ${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")}</p><p><strong>Setor:</strong> ${escapeHtml(sectorTitle)}</p>${sections}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),200));</script></body></html>`;
 }
 
 function average(values) {
@@ -2346,6 +2572,28 @@ async function handleApi(request, url, db, env = {}) {
     const auth = await requireAuth(request, db, env);
     if (auth.error) return auth.error;
     return jsonResponse(buildAlerts(db, auth.user, url));
+  }
+
+  if (url.pathname === "/api/reports/export" && request.method === "GET") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const format = String(url.searchParams.get("format") || "excel").trim().toLowerCase();
+    const payload = buildReportPayload(db, auth.user, url);
+    if (format === "pdf") {
+      return new Response(renderPdfReport(payload), {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+        },
+      });
+    }
+    return new Response(renderExcelReport(payload), {
+      status: 200,
+      headers: {
+        "content-type": "application/vnd.ms-excel; charset=utf-8",
+        "content-disposition": 'attachment; filename="relatorio-operacional.xls"',
+      },
+    });
   }
 
   if (url.pathname === "/api/bootstrap" && request.method === "GET") {

@@ -35,6 +35,9 @@
     historyQuery: "",
     analysisUserId: "all",
     usersQuery: "",
+    reportsType: "consolidado",
+    reportsView: "detalhada",
+    reportsSector: "all",
     operation: "all",
   },
 };
@@ -309,7 +312,7 @@ function isManager() {
 function normalizeRoute(route, role = state.user?.role) {
   const value = String(route || "").trim();
   const allowed = role === "manager"
-    ? ["overview", "analysis", "alerts", "history", "admin"]
+    ? ["overview", "analysis", "alerts", "history", "reports", "admin"]
     : ["overview", "analysis", "alerts", "history"];
   return allowed.includes(value) ? value : "overview";
 }
@@ -923,6 +926,7 @@ function navMeta() {
     analysis: "Análises",
     alerts: "Ofensores",
     history: "Histórico",
+    reports: "Relatórios",
     admin: "Gestão",
   };
 }
@@ -999,6 +1003,7 @@ function shellTemplate() {
     analysis: { title: "Análises", desc: "" },
     alerts: { title: "Ofensores", desc: "" },
     history: { title: "Histórico", desc: "" },
+    reports: { title: "Relatórios", desc: "" },
     admin: { title: "Gestão", desc: "" },
   };
   const current = titles[state.route];
@@ -1022,7 +1027,7 @@ function shellTemplate() {
           </div>
         </div>
         <nav class="nav">
-          ${Object.entries(navMeta()).filter(([key]) => key !== "admin" || isManager()).map(([key, label]) => `
+          ${Object.entries(navMeta()).filter(([key]) => (key !== "admin" && key !== "reports") || isManager()).map(([key, label]) => `
             <button class="${state.route === key ? "active" : ""}" data-route="${key}">${label}</button>
           `).join("")}
         </nav>
@@ -1224,6 +1229,7 @@ function renderPage() {
   if (state.route === "analysis") return analysisTemplate();
   if (state.route === "alerts") return alertsTemplate();
   if (state.route === "history") return historyTemplate();
+  if (state.route === "reports") return reportsTemplate();
   if (state.route === "admin") return adminTemplate();
   return overviewTemplate();
 }
@@ -1493,6 +1499,12 @@ function alertsTemplate() {
               <h3>${selfScope ? "Seus principais ofensores" : "Operadores em alerta"}</h3>
             </div>
           </div>
+          <div class="history-tools alerts-tools">
+            <label>Início<input type="date" id="alerts-start-filter" value="${state.filters.start}"></label>
+            <label>Fim<input type="date" id="alerts-end-filter" value="${state.filters.end}"></label>
+            <button class="btn" data-action="refresh-alerts">Aplicar</button>
+            <button class="btn-secondary" data-action="reset-alerts">Limpar</button>
+          </div>
           <div class="mini-grid">
             <div class="mini-card">
               <span class="muted">Escopo</span>
@@ -1577,6 +1589,106 @@ function alertsTemplate() {
             }).join("")}
           </div>
         ` : `<div class="empty">${selfScope ? "Nenhum item crítico encontrado no seu resultado neste período." : "Nenhum operador em alerta no recorte atual."}</div>`}
+      </article>
+    </section>
+  `;
+}
+
+function reportsTemplate() {
+  const selectedName = state.filters.analysisUserId === "all"
+    ? "Todos os operadores"
+    : (getOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
+  const reportRows = getScopedHistory().filter((row) => (
+    state.filters.reportsSector === "all"
+    || String(row.operation || "").toLowerCase() === String(state.filters.reportsSector || "").toLowerCase()
+  ));
+  const qualityRows = state.history?.quality || [];
+  const sectorLabel = state.filters.reportsSector === "0800"
+    ? "0800"
+    : state.filters.reportsSector === "nuvidio"
+      ? "Nuvidio"
+      : "0800 + Nuvidio";
+  const reportTypeLabel = {
+    consolidado: "Consolidado",
+    operacional: "Operacional",
+    qualidade: "Qualidade",
+    ofensores: "Ofensores",
+  }[state.filters.reportsType] || "Consolidado";
+  const reportViewLabel = state.filters.reportsView === "sintetica" ? "Sintética" : "Detalhada";
+  return `
+    <section class="section">
+      <div class="hero-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Exportação</span>
+              <h3>Relatórios gerenciais</h3>
+            </div>
+          </div>
+          <div class="history-tools reports-tools">
+            <label>Início<input type="date" id="reports-start-filter" value="${state.filters.start}"></label>
+            <label>Fim<input type="date" id="reports-end-filter" value="${state.filters.end}"></label>
+            <label>Tipo
+              <select id="reports-type-filter">
+                <option value="consolidado" ${state.filters.reportsType === "consolidado" ? "selected" : ""}>Consolidado</option>
+                <option value="operacional" ${state.filters.reportsType === "operacional" ? "selected" : ""}>Operacional</option>
+                <option value="qualidade" ${state.filters.reportsType === "qualidade" ? "selected" : ""}>Qualidade</option>
+                <option value="ofensores" ${state.filters.reportsType === "ofensores" ? "selected" : ""}>Ofensores</option>
+              </select>
+            </label>
+            <label>Visão
+              <select id="reports-view-filter">
+                <option value="detalhada" ${state.filters.reportsView === "detalhada" ? "selected" : ""}>Detalhada</option>
+                <option value="sintetica" ${state.filters.reportsView === "sintetica" ? "selected" : ""}>Sintética</option>
+              </select>
+            </label>
+            <label>Setor
+              <select id="reports-sector-filter">
+                <option value="all" ${state.filters.reportsSector === "all" ? "selected" : ""}>0800 + Nuvidio</option>
+                <option value="0800" ${state.filters.reportsSector === "0800" ? "selected" : ""}>0800</option>
+                <option value="nuvidio" ${state.filters.reportsSector === "nuvidio" ? "selected" : ""}>Nuvidio</option>
+              </select>
+            </label>
+            <button class="btn" data-action="refresh-reports">Aplicar</button>
+            <button class="btn-secondary" data-action="reset-reports">Limpar</button>
+          </div>
+          <div class="mini-grid">
+            <div class="mini-card"><span class="muted">Escopo</span><div class="metric-value">${esc(selectedName)}</div></div>
+            <div class="mini-card"><span class="muted">Tipo</span><div class="metric-value">${esc(reportTypeLabel)}</div></div>
+            <div class="mini-card"><span class="muted">Visão</span><div class="metric-value">${esc(reportViewLabel)}</div></div>
+            <div class="mini-card"><span class="muted">Setor</span><div class="metric-value">${esc(sectorLabel)}</div></div>
+            <div class="mini-card"><span class="muted">Base operacional</span><div class="metric-value">${integer(reportRows.length)}</div></div>
+            <div class="mini-card"><span class="muted">Qualidade</span><div class="metric-value">${integer(qualityRows.length)}</div></div>
+            <div class="mini-card"><span class="muted">Período</span><div class="metric-value">${esc(formatDateBr(state.filters.start) || "Todos")} - ${esc(formatDateBr(state.filters.end) || "Todos")}</div></div>
+          </div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Arquivos</span>
+              <h3>Exportar relatório</h3>
+            </div>
+          </div>
+          <div class="info-box">Os relatórios usam o operador selecionado no topo, o período, o tipo, a visão e o setor definidos nesta aba.</div>
+          <div class="action-grid reports-actions">
+            <button class="btn" type="button" data-action="export-report-excel">Exportar Excel</button>
+            <button class="btn-secondary" type="button" data-action="export-report-pdf">Exportar PDF</button>
+          </div>
+        </article>
+      </div>
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Conteúdo</span>
+            <h3>O que será enviado no relatório</h3>
+          </div>
+        </div>
+        <div class="mini-grid">
+          <div class="mini-card"><span class="muted">Consolidado</span><div class="helper">Resumo por operador e operação com produção média, efetividade e volume.</div></div>
+          <div class="mini-card"><span class="muted">Operacional</span><div class="helper">Base linha a linha por data, operador, setor, produção e efetividade.</div></div>
+          <div class="mini-card"><span class="muted">Qualidade</span><div class="helper">M1, M2, M3, M4, média final e observações.</div></div>
+          <div class="mini-card"><span class="muted">Ofensores</span><div class="helper">Nota, produção, efetividade, qualidade e principais alertas do período.</div></div>
+        </div>
       </article>
     </section>
   `;
@@ -2237,6 +2349,13 @@ function bindShellEvents() {
 
   document.querySelectorAll("#start-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.start = event.target.value; }));
   document.querySelectorAll("#end-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.end = event.target.value; }));
+  document.querySelectorAll("#alerts-start-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.start = event.target.value; }));
+  document.querySelectorAll("#alerts-end-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.end = event.target.value; }));
+  document.querySelectorAll("#reports-start-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.start = event.target.value; }));
+  document.querySelectorAll("#reports-end-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.end = event.target.value; }));
+  document.querySelectorAll("#reports-type-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsType = event.target.value; }));
+  document.querySelectorAll("#reports-view-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsView = event.target.value; }));
+  document.querySelectorAll("#reports-sector-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsSector = event.target.value; }));
 
   const historyUserSearch = document.getElementById("history-user-search");
   if (historyUserSearch) {
@@ -2308,6 +2427,57 @@ function bindShellEvents() {
         await loadHistory();
         setFlash("success", "Histórico atualizado.");
       }
+    },
+    "refresh-alerts": async () => {
+      await loadAlerts();
+      setFlash("success", "Ofensores atualizados.");
+    },
+    "reset-alerts": async () => {
+      state.filters.start = "";
+      state.filters.end = "";
+      await loadAlerts();
+      render();
+      setFlash("success", "Período redefinido.");
+    },
+    "refresh-reports": async () => {
+      await loadHistory();
+      setFlash("success", "Relatórios atualizados.");
+    },
+    "reset-reports": async () => {
+      state.filters.start = "";
+      state.filters.end = "";
+      state.filters.reportsType = "consolidado";
+      state.filters.reportsView = "detalhada";
+      state.filters.reportsSector = "all";
+      await loadHistory();
+      render();
+      setFlash("success", "Período redefinido.");
+    },
+    "export-report-excel": async () => {
+      const userId = state.filters.analysisUserId || "all";
+      const params = new URLSearchParams({
+        format: "excel",
+        start: state.filters.start || "",
+        end: state.filters.end || "",
+        user_id: userId,
+        type: state.filters.reportsType || "consolidado",
+        view: state.filters.reportsView || "detalhada",
+        sector: state.filters.reportsSector || "all",
+      });
+      window.location.href = `/api/reports/export?${params.toString()}`;
+    },
+    "export-report-pdf": async () => {
+      const userId = state.filters.analysisUserId || "all";
+      const params = new URLSearchParams({
+        format: "pdf",
+        start: state.filters.start || "",
+        end: state.filters.end || "",
+        user_id: userId,
+        type: state.filters.reportsType || "consolidado",
+        view: state.filters.reportsView || "detalhada",
+        sector: state.filters.reportsSector || "all",
+      });
+      window.open(`/api/reports/export?${params.toString()}`, "_blank", "noopener");
     },
     "reset-analysis": async () => {
       state.filters.start = "";
