@@ -212,6 +212,30 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function downloadFile(url, fallbackName) {
+  const response = await fetch(url, { credentials: "same-origin" });
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok) {
+    const data = contentType.includes("application/json")
+      ? await response.json()
+      : { error: await response.text() };
+    const message = [data.error, data.details].filter(Boolean).join(": ");
+    throw new Error(message || "Falha ao baixar o arquivo.");
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  const fileName = match?.[1] || fallbackName || "arquivo";
+  const fileUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = fileUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
+}
+
 function esc(value) {
   return repairTextEncoding(String(value ?? ""))
     .replaceAll("&", "&amp;")
@@ -1512,16 +1536,6 @@ function alertsTemplate() {
             <button class="btn" data-action="refresh-alerts">Aplicar</button>
             <button class="btn-secondary" data-action="reset-alerts">Limpar</button>
           </div>
-          <div class="mini-grid">
-            <div class="mini-card">
-              <span class="muted">Escopo</span>
-              <div class="metric-value">${esc(selectedName)}</div>
-            </div>
-            <div class="mini-card">
-              <span class="muted">Período</span>
-              <div class="metric-value">${esc(formatDateBr(state.alerts.period?.start || state.filters.start))} - ${esc(formatDateBr(state.alerts.period?.end || state.filters.end))}</div>
-            </div>
-          </div>
         </article>
         <article class="panel">
           <div class="panel-head">
@@ -2624,7 +2638,7 @@ function bindShellEvents() {
         view: state.filters.reportsView || "detalhada",
         sector: state.filters.reportsSector || "all",
       });
-      window.location.href = `/api/reports/export?${params.toString()}`;
+      await downloadFile(`/api/reports/export?${params.toString()}`, "relatorio-operacional.xls");
     },
     "export-report-pdf": async () => {
       const userId = state.filters.analysisUserId || "all";
@@ -2637,7 +2651,7 @@ function bindShellEvents() {
         view: state.filters.reportsView || "detalhada",
         sector: state.filters.reportsSector || "all",
       });
-      window.open(`/api/reports/export?${params.toString()}`, "_blank", "noopener");
+      await downloadFile(`/api/reports/export?${params.toString()}`, "relatorio-operacional.pdf");
     },
     "reset-analysis": async () => {
       state.filters.start = "";
@@ -2662,7 +2676,10 @@ function bindShellEvents() {
     const action = actionMap[button.dataset.action];
     if (!action) return;
     button.addEventListener("click", async () => {
-      const restoreButton = setButtonProcessing(button, true, "Processando...");
+      const processingLabel = (
+        button.dataset.action === "export-report-excel" || button.dataset.action === "export-report-pdf"
+      ) ? "Gerando..." : "Processando...";
+      const restoreButton = setButtonProcessing(button, true, processingLabel);
       try {
         await action();
       } catch (error) {
@@ -2688,6 +2705,8 @@ function bindShellEvents() {
     qualityUploadForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
+      const submitButton = qualityUploadForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Importando...");
       try {
         const response = await fetch("/api/admin/quality/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
@@ -2697,6 +2716,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }
@@ -2786,10 +2807,17 @@ function bindShellEvents() {
 
   const downloadBaseTemplate = document.getElementById("download-base-template");
   if (downloadBaseTemplate) {
-    downloadBaseTemplate.addEventListener("click", () => {
+    downloadBaseTemplate.addEventListener("click", async () => {
       const modelSelect = document.getElementById("base-model-select");
       const model = modelSelect ? modelSelect.value : "nuvidio";
-      window.location.href = `/api/admin/import/template?model=${encodeURIComponent(model)}`;
+      const restoreButton = setButtonProcessing(downloadBaseTemplate, true, "Baixando...");
+      try {
+        await downloadFile(`/api/admin/import/template?model=${encodeURIComponent(model)}`, `modelo-base-${model}.csv`);
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
+      }
     });
   }
 
@@ -2831,6 +2859,8 @@ function bindShellEvents() {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       const payload = Object.fromEntries(form.entries());
+      const submitButton = adminUserForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const data = await api("/api/admin/users", {
           method: "POST",
@@ -2841,6 +2871,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }
@@ -2860,6 +2892,8 @@ function bindShellEvents() {
         nuvidio_id: form.get("nuvidio_id"),
         password: form.get("password"),
       };
+      const submitButton = userEditForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const data = await api(`/api/admin/users/${userId}`, {
           method: "PUT",
@@ -2874,6 +2908,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   }
@@ -2886,6 +2922,7 @@ function bindShellEvents() {
     button.addEventListener("click", async () => {
       const user = state.users.find((item) => String(item.id) === String(button.dataset.userToggle));
       if (!user) return;
+      const restoreButton = setButtonProcessing(button, true, user.is_active ? "Desativando..." : "Ativando...");
       try {
         const data = await api(`/api/admin/users/${user.id}`, {
           method: "PUT",
@@ -2899,6 +2936,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   });
@@ -2908,6 +2947,7 @@ function bindShellEvents() {
       const user = state.users.find((item) => String(item.id) === String(button.dataset.userDelete));
       if (!user) return;
       if (!window.confirm(`Apagar o usuário ${user.full_name}?`)) return;
+      const restoreButton = setButtonProcessing(button, true, "Apagando...");
       try {
         await api(`/api/admin/users/${user.id}`, { method: "DELETE" });
         await Promise.all([loadUsers(), loadOverview(), loadAnalysis(), loadHistory()]);
@@ -2915,6 +2955,8 @@ function bindShellEvents() {
         render();
       } catch (error) {
         setFlash("error", error.message);
+      } finally {
+        restoreButton();
       }
     });
   });

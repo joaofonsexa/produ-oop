@@ -1,4 +1,5 @@
 ﻿import { SCRIPT_JS, STYLES_CSS } from "./asset-bundle.js";
+import { PDFDocument, StandardFonts, rgb } from "./pdf-lib.esm.min.js";
 
 const SESSION_NAME = "pulse_session";
 const DB_PATH = "./data/db.json";
@@ -2271,11 +2272,203 @@ function renderExcelReport(payload) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${reportDocumentStyles(false)}</style></head><body><div class="page"><div class="hero"><div class="brand"><div class="badge">KR</div><div class="brand-copy"><strong>PORTAL DE RESULTADOS</strong><span>Performance operacional</span></div></div><div class="hero-meta"><strong>${escapeHtml(reportTitle)}</strong><span>${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")} · ${escapeHtml(sectorTitle)}</span></div></div><div class="meta-grid"><div class="meta-card"><span>Escopo</span><strong>${escapeHtml(payload.operator_label)}</strong></div><div class="meta-card"><span>Período</span><strong>${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}</strong></div><div class="meta-card"><span>Tipo</span><strong>${escapeHtml(reportTitle)}</strong></div><div class="meta-card"><span>Setor</span><strong>${escapeHtml(sectorTitle)}</strong></div></div>${sections}</div></body></html>`;
 }
 
-function renderPdfReport(payload) {
+function buildPdfSections(payload) {
+  const makeOperationalRows = () => payload.operational_rows.map((row) => ([
+    formatDateBrServer(row.date),
+    row.operator,
+    row.operation,
+    String(toInt(row.production)),
+    `${Math.round(Number(row.effectiveness || 0))}%`,
+  ]));
+  const makeConsolidatedRows = () => payload.consolidated_rows.map((row) => ([
+    formatDateBrServer(row.date),
+    row.operator,
+    row.operation,
+    String(toInt(row.total_production)),
+    `${Math.round(Number(row.avg_effectiveness || 0))}%`,
+  ]));
+  const makeQualityRows = () => payload.quality_rows.map((row) => ([
+    formatMonthBrServer(row.reference_month),
+    row.operator,
+    String(row.monitoria_1 ?? ""),
+    String(row.monitoria_2 ?? ""),
+    String(row.monitoria_3 ?? ""),
+    String(row.monitoria_4 ?? ""),
+    String(row.final_score ?? ""),
+    ...(payload.report_type === "qualidade" ? [String(row.notes || "")] : []),
+  ]));
+  const makeOffenderRows = () => payload.offenders_rows.map((row) => ([
+    row.name,
+    row.login,
+    String(row.alert_score ?? ""),
+    String(Math.round(row.avg_production_0800 || 0)),
+    `${Math.round(row.effectiveness_0800 || 0)}%`,
+    String(Math.round(row.avg_production_nuvidio || 0)),
+    `${Math.round(row.effectiveness_nuvidio || 0)}%`,
+    row.quality ? String(row.quality) : "",
+  ]));
+  const consolidated = {
+    title: "Consolidado",
+    columns: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
+    widths: [72, 210, 88, 72, 84],
+    rows: makeConsolidatedRows(),
+  };
+  const operational = {
+    title: "Base operacional",
+    columns: ["Data", "Operador", "Operação", "Produção", "Efetividade"],
+    widths: [72, 210, 88, 72, 84],
+    rows: makeOperationalRows(),
+  };
+  const quality = {
+    title: "Qualidade",
+    columns: payload.report_type === "qualidade"
+      ? ["Mês", "Operador", "M1", "M2", "M3", "M4", "Final", "Observações"]
+      : ["Mês", "Operador", "M1", "M2", "M3", "M4", "Final"],
+    widths: payload.report_type === "qualidade"
+      ? [66, 160, 42, 42, 42, 42, 48, 110]
+      : [72, 190, 44, 44, 44, 44, 58],
+    rows: makeQualityRows(),
+  };
+  const offenders = {
+    title: "Ofensores",
+    columns: ["Operador", "Login", "Nota", "Prod. 0800", "Efet. 0800", "Prod. Nuvidio", "Efet. Nuvidio", "Qualidade"],
+    widths: [144, 112, 44, 62, 66, 72, 72, 56],
+    rows: makeOffenderRows(),
+  };
+  return payload.report_type === "operacional"
+    ? [payload.report_view === "sintetica" ? consolidated : operational]
+    : payload.report_type === "qualidade"
+      ? [quality]
+      : payload.report_type === "ofensores"
+        ? [offenders]
+        : [consolidated, ...(payload.report_view === "detalhada" ? [operational] : []), quality];
+}
+
+function fitPdfText(text, maxChars) {
+  const raw = String(text ?? "");
+  return raw.length <= maxChars ? raw : `${raw.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+async function renderPdfReport(payload) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const reportTitle = reportTitleFor(payload.report_type);
   const sectorTitle = reportSectorLabel(payload.report_sector);
-  const sections = buildReportSections(payload);
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(reportTitle)}</title><style>${reportDocumentStyles(true)}</style></head><body><div class="page"><div class="hero"><div class="brand"><div class="badge">KR</div><div class="brand-copy"><strong>PORTAL DE RESULTADOS</strong><span>Performance operacional</span></div></div><div class="hero-meta"><strong>${escapeHtml(reportTitle)}</strong><span>${escapeHtml(payload.report_view === "sintetica" ? "Sintética" : "Detalhada")} · ${escapeHtml(sectorTitle)}</span></div></div><div class="meta-grid"><div class="meta-card"><span>Escopo</span><strong>${escapeHtml(payload.operator_label)}</strong></div><div class="meta-card"><span>Período</span><strong>${escapeHtml(formatDateBrServer(payload.period.start))} - ${escapeHtml(formatDateBrServer(payload.period.end))}</strong></div><div class="meta-card"><span>Tipo</span><strong>${escapeHtml(reportTitle)}</strong></div><div class="meta-card"><span>Setor</span><strong>${escapeHtml(sectorTitle)}</strong></div></div>${sections}</div><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),200));</script></body></html>`;
+  const pageSize = [841.89, 595.28];
+  const margin = 28;
+  const darkBg = rgb(0.04, 0.05, 0.07);
+  const panelBg = rgb(0.09, 0.11, 0.14);
+  const panelSoft = rgb(0.11, 0.13, 0.17);
+  const line = rgb(0.18, 0.21, 0.27);
+  const muted = rgb(0.66, 0.7, 0.76);
+  const text = rgb(0.97, 0.98, 0.99);
+  const accent = rgb(0.37, 0.51, 1);
+  const sections = buildPdfSections(payload);
+  let page;
+  let y;
+
+  const addPage = () => {
+    page = pdfDoc.addPage(pageSize);
+    page.drawRectangle({ x: 0, y: 0, width: pageSize[0], height: pageSize[1], color: darkBg });
+    y = pageSize[1] - margin;
+  };
+
+  const drawTextLine = (value, x, lineY, opts = {}) => {
+    page.drawText(String(value ?? ""), {
+      x,
+      y: lineY,
+      size: opts.size || 11,
+      font: opts.bold ? bold : font,
+      color: opts.color || text,
+    });
+  };
+
+  const ensureSpace = (needed) => {
+    if (y - needed < margin) addPage();
+  };
+
+  addPage();
+
+  page.drawRoundedRectangle({ x: margin, y: y - 92, width: pageSize[0] - margin * 2, height: 92, radius: 18, color: panelBg, borderColor: line, borderWidth: 1 });
+  page.drawRoundedRectangle({ x: margin + 18, y: y - 68, width: 42, height: 42, radius: 12, color: panelSoft, borderColor: line, borderWidth: 1 });
+  drawTextLine("KR", margin + 29, y - 53, { size: 16, bold: true });
+  drawTextLine("PORTAL DE RESULTADOS", margin + 74, y - 40, { size: 18, bold: true });
+  drawTextLine("Performance operacional", margin + 74, y - 61, { size: 11, color: muted });
+  drawTextLine(reportTitle, pageSize[0] - margin - 168, y - 40, { size: 15, bold: true });
+  drawTextLine(`${payload.report_view === "sintetica" ? "Sintética" : "Detalhada"} · ${sectorTitle}`, pageSize[0] - margin - 168, y - 60, { size: 11, color: muted });
+  y -= 110;
+
+  const metaCards = [
+    ["Escopo", payload.operator_label],
+    ["Período", `${formatDateBrServer(payload.period.start)} - ${formatDateBrServer(payload.period.end)}`],
+    ["Tipo", reportTitle],
+    ["Setor", sectorTitle],
+  ];
+  const gap = 12;
+  const cardW = (pageSize[0] - margin * 2 - gap * 3) / 4;
+  metaCards.forEach(([label, value], index) => {
+    const x = margin + index * (cardW + gap);
+    page.drawRoundedRectangle({ x, y: y - 64, width: cardW, height: 64, radius: 14, color: panelBg, borderColor: line, borderWidth: 1 });
+    drawTextLine(label, x + 14, y - 22, { size: 10, color: muted });
+    drawTextLine(fitPdfText(value, 34), x + 14, y - 44, { size: 12.5, bold: true });
+  });
+  y -= 82;
+
+  const drawSection = (section) => {
+    ensureSpace(64);
+    drawTextLine(section.title, margin, y - 8, { size: 15, bold: true });
+    y -= 22;
+    const tableX = margin;
+    const tableW = pageSize[0] - margin * 2;
+    const headerH = 24;
+    const rowH = 24;
+    const totalW = section.widths.reduce((sum, value) => sum + value, 0);
+    const scale = tableW / totalW;
+    const widths = section.widths.map((value) => value * scale);
+
+    const drawHeader = () => {
+      page.drawRoundedRectangle({ x: tableX, y: y - headerH, width: tableW, height: headerH, radius: 10, color: panelSoft, borderColor: line, borderWidth: 1 });
+      let cursorX = tableX + 10;
+      section.columns.forEach((column, index) => {
+        drawTextLine(column.toUpperCase(), cursorX, y - 16, { size: 9, bold: true, color: muted });
+        cursorX += widths[index];
+      });
+      y -= headerH;
+    };
+
+    drawHeader();
+
+    if (!section.rows.length) {
+      page.drawRectangle({ x: tableX, y: y - rowH, width: tableW, height: rowH, color: panelBg, borderColor: line, borderWidth: 1 });
+      drawTextLine("Sem dados.", tableX + 10, y - 16, { size: 10.5, color: muted });
+      y -= rowH + 18;
+      return;
+    }
+
+    section.rows.forEach((row) => {
+      ensureSpace(rowH + 16);
+      if (y - rowH < margin) {
+        addPage();
+        drawTextLine(section.title, margin, y - 8, { size: 15, bold: true });
+        y -= 22;
+        drawHeader();
+      }
+      page.drawRectangle({ x: tableX, y: y - rowH, width: tableW, height: rowH, color: panelBg, borderColor: line, borderWidth: 1 });
+      let cursorX = tableX + 10;
+      row.forEach((cell, index) => {
+        const maxChars = Math.max(6, Math.floor(widths[index] / 7.2));
+        drawTextLine(fitPdfText(cell, maxChars), cursorX, y - 16, { size: 10.2 });
+        cursorX += widths[index];
+      });
+      y -= rowH;
+    });
+
+    y -= 18;
+  };
+
+  sections.forEach((section) => drawSection(section));
+  return await pdfDoc.save();
 }
 
 function average(values) {
@@ -2543,10 +2736,12 @@ async function handleApi(request, url, db, env = {}) {
     const format = String(url.searchParams.get("format") || "excel").trim().toLowerCase();
     const payload = buildReportPayload(db, auth.user, url);
     if (format === "pdf") {
-      return new Response(renderPdfReport(payload), {
+      const pdfBuffer = await renderPdfReport(payload);
+      return new Response(pdfBuffer, {
         status: 200,
         headers: {
-          "content-type": "text/html; charset=utf-8",
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="relatorio-operacional.pdf"',
         },
       });
     }

@@ -1341,6 +1341,12 @@ body.theme-contrast .modal-card {
 
 .alerts-tools {
   margin-bottom: 16px;
+  gap: 14px;
+}
+
+.alerts-tools .btn,
+.alerts-tools .btn-secondary {
+  margin-top: 10px;
 }
 
 .reports-tools {
