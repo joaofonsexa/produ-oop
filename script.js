@@ -1926,6 +1926,7 @@ function historyTemplate() {
                     <td>
                       <div class="row-actions">
                         <button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Editar</button>
+                        ${row.entryType !== "quality" ? `<button class="btn-secondary btn-small" type="button" data-history-delete-day="${row.userId}" data-history-date="${row.date}">Excluir dia</button>` : ""}
                         <button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Remover</button>
                       </div>
                     </td>
@@ -3108,6 +3109,26 @@ function bindShellEvents() {
       try {
         await api(entryType === "quality" ? `/api/admin/quality/${metricId}` : `/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
         refreshDashboardInBackground(entryType === "quality" ? "Qualidade removida com sucesso." : "Registro removido com sucesso.");
+      } catch (error) {
+        setFlash("error", error.message);
+      } finally {
+        restoreButton();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-history-delete-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.historyDeleteDay);
+      const metricDate = String(button.dataset.historyDate || "").trim();
+      if (!userId || !metricDate) return;
+      if (!window.confirm(`Apagar todos os registros deste operador no dia ${formatDateBr(metricDate)}?`)) return;
+      const restoreButton = setButtonProcessing(button, true, "Excluindo...");
+      try {
+        await api(`/api/admin/daily-metrics/by-day?user_id=${encodeURIComponent(userId)}&date=${encodeURIComponent(metricDate)}`, {
+          method: "DELETE",
+        });
+        refreshDashboardInBackground("Dia removido com sucesso.");
       } catch (error) {
         setFlash("error", error.message);
       } finally {

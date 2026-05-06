@@ -625,6 +625,12 @@ async function deleteDailyMetricRecordFromD1(connection, metricId) {
   await connection.prepare("DELETE FROM daily_metrics WHERE id = ?").bind(Number(metricId)).run();
 }
 
+async function deleteDailyMetricsByUserDateFromD1(connection, userId, metricDate) {
+  await connection.prepare("DELETE FROM daily_metrics WHERE user_id = ? AND metric_date = ?")
+    .bind(Number(userId), String(metricDate || "").trim())
+    .run();
+}
+
 async function deleteUserDataFromD1(connection, userId) {
   await connection.prepare("DELETE FROM quality_scores WHERE user_id = ?").bind(Number(userId)).run();
   await connection.prepare("DELETE FROM daily_metrics WHERE user_id = ?").bind(Number(userId)).run();
@@ -3181,6 +3187,30 @@ async function handleApi(request, url, db, env = {}) {
       await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: false });
     }
     return jsonResponse({ ok: true });
+  }
+
+  if (url.pathname === "/api/admin/daily-metrics/by-day" && request.method === "DELETE") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const userId = Number(url.searchParams.get("user_id"));
+    const metricDate = String(url.searchParams.get("date") || "").trim();
+    if (!userId || !metricDate) {
+      return jsonResponse({ error: "user_id e date são obrigatórios." }, 400);
+    }
+    const beforeCount = db.dailyMetrics.length;
+    db.dailyMetrics = db.dailyMetrics.filter((entry) => !(Number(entry.user_id) === userId && String(entry.metric_date) === metricDate));
+    const removed = beforeCount - db.dailyMetrics.length;
+    if (!removed) {
+      return jsonResponse({ error: "Nenhum registro encontrado para esse dia." }, 404);
+    }
+    if (env?.DB) {
+      await ensureD1Schema(env.DB);
+      await deleteDailyMetricsByUserDateFromD1(env.DB, userId, metricDate);
+      rememberStorage(db);
+    } else {
+      await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: false });
+    }
+    return jsonResponse({ ok: true, removed });
   }
 
   if (url.pathname === "/api/admin/import/r2" && request.method === "POST") {
