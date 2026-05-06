@@ -125,8 +125,12 @@ function applyTheme() {
   document.body.classList.toggle("theme-contrast", state.theme === "contrast");
 }
 
-function setFlash(type, message) {
-  state.flash = { type, message };
+function setFlash(type, message, details = []) {
+  state.flash = {
+    type,
+    message,
+    details: Array.isArray(details) ? details.filter(Boolean) : [],
+  };
   render();
 }
 
@@ -1025,7 +1029,20 @@ function bindMaintenance() {
 
 function flashTemplate() {
   if (!state.flash) return "";
-  return `<div class="notice toast ${esc(state.flash.type)}">${esc(state.flash.message)}</div>`;
+  const details = Array.isArray(state.flash.details) ? state.flash.details : [];
+  return `
+    <div class="notice toast ${esc(state.flash.type)} ${details.length ? "has-details" : ""}">
+      <div class="toast-message">${esc(state.flash.message)}</div>
+      ${details.length ? `
+        <details class="toast-details">
+          <summary>Ver falhas (${details.length})</summary>
+          <div class="toast-details-list">
+            ${details.map((item) => `<div class="toast-details-item">${esc(item)}</div>`).join("")}
+          </div>
+        </details>
+      ` : ""}
+    </div>
+  `;
 }
 
 function shellTemplate() {
@@ -2859,7 +2876,11 @@ function bindShellEvents() {
         }
         state.route = "history";
         await loadBootstrap();
-        setFlash("success", `Base importada: ${data.processed} registro(s), ${data.rejected} rejeição(ões).`);
+        setFlash(
+          "success",
+          `Base importada: ${data.processed} registro(s), ${data.rejected} rejeição(ões).`,
+          (data.errors || []).map((entry) => `Linha ${entry.row}: ${entry.error}`),
+        );
         render();
       } catch (error) {
         setFlash("error", error.message);
