@@ -1196,6 +1196,37 @@ function shellTemplate() {
           </form>
         </div>
       </div>
+      <div class="modal-backdrop" id="history-delete-day-modal" hidden>
+        <div class="modal-card">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Histórico</span>
+              <h3>Excluir registros do dia</h3>
+            </div>
+            <button class="icon-close" type="button" id="close-history-delete-day-modal" aria-label="Fechar">×</button>
+          </div>
+          <form id="history-delete-day-form" class="section compact-form">
+            <div class="info-box">Essa ação remove os registros de todos os operadores na data e setor selecionados.</div>
+            <label>Data com registros
+              <select id="history-delete-day-date" name="date" required>
+                <option value="">Selecione um dia</option>
+                ${historyAvailableDates().map((date) => `<option value="${esc(date)}">${esc(formatDateBr(date))}</option>`).join("")}
+              </select>
+            </label>
+            <label>Setor
+              <select name="operation" id="history-delete-day-operation" required>
+                <option value="all">0800 + Nuvidio</option>
+                <option value="0800">0800</option>
+                <option value="nuvidio">Nuvidio</option>
+              </select>
+            </label>
+            <div class="action-grid">
+              <button class="btn-secondary" type="button" id="cancel-history-delete-day-modal">Cancelar</button>
+              <button class="btn" type="submit">Excluir registros</button>
+            </div>
+          </form>
+        </div>
+      </div>
       ${flashTemplate()}
     </div>
   `;
@@ -1868,6 +1899,13 @@ function reportsTemplate() {
   `;
 }
 
+function historyAvailableDates() {
+  const dates = (state.history?.history || [])
+    .map((row) => String(row.metric_date || row.date || "").trim())
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
+  return [...new Set(dates)].sort((a, b) => b.localeCompare(a));
+}
+
 function historyTemplate() {
   const rows = getScopedHistory();
   const currentHistoryUser = getUserLabelById(state.filters.historyUserId);
@@ -1894,6 +1932,7 @@ function historyTemplate() {
                   ${getOperatorUsers().map((user) => `<option value="${esc(user.full_name)}"></option>`).join("")}
                 </datalist>
               </label>
+              <button class="btn-secondary" type="button" id="open-history-delete-day-modal">Excluir dia</button>
             ` : ""}
             <button class="btn" data-action="refresh-history">Atualizar</button>
           </div>
@@ -1926,7 +1965,6 @@ function historyTemplate() {
                     <td>
                       <div class="row-actions">
                         <button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Editar</button>
-                        ${row.entryType !== "quality" ? `<button class="btn-secondary btn-small" type="button" data-history-delete-day="${row.userId}" data-history-date="${row.date}">Excluir dia</button>` : ""}
                         <button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Remover</button>
                       </div>
                     </td>
@@ -2253,6 +2291,7 @@ function bindShellEvents() {
   const passwordModal = document.getElementById("password-modal");
   const userModal = document.getElementById("user-modal");
   const historyEditModal = document.getElementById("history-edit-modal");
+  const historyDeleteDayModal = document.getElementById("history-delete-day-modal");
   const trendTooltip = document.getElementById("trend-tooltip");
   const analysisMetricTooltip = document.getElementById("analysis-metric-tooltip");
 
@@ -2287,6 +2326,13 @@ function bindShellEvents() {
     if (!historyEditModal) return;
     historyEditModal.hidden = true;
     const form = document.getElementById("history-edit-form");
+    if (form) form.reset();
+  };
+
+  const closeHistoryDeleteDayModal = () => {
+    if (!historyDeleteDayModal) return;
+    historyDeleteDayModal.hidden = true;
+    const form = document.getElementById("history-delete-day-form");
     if (form) form.reset();
   };
 
@@ -2342,6 +2388,10 @@ function bindShellEvents() {
     button.addEventListener("click", closeHistoryEditModal);
   });
 
+  document.querySelectorAll("#close-history-delete-day-modal, #cancel-history-delete-day-modal").forEach((button) => {
+    button.addEventListener("click", closeHistoryDeleteDayModal);
+  });
+
   if (passwordModal) {
     passwordModal.addEventListener("click", (event) => {
       if (!state.forcePasswordChange && event.target === passwordModal) closePasswordModal();
@@ -2353,6 +2403,9 @@ function bindShellEvents() {
       }
       if (event.key === "Escape" && userModal && !userModal.hidden) {
         closeUserModal();
+      }
+      if (event.key === "Escape" && historyDeleteDayModal && !historyDeleteDayModal.hidden) {
+        closeHistoryDeleteDayModal();
       }
     });
   }
@@ -2367,6 +2420,16 @@ function bindShellEvents() {
       if (event.target === historyEditModal) closeHistoryEditModal();
     });
   }
+  if (historyDeleteDayModal) {
+    historyDeleteDayModal.addEventListener("click", (event) => {
+      if (event.target === historyDeleteDayModal) closeHistoryDeleteDayModal();
+    });
+  }
+
+  document.getElementById("open-history-delete-day-modal")?.addEventListener("click", () => {
+    if (!historyDeleteDayModal) return;
+    historyDeleteDayModal.hidden = false;
+  });
 
   const placeTooltipAbovePoint = (tooltip, point) => {
     if (!tooltip || !point) return;
@@ -3117,25 +3180,34 @@ function bindShellEvents() {
     });
   });
 
-  document.querySelectorAll("[data-history-delete-day]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const userId = Number(button.dataset.historyDeleteDay);
-      const metricDate = String(button.dataset.historyDate || "").trim();
-      if (!userId || !metricDate) return;
-      if (!window.confirm(`Apagar todos os registros deste operador no dia ${formatDateBr(metricDate)}?`)) return;
-      const restoreButton = setButtonProcessing(button, true, "Excluindo...");
+  const historyDeleteDayForm = document.getElementById("history-delete-day-form");
+  if (historyDeleteDayForm) {
+    historyDeleteDayForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const metricDate = String(form.get("date") || "").trim();
+      const operation = String(form.get("operation") || "all").trim().toLowerCase();
+      if (!metricDate) {
+        setFlash("error", "Selecione um dia para excluir.");
+        return;
+      }
+      const operationLabel = operation === "0800" ? "0800" : operation === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+      if (!window.confirm(`Excluir todos os registros de ${operationLabel} do dia ${formatDateBr(metricDate)} para todos os operadores?`)) return;
+      const submitButton = historyDeleteDayForm.querySelector('button[type="submit"]');
+      const restoreButton = setButtonProcessing(submitButton, true, "Excluindo...");
       try {
-        await api(`/api/admin/daily-metrics/by-day?user_id=${encodeURIComponent(userId)}&date=${encodeURIComponent(metricDate)}`, {
+        await api(`/api/admin/daily-metrics/by-day?date=${encodeURIComponent(metricDate)}&operation=${encodeURIComponent(operation)}`, {
           method: "DELETE",
         });
-        refreshDashboardInBackground("Dia removido com sucesso.");
+        closeHistoryDeleteDayModal();
+        refreshDashboardInBackground("Registros do dia removidos com sucesso.");
       } catch (error) {
         setFlash("error", error.message);
       } finally {
         restoreButton();
       }
     });
-  });
+  }
 
   const downloadQualityTemplate = document.getElementById("download-quality-template");
   if (downloadQualityTemplate) {

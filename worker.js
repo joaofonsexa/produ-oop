@@ -625,9 +625,9 @@ async function deleteDailyMetricRecordFromD1(connection, metricId) {
   await connection.prepare("DELETE FROM daily_metrics WHERE id = ?").bind(Number(metricId)).run();
 }
 
-async function deleteDailyMetricsByUserDateFromD1(connection, userId, metricDate) {
-  await connection.prepare("DELETE FROM daily_metrics WHERE user_id = ? AND metric_date = ?")
-    .bind(Number(userId), String(metricDate || "").trim())
+async function deleteDailyMetricsByDateFromD1(connection, metricDate) {
+  await connection.prepare("DELETE FROM daily_metrics WHERE metric_date = ?")
+    .bind(String(metricDate || "").trim())
     .run();
 }
 
@@ -761,6 +761,21 @@ function calculateEffectiveness(metric) {
   const total = actionable + toInt(metric.calls_0800_no_action) + toInt(metric.calls_nuvidio_no_action) + toInt(metric.calls_nuvidio_empty);
   if (!total) return 0;
   return Number(((actionable / total) * 100).toFixed(2));
+}
+
+function isDailyMetricEmpty(metric) {
+  return (
+    toInt(metric.production_0800) <= 0
+    && toInt(metric.production_nuvidio) <= 0
+    && toInt(metric.calls_0800_approved) <= 0
+    && toInt(metric.calls_0800_rejected) <= 0
+    && toInt(metric.calls_0800_pending) <= 0
+    && toInt(metric.calls_0800_no_action) <= 0
+    && toInt(metric.calls_nuvidio_approved) <= 0
+    && toInt(metric.calls_nuvidio_rejected) <= 0
+    && toInt(metric.calls_nuvidio_no_action) <= 0
+    && toInt(metric.calls_nuvidio_empty) <= 0
+  );
 }
 
 function calculateOperationEffectiveness(metric, operation) {
@@ -3192,25 +3207,81 @@ async function handleApi(request, url, db, env = {}) {
   if (url.pathname === "/api/admin/daily-metrics/by-day" && request.method === "DELETE") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
-    const userId = Number(url.searchParams.get("user_id"));
     const metricDate = String(url.searchParams.get("date") || "").trim();
-    if (!userId || !metricDate) {
-      return jsonResponse({ error: "user_id e date são obrigatórios." }, 400);
+    const operation = String(url.searchParams.get("operation") || "all").trim().toLowerCase();
+    if (!metricDate) {
+      return jsonResponse({ error: "date é obrigatório." }, 400);
     }
-    const beforeCount = db.dailyMetrics.length;
-    db.dailyMetrics = db.dailyMetrics.filter((entry) => !(Number(entry.user_id) === userId && String(entry.metric_date) === metricDate));
-    const removed = beforeCount - db.dailyMetrics.length;
-    if (!removed) {
+    if (!["all", "0800", "nuvidio"].includes(operation)) {
+      return jsonResponse({ error: "operation inválido." }, 400);
+    }
+
+    const matchingMetrics = db.dailyMetrics.filter((entry) => String(entry.metric_date) === metricDate);
+    if (!matchingMetrics.length) {
       return jsonResponse({ error: "Nenhum registro encontrado para esse dia." }, 404);
     }
+
+    let removed = 0;
+    let updated = 0;
+    const metricsToDelete = [];
+    const metricsToUpdate = [];
+
+    if (operation === "all") {
+      db.dailyMetrics = db.dailyMetrics.filter((entry) => String(entry.metric_date) !== metricDate);
+      removed = matchingMetrics.length;
+      metricsToDelete.push(...matchingMetrics.map((entry) => entry.id));
+    } else {
+      for (const metric of matchingMetrics) {
+        if (operation === "0800") {
+          metric.production_0800 = 0;
+          metric.calls_0800_approved = 0;
+          metric.calls_0800_rejected = 0;
+          metric.calls_0800_pending = 0;
+          metric.calls_0800_no_action = 0;
+        } else {
+          metric.production_nuvidio = 0;
+          metric.calls_nuvidio_approved = 0;
+          metric.calls_nuvidio_rejected = 0;
+          metric.calls_nuvidio_no_action = 0;
+          metric.calls_nuvidio_empty = 0;
+        }
+        metric.production = toInt(metric.production_0800) + toInt(metric.production_nuvidio);
+        metric.updated_at = nowIso();
+        if (isDailyMetricEmpty(metric)) {
+          metricsToDelete.push(metric.id);
+          removed += 1;
+        } else {
+          metricsToUpdate.push(metric);
+          updated += 1;
+        }
+      }
+      if (metricsToDelete.length) {
+        const deleteIds = new Set(metricsToDelete.map((id) => Number(id)));
+        db.dailyMetrics = db.dailyMetrics.filter((entry) => !deleteIds.has(Number(entry.id)));
+      }
+    }
+
+    if (!removed && !updated) {
+      return jsonResponse({ error: "Nenhum registro encontrado para exclusão no setor selecionado." }, 404);
+    }
+
     if (env?.DB) {
       await ensureD1Schema(env.DB);
-      await deleteDailyMetricsByUserDateFromD1(env.DB, userId, metricDate);
+      if (operation === "all") {
+        await deleteDailyMetricsByDateFromD1(env.DB, metricDate);
+      } else {
+        for (const metricId of metricsToDelete) {
+          await deleteDailyMetricRecordFromD1(env.DB, metricId);
+        }
+        for (const metric of metricsToUpdate) {
+          await persistSingleDailyMetricChange(db, env, metric, false);
+        }
+      }
       rememberStorage(db);
     } else {
       await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: false });
     }
-    return jsonResponse({ ok: true, removed });
+    return jsonResponse({ ok: true, removed, updated });
   }
 
   if (url.pathname === "/api/admin/import/r2" && request.method === "POST") {
