@@ -238,25 +238,6 @@ function normalizeUserRecord(user, roleFallback = "operator") {
 
 function normalizeDbState(db) {
   db.users = (db.users || []).map((user, index) => normalizeUserRecord(user, index === 0 ? "manager" : "operator"));
-  if (!db.users.some((user) => String(user.login).trim().toLowerCase() === "joao.fonseca")) {
-    const nextUserId = Math.max(0, ...db.users.map((user) => Number(user.id) || 0)) + 1;
-    db.users.push({
-      id: nextUserId,
-      full_name: "João Fonseca",
-      login: "joao.fonseca",
-      password_hash: PRIMARY_MANAGER_HASH,
-      password_plain: "Krsa@2026",
-      role: "manager",
-      platform_0800_id: "",
-      nuvidio_id: "",
-      must_change_password: false,
-      is_active: true,
-      preferred_theme: "dark",
-      last_route: "overview",
-      created_at: nowIso(),
-      updated_at: nowIso(),
-    });
-  }
   db.dailyMetrics = (db.dailyMetrics || []).map((metric) => {
     const normalizedMetric = {
       production_0800: 0,
