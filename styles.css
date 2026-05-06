@@ -1500,6 +1500,33 @@ body.theme-contrast .modal-card {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.report-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.report-sort-btn span {
+  font-size: 0.8rem;
+  opacity: 0.72;
+}
+
+.report-sort-btn.is-active {
+  color: #f8fafc;
+}
+
+.report-sort-btn.is-active span {
+  opacity: 1;
+}
+
 .report-preview-table tbody td {
   padding: 14px 16px;
   color: #f8fafc;
