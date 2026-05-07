@@ -593,6 +593,8 @@ body.theme-contrast .select-wrap select:disabled {
 .theme-toggle {
   min-width: 48px;
   width: 48px;
+  display: grid;
+  place-items: center;
   padding: 0;
   border-radius: 16px;
   background:
@@ -607,6 +609,7 @@ body.theme-contrast .select-wrap select:disabled {
   width: 19px;
   height: 19px;
   fill: currentColor;
+  display: block;
 }
 
 .theme-toggle:hover {

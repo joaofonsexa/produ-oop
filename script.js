@@ -2579,23 +2579,14 @@ function bindShellEvents() {
     historyDeleteDayModal.hidden = false;
   });
 
-  const placeTooltipAbovePoint = (tooltip, point) => {
-    if (!tooltip || !point) return;
+  const placeTooltipCentered = (tooltip) => {
+    if (!tooltip) return;
     tooltip.hidden = false;
     tooltip.style.visibility = "hidden";
-    const rect = point.getBoundingClientRect();
     const tooltipWidth = tooltip.offsetWidth || 280;
     const tooltipHeight = tooltip.offsetHeight || 120;
-    const margin = 12;
-    const centeredLeft = rect.left + (rect.width / 2) - (tooltipWidth / 2);
-    const resolvedLeft = Math.min(
-      window.innerWidth - tooltipWidth - margin,
-      Math.max(margin, centeredLeft),
-    );
-    let resolvedTop = rect.top - tooltipHeight - 10;
-    if (resolvedTop < margin) {
-      resolvedTop = rect.bottom + 10;
-    }
+    const resolvedLeft = Math.max(16, (window.innerWidth - tooltipWidth) / 2);
+    const resolvedTop = Math.max(16, (window.innerHeight - tooltipHeight) / 2);
     tooltip.style.left = `${resolvedLeft}px`;
     tooltip.style.top = `${resolvedTop}px`;
     tooltip.style.visibility = "visible";
@@ -2638,7 +2629,7 @@ function bindShellEvents() {
         ${lines}
       `;
       attachPopoverClose(trendTooltip);
-      placeTooltipAbovePoint(trendTooltip, point);
+      placeTooltipCentered(trendTooltip);
     };
 
     trendPoints.forEach((point) => {
@@ -2719,7 +2710,7 @@ function bindShellEvents() {
         ${lines}
       `;
       attachPopoverClose(analysisMetricTooltip);
-      placeTooltipAbovePoint(analysisMetricTooltip, point);
+      placeTooltipCentered(analysisMetricTooltip);
     };
     analysisPoints.forEach((point) => {
       point.addEventListener("click", async (event) => {
