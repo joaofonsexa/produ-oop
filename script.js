@@ -1031,6 +1031,21 @@ function maintenanceTemplate() {
   `;
 }
 
+function themeToggleIcon() {
+  if (state.theme === "contrast") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 4.75a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V5.5a.75.75 0 0 1 .75-.75Zm0 11.25a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 3.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20a.75.75 0 0 1 .75-.75ZM5.5 11.25a.75.75 0 0 1 0 1.5H4a.75.75 0 0 1 0-1.5h1.5Zm16 0a.75.75 0 0 1 0 1.5H20a.75.75 0 0 1 0-1.5h1.5ZM7.05 6a.75.75 0 0 1 1.06 0l1.06 1.06a.75.75 0 0 1-1.06 1.06L7.05 7.06A.75.75 0 0 1 7.05 6Zm8.78 8.78a.75.75 0 0 1 1.06 0l1.06 1.06a.75.75 0 0 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 0-1.06ZM16.89 6a.75.75 0 0 1 1.06 1.06l-1.06 1.06a.75.75 0 0 1-1.06-1.06L16.89 6ZM8.11 14.78a.75.75 0 0 1 1.06 1.06L8.11 16.9a.75.75 0 1 1-1.06-1.06l1.06-1.06Z"/>
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M14.72 3.78a.75.75 0 0 1 .83.94 7 7 0 1 0 8.74 8.74.75.75 0 0 1 .94.83A8.5 8.5 0 1 1 14.72 3.78Z"/>
+    </svg>
+  `;
+}
+
 function bindMaintenance() {
   const button = document.getElementById("maintenance-logout");
   if (!button) return;
@@ -1115,7 +1130,9 @@ function shellTemplate() {
               </select>
             </div>
             <button class="btn" data-action="refresh-all">Atualizar</button>
-            <button class="toggle" data-action="toggle-theme">${state.theme === "contrast" ? "◐" : "◑"}</button>
+            <button class="toggle theme-toggle" data-action="toggle-theme" title="${state.theme === "contrast" ? "Ativar tema escuro" : "Ativar tema claro"}" aria-label="${state.theme === "contrast" ? "Ativar tema escuro" : "Ativar tema claro"}">
+              ${themeToggleIcon()}
+            </button>
             <div class="profile-menu profile-menu-topbar">
               <button class="topbar-user menu-trigger topbar-user-trigger" type="button" id="profile-menu-trigger" aria-haspopup="true" aria-expanded="false">
                 <div class="avatar">${initials(state.user.full_name)}</div>
@@ -2455,6 +2472,18 @@ function bindShellEvents() {
     if (form) form.reset();
   };
 
+  const hideMetricPopovers = () => {
+    if (trendTooltip) trendTooltip.hidden = true;
+    if (analysisMetricTooltip) analysisMetricTooltip.hidden = true;
+  };
+
+  const attachPopoverClose = (tooltip) => {
+    tooltip?.querySelector("[data-close-popover]")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      tooltip.hidden = true;
+    });
+  };
+
   const openUserModal = (userId) => {
     const user = state.users.find((item) => String(item.id) === String(userId));
     if (!user || !userModal) return;
@@ -2574,7 +2603,7 @@ function bindShellEvents() {
 
   if (trendTooltip && isManager()) {
     const trendPoints = document.querySelectorAll(".trend-point[data-trend-date]");
-    const showTrendTooltip = async (point, event) => {
+    const showTrendTooltip = async (point) => {
       const date = point?.dataset?.trendDate;
       if (!date) return;
       const key = String(date);
@@ -2589,26 +2618,37 @@ function bindShellEvents() {
       }
       const bucket = state.dayTopCache[key];
       const lines = bucket.loading
-        ? `<div class="trend-tooltip-line">Carregando...</div>`
+        ? `<div class="trend-tooltip-line trend-tooltip-line-single">Carregando...</div>`
         : (bucket.top.length
-          ? bucket.top.map((item, idx) => `<div class="trend-tooltip-line"><strong>${idx + 1}. ${esc(item.name)}</strong><span>${integer(item.production)} · ${percent(item.effectiveness)}</span></div>`).join("")
-          : `<div class="trend-tooltip-line">Sem dados para ${esc(formatDateBr(key))}.</div>`);
+          ? bucket.top.map((item, idx) => `
+            <div class="trend-tooltip-rank">
+              <div class="trend-rank-order">${idx + 1}</div>
+              <div class="trend-rank-copy">
+                <strong>${esc(item.name)}</strong>
+                <span>${integer(item.production)} · ${percent(item.effectiveness)}</span>
+              </div>
+            </div>
+          `).join("")
+          : `<div class="trend-tooltip-line trend-tooltip-line-single">Sem dados para ${esc(formatDateBr(key))}.</div>`);
       trendTooltip.innerHTML = `
-        <div class="trend-tooltip-title">Top 10 · ${esc(formatDateBr(key))}</div>
+        <div class="trend-tooltip-head">
+          <div class="trend-tooltip-title">Top 10 · ${esc(formatDateBr(key))}</div>
+          <button class="trend-tooltip-close" type="button" data-close-popover aria-label="Fechar">×</button>
+        </div>
         ${lines}
       `;
+      attachPopoverClose(trendTooltip);
       placeTooltipAbovePoint(trendTooltip, point);
     };
 
     trendPoints.forEach((point) => {
-      point.addEventListener("mouseenter", (event) => {
-        showTrendTooltip(point, event);
-      });
-      point.addEventListener("mousemove", (event) => {
-        showTrendTooltip(point, event);
-      });
-      point.addEventListener("mouseleave", () => {
-        trendTooltip.hidden = true;
+      point.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        const alreadyVisible = !trendTooltip.hidden && trendTooltip.dataset.anchorKey === String(point.dataset.trendDate || "");
+        hideMetricPopovers();
+        if (alreadyVisible) return;
+        trendTooltip.dataset.anchorKey = String(point.dataset.trendDate || "");
+        await showTrendTooltip(point);
       });
     });
   }
@@ -2658,29 +2698,43 @@ function bindShellEvents() {
       }
       const bucket = state.analysisTopCache[key];
       const lines = bucket.loading
-        ? `<div class="trend-tooltip-line">Carregando...</div>`
+        ? `<div class="trend-tooltip-line trend-tooltip-line-single">Carregando...</div>`
         : (bucket.top.length
-          ? bucket.top.map((item, idx) => `<div class="trend-tooltip-line"><strong>${idx + 1}. ${esc(item.name)}</strong><span>${formatMetricValue(dataset.metric, item.value)}</span></div>`).join("")
-          : `<div class="trend-tooltip-line">Sem dados para ${esc(metricWhenLabel(dataset))}.</div>`);
+          ? bucket.top.map((item, idx) => `
+            <div class="trend-tooltip-rank">
+              <div class="trend-rank-order">${idx + 1}</div>
+              <div class="trend-rank-copy">
+                <strong>${esc(item.name)}</strong>
+                <span>${formatMetricValue(dataset.metric, item.value)}</span>
+              </div>
+            </div>
+          `).join("")
+          : `<div class="trend-tooltip-line trend-tooltip-line-single">Sem dados para ${esc(metricWhenLabel(dataset))}.</div>`);
       analysisMetricTooltip.innerHTML = `
-        <div class="trend-tooltip-title">${esc(metricLabel(dataset.metric, dataset.operation, dataset.qualityField))}</div>
-        <div class="trend-tooltip-line"><span>${esc(metricWhenLabel(dataset))}</span></div>
+        <div class="trend-tooltip-head">
+          <div class="trend-tooltip-title">${esc(metricLabel(dataset.metric, dataset.operation, dataset.qualityField))}</div>
+          <button class="trend-tooltip-close" type="button" data-close-popover aria-label="Fechar">×</button>
+        </div>
+        <div class="trend-tooltip-line trend-tooltip-line-single"><span>${esc(metricWhenLabel(dataset))}</span></div>
         ${lines}
       `;
+      attachPopoverClose(analysisMetricTooltip);
       placeTooltipAbovePoint(analysisMetricTooltip, point);
     };
     analysisPoints.forEach((point) => {
-      point.addEventListener("mouseenter", () => {
-        showAnalysisTooltip(point);
-      });
-      point.addEventListener("mousemove", () => {
-        showAnalysisTooltip(point);
-      });
-      point.addEventListener("mouseleave", () => {
-        analysisMetricTooltip.hidden = true;
+      point.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        const key = getAnalysisCacheKey(point.dataset);
+        const alreadyVisible = !analysisMetricTooltip.hidden && analysisMetricTooltip.dataset.anchorKey === key;
+        hideMetricPopovers();
+        if (alreadyVisible) return;
+        analysisMetricTooltip.dataset.anchorKey = key;
+        await showAnalysisTooltip(point);
       });
     });
   }
+
+  document.addEventListener("click", hideMetricPopovers);
 
   if (state.forcePasswordChange && passwordModal) {
     passwordModal.hidden = false;
