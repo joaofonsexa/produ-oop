@@ -13,6 +13,10 @@ const D1_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS idx_daily_metrics_user_date ON daily_metrics(user_id, metric_date)",
   "CREATE TABLE IF NOT EXISTS quality_scores (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, reference_month TEXT NOT NULL, score REAL NOT NULL DEFAULT 0, monitoria_1 REAL, monitoria_2 REAL, monitoria_3 REAL, monitoria_4 REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_quality_scores_user_month ON quality_scores(user_id, reference_month)",
+  "CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS import_logs (id INTEGER PRIMARY KEY, imported_by INTEGER, source_name TEXT NOT NULL, imported_at TEXT NOT NULL, rows_processed INTEGER NOT NULL DEFAULT 0, rows_rejected INTEGER NOT NULL DEFAULT 0)",
+  "CREATE INDEX IF NOT EXISTS idx_import_logs_imported_at ON import_logs(imported_at)",
+  "CREATE TABLE IF NOT EXISTS processed_keys (key TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
 ];
 const INDEX_HTML = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -57,6 +61,8 @@ const isLocalNodeRuntime =
 let nodeModulesPromise;
 let storageCache = null;
 let storageCacheLoadedAt = 0;
+let d1SchemaEnsured = false;
+let d1SchemaEnsurePromise = null;
 const STORAGE_CACHE_TTL_MS = 1500;
 
 async function nodeModules() {
@@ -271,9 +277,16 @@ function normalizeDbState(db) {
     },
     ...(db.appSettings || {}),
   };
-  const nextUserCounter = Math.max(1, ...db.users.map((user) => Number(user.id) || 0)) + 1;
-  db.counters = db.counters || { users: nextUserCounter, dailyMetrics: 1, qualityScores: 1, importLogs: 1 };
-  db.counters.users = Math.max(db.counters.users || 1, nextUserCounter);
+  const nextUserCounter = Math.max(0, ...db.users.map((user) => Number(user.id) || 0)) + 1;
+  const nextDailyMetricCounter = Math.max(0, ...db.dailyMetrics.map((metric) => Number(metric.id) || 0)) + 1;
+  const nextQualityScoreCounter = Math.max(0, ...db.qualityScores.map((score) => Number(score.id) || 0)) + 1;
+  const nextImportLogCounter = Math.max(0, ...db.importLogs.map((log) => Number(log.id) || 0)) + 1;
+  db.counters = {
+    users: Math.max(db?.counters?.users || 1, nextUserCounter),
+    dailyMetrics: Math.max(db?.counters?.dailyMetrics || 1, nextDailyMetricCounter),
+    qualityScores: Math.max(db?.counters?.qualityScores || 1, nextQualityScoreCounter),
+    importLogs: Math.max(db?.counters?.importLogs || 1, nextImportLogCounter),
+  };
   return db;
 }
 
@@ -332,6 +345,17 @@ function normalizeD1QualityScoreRow(row) {
     notes: String(row.notes || "").trim(),
     created_at: row.created_at || nowIso(),
     updated_at: row.updated_at || nowIso(),
+  };
+}
+
+function normalizeD1ImportLogRow(row) {
+  return {
+    id: Number(row.id),
+    imported_by: row.imported_by === null || row.imported_by === undefined ? null : Number(row.imported_by),
+    source_name: String(row.source_name || "").trim(),
+    imported_at: String(row.imported_at || nowIso()).trim(),
+    rows_processed: toInt(row.rows_processed),
+    rows_rejected: toInt(row.rows_rejected),
   };
 }
 
@@ -421,6 +445,44 @@ async function loadQualityScoresFromD1(connection) {
     ORDER BY reference_month, id
   `).all();
   return (result?.results || []).map(normalizeD1QualityScoreRow);
+}
+
+async function loadImportLogsFromD1(connection) {
+  const result = await connection.prepare(`
+    SELECT
+      id,
+      imported_by,
+      source_name,
+      imported_at,
+      rows_processed,
+      rows_rejected
+    FROM import_logs
+    ORDER BY imported_at DESC, id DESC
+  `).all();
+  return (result?.results || []).map(normalizeD1ImportLogRow);
+}
+
+async function loadProcessedKeysFromD1(connection) {
+  const result = await connection.prepare(`
+    SELECT key
+    FROM processed_keys
+    ORDER BY created_at, key
+  `).all();
+  return (result?.results || []).map((row) => String(row.key || "").trim()).filter(Boolean);
+}
+
+async function loadAppSettingsFromD1(connection) {
+  const row = await connection.prepare(`
+    SELECT value
+    FROM system_settings
+    WHERE key = ?
+  `).bind("app_settings").first();
+  if (!row?.value) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
 }
 
 async function persistUserRecordToD1(connection, user) {
@@ -576,6 +638,76 @@ async function persistQualityScoreRecordToD1(connection, score) {
   ).run();
 }
 
+async function persistImportLogRecordToD1(connection, log) {
+  await connection.prepare(`
+    INSERT INTO import_logs (
+      id,
+      imported_by,
+      source_name,
+      imported_at,
+      rows_processed,
+      rows_rejected
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      imported_by = excluded.imported_by,
+      source_name = excluded.source_name,
+      imported_at = excluded.imported_at,
+      rows_processed = excluded.rows_processed,
+      rows_rejected = excluded.rows_rejected
+  `).bind(
+    Number(log.id),
+    log.imported_by === null || log.imported_by === undefined ? null : Number(log.imported_by),
+    String(log.source_name || "").trim(),
+    String(log.imported_at || nowIso()).trim(),
+    toInt(log.rows_processed),
+    toInt(log.rows_rejected),
+  ).run();
+}
+
+async function persistAppSettingsToD1(connection, appSettings) {
+  await connection.prepare(`
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `).bind("app_settings", JSON.stringify(appSettings || seedState().appSettings), nowIso()).run();
+}
+
+async function persistImportLogsToD1(connection, importLogs) {
+  for (const log of importLogs) {
+    await persistImportLogRecordToD1(connection, log);
+  }
+  if (importLogs.length) {
+    const placeholders = importLogs.map(() => "?").join(", ");
+    await connection.prepare(`DELETE FROM import_logs WHERE id NOT IN (${placeholders})`)
+      .bind(...importLogs.map((log) => Number(log.id)))
+      .run();
+    return;
+  }
+  await connection.prepare("DELETE FROM import_logs").run();
+}
+
+async function persistProcessedKeysToD1(connection, processedKeys) {
+  const keys = [...new Set((processedKeys || []).map((key) => String(key || "").trim()).filter(Boolean))];
+  for (const key of keys) {
+    await connection.prepare(`
+      INSERT INTO processed_keys (key, created_at)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO NOTHING
+    `).bind(key, nowIso()).run();
+  }
+  if (keys.length) {
+    const placeholders = keys.map(() => "?").join(", ");
+    await connection.prepare(`DELETE FROM processed_keys WHERE key NOT IN (${placeholders})`)
+      .bind(...keys)
+      .run();
+    return;
+  }
+  await connection.prepare("DELETE FROM processed_keys").run();
+}
+
 async function persistUsersToD1(connection, users) {
   for (const user of users) {
     await persistUserRecordToD1(connection, user);
@@ -628,13 +760,20 @@ function buildPersistableMetaState(db) {
 }
 
 async function persistMetaStateToD1(connection, db) {
+  await persistAppSettingsToD1(connection, db.appSettings || seedState().appSettings);
+  await persistImportLogsToD1(connection, db.importLogs || []);
+  await persistProcessedKeysToD1(connection, db.r2ProcessedKeys || []);
   await connection.prepare(`
     INSERT INTO app_state (id, data, updated_at)
     VALUES (?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       data = excluded.data,
       updated_at = excluded.updated_at
-  `).bind(D1_STATE_ID, JSON.stringify(buildPersistableMetaState(db)), nowIso()).run();
+  `).bind(
+    D1_STATE_ID,
+    JSON.stringify({ counters: db.counters || seedState().counters }),
+    nowIso(),
+  ).run();
 }
 
 async function ensureD1Schema(connection) {
@@ -730,6 +869,21 @@ async function ensureD1Schema(connection) {
   if (!qualityScoreColumns.has("updated_at")) {
     await connection.exec("ALTER TABLE quality_scores ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
   }
+}
+
+async function ensureD1SchemaCached(connection) {
+  if (d1SchemaEnsured) return;
+  if (!d1SchemaEnsurePromise) {
+    d1SchemaEnsurePromise = ensureD1Schema(connection)
+      .then(() => {
+        d1SchemaEnsured = true;
+      })
+      .catch((error) => {
+        d1SchemaEnsurePromise = null;
+        throw error;
+      });
+  }
+  await d1SchemaEnsurePromise;
 }
 
 function calculateEffectiveness(metric) {
@@ -932,6 +1086,30 @@ function isOperatorBlockedByMaintenance(user, db) {
   return Boolean(user && user.role !== "manager" && db?.appSettings?.maintenance_for_operators);
 }
 
+function getVisibleOperatorIds(db) {
+  return new Set(
+    (db.users || [])
+      .filter((entry) => entry.role === "operator" && entry.is_active)
+      .map((entry) => Number(entry.id)),
+  );
+}
+
+function filterMetricsForUserView(db, user, metrics = []) {
+  if (user.role !== "manager") {
+    return metrics.filter((metric) => Number(metric.user_id) === Number(user.id));
+  }
+  const visibleOperatorIds = getVisibleOperatorIds(db);
+  return metrics.filter((metric) => visibleOperatorIds.has(Number(metric.user_id)));
+}
+
+function filterQualityForUserView(db, user, scores = []) {
+  if (user.role !== "manager") {
+    return scores.filter((score) => Number(score.user_id) === Number(user.id));
+  }
+  const visibleOperatorIds = getVisibleOperatorIds(db);
+  return scores.filter((score) => visibleOperatorIds.has(Number(score.user_id)));
+}
+
 function rememberStorage(db) {
   storageCache = db;
   storageCacheLoadedAt = Date.now();
@@ -943,7 +1121,7 @@ async function ensureStorage(env = {}) {
     if (storageCache && (Date.now() - storageCacheLoadedAt) < STORAGE_CACHE_TTL_MS) {
       return storageCache;
     }
-    await ensureD1Schema(env.DB);
+    await ensureD1SchemaCached(env.DB);
     const row = await env.DB.prepare("SELECT data FROM app_state WHERE id = ?").bind(D1_STATE_ID).first();
     const seededState = seedState();
     const rawState = row?.data ? JSON.parse(row.data) : {};
@@ -953,18 +1131,30 @@ async function ensureStorage(env = {}) {
       users: Array.isArray(rawState?.users) ? rawState.users : seededState.users,
       dailyMetrics: Array.isArray(rawState?.dailyMetrics) ? rawState.dailyMetrics : [],
       qualityScores: Array.isArray(rawState?.qualityScores) ? rawState.qualityScores : [],
+      importLogs: Array.isArray(rawState?.importLogs) ? rawState.importLogs : [],
+      r2ProcessedKeys: Array.isArray(rawState?.r2ProcessedKeys) ? rawState.r2ProcessedKeys : [],
+      appSettings: rawState?.appSettings || seededState.appSettings,
     });
-    const [loadedUsers, loadedDailyMetrics, loadedQualityScores] = await Promise.all([
+    const [loadedUsers, loadedDailyMetrics, loadedQualityScores, loadedImportLogs, loadedProcessedKeys, loadedAppSettings] = await Promise.all([
       loadUsersFromD1(env.DB),
       loadDailyMetricsFromD1(env.DB),
       loadQualityScoresFromD1(env.DB),
+      loadImportLogsFromD1(env.DB),
+      loadProcessedKeysFromD1(env.DB),
+      loadAppSettingsFromD1(env.DB),
     ]);
+    const hasPersistedImportLogs = loadedImportLogs.length > 0;
+    const hasPersistedProcessedKeys = loadedProcessedKeys.length > 0;
+    const hasPersistedAppSettings = Boolean(loadedAppSettings);
     const db = normalizeDbState({
       ...seededState,
       ...legacyState,
       users: loadedUsers.length ? loadedUsers : (legacyState.users?.length ? legacyState.users : seededState.users),
       dailyMetrics: loadedDailyMetrics.length ? loadedDailyMetrics : (legacyState.dailyMetrics || []),
       qualityScores: loadedQualityScores.length ? loadedQualityScores : (legacyState.qualityScores || []),
+      importLogs: hasPersistedImportLogs ? loadedImportLogs : (legacyState.importLogs || []),
+      r2ProcessedKeys: hasPersistedProcessedKeys ? loadedProcessedKeys : (legacyState.r2ProcessedKeys || []),
+      appSettings: hasPersistedAppSettings ? loadedAppSettings : (legacyState.appSettings || seededState.appSettings),
     });
     if (!loadedUsers.length && !legacyState.users?.length) {
       db.users[0].password_hash = await hashPassword("admin123");
@@ -982,6 +1172,9 @@ async function ensureStorage(env = {}) {
       !loadedUsers.length ||
       (!loadedDailyMetrics.length && db.dailyMetrics.length > 0) ||
       (!loadedQualityScores.length && db.qualityScores.length > 0) ||
+      (!hasPersistedImportLogs && db.importLogs.length > 0) ||
+      (!hasPersistedProcessedKeys && db.r2ProcessedKeys.length > 0) ||
+      !hasPersistedAppSettings ||
       repairedPasswords ||
       db.users.length !== loadedUsers.length ||
       legacyPayloadHasEmbeddedCollections;
@@ -1020,7 +1213,7 @@ async function persistStorage(db, env = {}, scope = {}) {
     ...scope,
   };
   if (env?.DB) {
-    await ensureD1Schema(env.DB);
+    await ensureD1SchemaCached(env.DB);
     if (options.users) await persistUsersToD1(env.DB, db.users || []);
     if (options.dailyMetrics) await persistDailyMetricsToD1(env.DB, db.dailyMetrics || []);
     if (options.qualityScores) await persistQualityScoresToD1(env.DB, db.qualityScores || []);
@@ -1039,7 +1232,7 @@ async function persistStorage(db, env = {}, scope = {}) {
 
 async function persistSingleUserChange(db, env, user, includeMeta = false) {
   if (env?.DB) {
-    await ensureD1Schema(env.DB);
+    await ensureD1SchemaCached(env.DB);
     await persistUserRecordToD1(env.DB, user);
     if (includeMeta) await persistMetaStateToD1(env.DB, db);
     rememberStorage(db);
@@ -1050,7 +1243,7 @@ async function persistSingleUserChange(db, env, user, includeMeta = false) {
 
 async function persistSingleDailyMetricChange(db, env, metric, includeMeta = false) {
   if (env?.DB) {
-    await ensureD1Schema(env.DB);
+    await ensureD1SchemaCached(env.DB);
     await persistDailyMetricRecordToD1(env.DB, metric);
     if (includeMeta) await persistMetaStateToD1(env.DB, db);
     rememberStorage(db);
@@ -1061,7 +1254,7 @@ async function persistSingleDailyMetricChange(db, env, metric, includeMeta = fal
 
 async function persistSingleQualityScoreChange(db, env, score, includeMeta = false) {
   if (env?.DB) {
-    await ensureD1Schema(env.DB);
+    await ensureD1SchemaCached(env.DB);
     await persistQualityScoreRecordToD1(env.DB, score);
     if (includeMeta) await persistMetaStateToD1(env.DB, db);
     rememberStorage(db);
@@ -1072,7 +1265,7 @@ async function persistSingleQualityScoreChange(db, env, score, includeMeta = fal
 
 async function persistMetaOnly(db, env) {
   if (env?.DB) {
-    await ensureD1Schema(env.DB);
+    await ensureD1SchemaCached(env.DB);
     await persistMetaStateToD1(env.DB, db);
     rememberStorage(db);
     return;
@@ -1686,13 +1879,13 @@ function import0800SummaryRows(db, users, rows, sourceName) {
 }
 
 function buildOverview(db, user, url) {
-  const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
+  const scopedMetrics = filterMetricsForUserView(db, user, db.dailyMetrics);
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
   const end = range.end;
   const dateValue = String(url.searchParams.get("date") || "").trim() || end;
   const todayRows = scopedMetrics.filter((metric) => metric.metric_date === dateValue);
-  const monthRows = db.qualityScores.filter((score) => score.reference_month === monthRef(dateValue) && (user.role === "manager" || score.user_id === user.id));
+  const monthRows = filterQualityForUserView(db, user, db.qualityScores).filter((score) => score.reference_month === monthRef(dateValue));
   const trendRows = scopedMetrics
     .filter((metric) => metric.metric_date >= start && metric.metric_date <= end)
     .sort((a, b) => a.metric_date.localeCompare(b.metric_date));
@@ -1730,7 +1923,7 @@ function buildOverview(db, user, url) {
 
 function buildDayTop(db, user, url) {
   const date = String(url.searchParams.get("date") || todayIso()).trim();
-  const scoped = db.dailyMetrics.filter((row) => row.metric_date === date && (user.role === "manager" || row.user_id === user.id));
+  const scoped = filterMetricsForUserView(db, user, db.dailyMetrics).filter((row) => row.metric_date === date);
   const top = scoped
     .map((row) => {
       const production0800 = toInt(row.production_0800);
@@ -1759,7 +1952,7 @@ function buildMetricTop(db, user, url) {
   const qualityField = String(url.searchParams.get("quality_field") || "final").trim().toLowerCase();
 
   if (metric === "quality") {
-    const scopedQuality = db.qualityScores.filter((row) => row.reference_month === referenceMonth && (user.role === "manager" || row.user_id === user.id));
+    const scopedQuality = filterQualityForUserView(db, user, db.qualityScores).filter((row) => row.reference_month === referenceMonth);
     const resolveQualityValue = (row) => {
       if (qualityField === "m1") return toFloat(row.monitoria_1);
       if (qualityField === "m2") return toFloat(row.monitoria_2);
@@ -1778,7 +1971,7 @@ function buildMetricTop(db, user, url) {
     return { metric, operation: "all", date: null, reference_month: referenceMonth, top };
   }
 
-  const scopedMetrics = db.dailyMetrics.filter((row) => row.metric_date === date && (user.role === "manager" || row.user_id === user.id));
+  const scopedMetrics = filterMetricsForUserView(db, user, db.dailyMetrics).filter((row) => row.metric_date === date);
   const top = scopedMetrics
     .map((row) => {
       let value = 0;
@@ -1806,7 +1999,7 @@ function buildMetricTop(db, user, url) {
 }
 
 function buildAnalysis(db, user, url) {
-  const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
+  const scopedMetrics = filterMetricsForUserView(db, user, db.dailyMetrics);
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
   const end = range.end;
@@ -2046,13 +2239,14 @@ function buildHistory(db, user, url) {
   const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
   const requestedUserId = Number(requestedRawUserId || user.id);
   const targetUserId = user.role === "manager" ? requestedUserId : user.id;
-  const scopedMetrics = db.dailyMetrics.filter((metric) => (includeAllUsers ? true : metric.user_id === targetUserId));
+  const baseMetrics = includeAllUsers ? filterMetricsForUserView(db, user, db.dailyMetrics) : db.dailyMetrics.filter((metric) => metric.user_id === targetUserId);
+  const scopedMetrics = baseMetrics;
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
   const end = range.end;
   const startMonth = String(start).slice(0, 7);
   const endMonth = String(end).slice(0, 7);
-  const history = db.dailyMetrics
+  const history = baseMetrics
     .filter((row) => {
       if (row.metric_date < start || row.metric_date > end) return false;
       if (includeAllUsers) return true;
@@ -2060,7 +2254,8 @@ function buildHistory(db, user, url) {
     })
     .sort((a, b) => b.metric_date.localeCompare(a.metric_date))
     .map((row) => ({ ...row, effectiveness: calculateEffectiveness(row) }));
-  const quality = db.qualityScores
+  const qualitySource = includeAllUsers ? filterQualityForUserView(db, user, db.qualityScores) : db.qualityScores.filter((item) => item.user_id === targetUserId);
+  const quality = qualitySource
     .filter((item) => {
       if (String(item.reference_month || "") < startMonth || String(item.reference_month || "") > endMonth) return false;
       if (includeAllUsers) return true;
@@ -2880,7 +3075,7 @@ async function handleApi(request, url, db, env = {}) {
     db.dailyMetrics = db.dailyMetrics.filter((entry) => entry.user_id !== userId);
     db.qualityScores = db.qualityScores.filter((entry) => entry.user_id !== userId);
     if (env?.DB) {
-      await ensureD1Schema(env.DB);
+      await ensureD1SchemaCached(env.DB);
       await deleteUserDataFromD1(env.DB, userId);
       await persistMetaStateToD1(env.DB, db);
       rememberStorage(db);
@@ -2972,7 +3167,7 @@ async function handleApi(request, url, db, env = {}) {
     if (index === -1) return jsonResponse({ error: "Registro de qualidade nao encontrado" }, 404);
     db.qualityScores.splice(index, 1);
     if (env?.DB) {
-      await ensureD1Schema(env.DB);
+      await ensureD1SchemaCached(env.DB);
       await env.DB.prepare("DELETE FROM quality_scores WHERE id = ?").bind(qualityId).run();
       rememberStorage(db);
     } else {
@@ -3230,7 +3425,7 @@ async function handleApi(request, url, db, env = {}) {
     }
 
     if (env?.DB) {
-      await ensureD1Schema(env.DB);
+      await ensureD1SchemaCached(env.DB);
       if (operation === "all") {
         await deleteDailyMetricsByDateFromD1(env.DB, metricDate);
       } else {
@@ -3256,7 +3451,7 @@ async function handleApi(request, url, db, env = {}) {
     if (index === -1) return jsonResponse({ error: "Registro nao encontrado" }, 404);
     db.dailyMetrics.splice(index, 1);
     if (env?.DB) {
-      await ensureD1Schema(env.DB);
+      await ensureD1SchemaCached(env.DB);
       await deleteDailyMetricRecordFromD1(env.DB, metricId);
       rememberStorage(db);
     } else {
@@ -3344,10 +3539,11 @@ async function handleApi(request, url, db, env = {}) {
 
       const schema = detectImportSchema(rows[0], item.key);
       let result;
-      if (schema === "normalized") result = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
-      else if (schema === "0800") result = import0800Rows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
-      else if (schema === "nuvidio") result = importNuvidioRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
-      else if (schema === "nuvidio_summary") result = importNuvidioSummaryRows(db, db.users.filter((entry) => entry.is_active), rows, item.key);
+      const importableOperators = db.users.filter((entry) => entry.role === "operator");
+      if (schema === "normalized") result = importNormalizedRows(db, importableOperators, rows, item.key);
+      else if (schema === "0800") result = import0800Rows(db, importableOperators, rows, item.key);
+      else if (schema === "nuvidio") result = importNuvidioRows(db, importableOperators, rows, item.key);
+      else if (schema === "nuvidio_summary") result = importNuvidioSummaryRows(db, importableOperators, rows, item.key);
       else {
         summary.skipped.push(`${item.key}: formato nao reconhecido para importacao automatica.`);
         continue;
@@ -3399,11 +3595,12 @@ async function handleApi(request, url, db, env = {}) {
         ? "nuvidio_summary"
         : detectImportSchema(first, file.name);
     let outcome;
-    if (schema === "normalized") outcome = importNormalizedRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
-    else if (schema === "0800") outcome = import0800Rows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
-    else if (schema === "nuvidio") outcome = importNuvidioRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
-    else if (schema === "0800_summary") outcome = import0800SummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
-    else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, db.users.filter((entry) => entry.is_active), rows, file.name);
+    const importableOperators = db.users.filter((entry) => entry.role === "operator");
+    if (schema === "normalized") outcome = importNormalizedRows(db, importableOperators, rows, file.name);
+    else if (schema === "0800") outcome = import0800Rows(db, importableOperators, rows, file.name);
+    else if (schema === "nuvidio") outcome = importNuvidioRows(db, importableOperators, rows, file.name);
+    else if (schema === "0800_summary") outcome = import0800SummaryRows(db, importableOperators, rows, file.name);
+    else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, importableOperators, rows, file.name);
     else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
     const { processed, rejected, errors, period } = outcome;
     registerImportLog(db, auth.user.id, file.name, processed, rejected);

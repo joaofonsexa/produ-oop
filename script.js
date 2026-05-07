@@ -373,16 +373,27 @@ function enforceOperatorScope() {
   state.filters.historyQuery = state.user.full_name;
 }
 
+function sortUsersByName(users = []) {
+  return [...users].sort((a, b) =>
+    repairTextEncoding(String(a?.full_name || "")).localeCompare(
+      repairTextEncoding(String(b?.full_name || "")),
+      "pt-BR",
+      { sensitivity: "base" },
+    ),
+  );
+}
+
 function getOperatorUsers() {
-  return state.users.filter((user) => user.role === "operator" && user.is_active);
+  return sortUsersByName(state.users.filter((user) => user.role === "operator" && user.is_active));
 }
 
 function getFilteredUsers() {
   const query = repairTextEncoding(String(state.filters.usersQuery || ""))
     .trim()
     .toLocaleLowerCase("pt-BR");
-  if (!query) return state.users;
-  return state.users.filter((user) => {
+  const sortedUsers = sortUsersByName(state.users);
+  if (!query) return sortedUsers;
+  return sortedUsers.filter((user) => {
     const fullName = repairTextEncoding(String(user.full_name || "")).toLocaleLowerCase("pt-BR");
     const login = repairTextEncoding(String(user.login || "")).toLocaleLowerCase("pt-BR");
     const role = user.role === "manager" ? "gestor" : "operador";
@@ -2089,6 +2100,8 @@ function adminTemplate() {
   const currentReferenceMonth = new Date().toISOString().slice(0, 7);
   const [defaultYear, defaultMonth] = currentReferenceMonth.split("-");
   const operatorUsers = getOperatorUsers();
+  const managementUsers = getFilteredUsers();
+  const hasAnyUsers = state.users.length > 0;
   return `
     <section class="section">
       <div class="hero-grid">
@@ -2281,7 +2294,7 @@ function adminTemplate() {
             </label>
           </div>
           <div class="list">
-            ${state.users.length ? state.users.map((user) => `
+            ${managementUsers.length ? managementUsers.map((user) => `
               <div class="list-row" data-management-user-search="${esc(`${user.full_name} ${user.login} ${user.role === "manager" ? "gestor" : "operador"}`)}">
                 <div class="list-row-copy">
                   <strong>${esc(user.full_name)}</strong>
@@ -2297,7 +2310,7 @@ function adminTemplate() {
                 </div>
               </div>
             `).join("") : ""}
-            <div class="empty" id="management-users-empty" ${state.users.length ? "hidden" : ""}>${state.users.length ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}</div>
+            <div class="empty" id="management-users-empty" ${managementUsers.length ? "hidden" : ""}>${hasAnyUsers ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}</div>
           </div>
         </article>
       </div>
