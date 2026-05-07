@@ -1035,13 +1035,16 @@ function themeToggleIcon() {
   if (state.theme === "contrast") {
     return `
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M12 4.75a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V5.5a.75.75 0 0 1 .75-.75Zm0 11.25a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 3.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20a.75.75 0 0 1 .75-.75ZM5.5 11.25a.75.75 0 0 1 0 1.5H4a.75.75 0 0 1 0-1.5h1.5Zm16 0a.75.75 0 0 1 0 1.5H20a.75.75 0 0 1 0-1.5h1.5ZM7.05 6a.75.75 0 0 1 1.06 0l1.06 1.06a.75.75 0 0 1-1.06 1.06L7.05 7.06A.75.75 0 0 1 7.05 6Zm8.78 8.78a.75.75 0 0 1 1.06 0l1.06 1.06a.75.75 0 0 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 0-1.06ZM16.89 6a.75.75 0 0 1 1.06 1.06l-1.06 1.06a.75.75 0 0 1-1.06-1.06L16.89 6ZM8.11 14.78a.75.75 0 0 1 1.06 1.06L8.11 16.9a.75.75 0 1 1-1.06-1.06l1.06-1.06Z"/>
+        <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8">
+          <circle cx="12" cy="12" r="3.6"/>
+          <path d="M12 3.75v2.1M12 18.15v2.1M3.75 12h2.1M18.15 12h2.1M6.15 6.15l1.48 1.48M16.37 16.37l1.48 1.48M17.85 6.15l-1.48 1.48M7.63 16.37l-1.48 1.48"/>
+        </g>
       </svg>
     `;
   }
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M14.72 3.78a.75.75 0 0 1 .83.94 7 7 0 1 0 8.74 8.74.75.75 0 0 1 .94.83A8.5 8.5 0 1 1 14.72 3.78Z"/>
+      <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" d="M15.25 4.65A7.95 7.95 0 1 0 19.35 18a6.9 6.9 0 1 1-4.1-13.35Z"/>
     </svg>
   `;
 }
