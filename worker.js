@@ -1879,13 +1879,13 @@ function import0800SummaryRows(db, users, rows, sourceName) {
 }
 
 function buildOverview(db, user, url) {
-  const scopedMetrics = filterMetricsForUserView(db, user, db.dailyMetrics);
+  const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
   const end = range.end;
   const dateValue = String(url.searchParams.get("date") || "").trim() || end;
   const todayRows = scopedMetrics.filter((metric) => metric.metric_date === dateValue);
-  const monthRows = filterQualityForUserView(db, user, db.qualityScores).filter((score) => score.reference_month === monthRef(dateValue));
+  const monthRows = db.qualityScores.filter((score) => score.reference_month === monthRef(dateValue) && (user.role === "manager" || score.user_id === user.id));
   const trendRows = scopedMetrics
     .filter((metric) => metric.metric_date >= start && metric.metric_date <= end)
     .sort((a, b) => a.metric_date.localeCompare(b.metric_date));
@@ -1923,7 +1923,7 @@ function buildOverview(db, user, url) {
 
 function buildDayTop(db, user, url) {
   const date = String(url.searchParams.get("date") || todayIso()).trim();
-  const scoped = filterMetricsForUserView(db, user, db.dailyMetrics).filter((row) => row.metric_date === date);
+  const scoped = db.dailyMetrics.filter((row) => row.metric_date === date && (user.role === "manager" || row.user_id === user.id));
   const top = scoped
     .map((row) => {
       const production0800 = toInt(row.production_0800);
@@ -1952,7 +1952,7 @@ function buildMetricTop(db, user, url) {
   const qualityField = String(url.searchParams.get("quality_field") || "final").trim().toLowerCase();
 
   if (metric === "quality") {
-    const scopedQuality = filterQualityForUserView(db, user, db.qualityScores).filter((row) => row.reference_month === referenceMonth);
+    const scopedQuality = db.qualityScores.filter((row) => row.reference_month === referenceMonth && (user.role === "manager" || row.user_id === user.id));
     const resolveQualityValue = (row) => {
       if (qualityField === "m1") return toFloat(row.monitoria_1);
       if (qualityField === "m2") return toFloat(row.monitoria_2);
@@ -1971,7 +1971,7 @@ function buildMetricTop(db, user, url) {
     return { metric, operation: "all", date: null, reference_month: referenceMonth, top };
   }
 
-  const scopedMetrics = filterMetricsForUserView(db, user, db.dailyMetrics).filter((row) => row.metric_date === date);
+  const scopedMetrics = db.dailyMetrics.filter((row) => row.metric_date === date && (user.role === "manager" || row.user_id === user.id));
   const top = scopedMetrics
     .map((row) => {
       let value = 0;
@@ -1999,7 +1999,7 @@ function buildMetricTop(db, user, url) {
 }
 
 function buildAnalysis(db, user, url) {
-  const scopedMetrics = filterMetricsForUserView(db, user, db.dailyMetrics);
+  const scopedMetrics = db.dailyMetrics.filter((metric) => user.role === "manager" || metric.user_id === user.id);
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
   const end = range.end;
@@ -2239,7 +2239,7 @@ function buildHistory(db, user, url) {
   const includeAllUsers = user.role === "manager" && requestedRawUserId === "all";
   const requestedUserId = Number(requestedRawUserId || user.id);
   const targetUserId = user.role === "manager" ? requestedUserId : user.id;
-  const baseMetrics = includeAllUsers ? filterMetricsForUserView(db, user, db.dailyMetrics) : db.dailyMetrics.filter((metric) => metric.user_id === targetUserId);
+  const baseMetrics = includeAllUsers ? db.dailyMetrics : db.dailyMetrics.filter((metric) => metric.user_id === targetUserId);
   const scopedMetrics = baseMetrics;
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
@@ -2254,7 +2254,7 @@ function buildHistory(db, user, url) {
     })
     .sort((a, b) => b.metric_date.localeCompare(a.metric_date))
     .map((row) => ({ ...row, effectiveness: calculateEffectiveness(row) }));
-  const qualitySource = includeAllUsers ? filterQualityForUserView(db, user, db.qualityScores) : db.qualityScores.filter((item) => item.user_id === targetUserId);
+  const qualitySource = includeAllUsers ? db.qualityScores : db.qualityScores.filter((item) => item.user_id === targetUserId);
   const quality = qualitySource
     .filter((item) => {
       if (String(item.reference_month || "") < startMonth || String(item.reference_month || "") > endMonth) return false;
