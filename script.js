@@ -387,6 +387,10 @@ function getOperatorUsers() {
   return sortUsersByName(state.users.filter((user) => user.role === "operator" && user.is_active));
 }
 
+function getAnyOperatorUsers() {
+  return sortUsersByName(state.users.filter((user) => user.role === "operator"));
+}
+
 function getFilteredUsers() {
   const query = repairTextEncoding(String(state.filters.usersQuery || ""))
     .trim()
@@ -435,7 +439,7 @@ function ensureManagerUserFilters() {
 }
 
 function getUserLabelById(userId) {
-  return getOperatorUsers().find((user) => String(user.id) === String(userId))?.full_name || "";
+  return getAnyOperatorUsers().find((user) => String(user.id) === String(userId))?.full_name || "";
 }
 
 function resolveHistoryUserId(query) {
@@ -1703,7 +1707,7 @@ function alertsTemplate() {
 function reportsTemplate() {
   const selectedName = state.filters.analysisUserId === "all"
     ? "Todos os operadores"
-    : (getOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
+    : (getAnyOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
   const reportRows = getScopedHistory().filter((row) => (
     state.filters.reportsSector === "all"
     || String(row.operation || "").toLowerCase() === String(state.filters.reportsSector || "").toLowerCase()

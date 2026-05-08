@@ -2336,7 +2336,7 @@ function buildReportPayload(db, user, url) {
   }));
 
   const operatorsInScope = includeAllUsers
-    ? db.users.filter((entry) => entry.role === "operator" && entry.is_active)
+    ? db.users.filter((entry) => entry.role === "operator")
     : db.users.filter((entry) => entry.id === targetUserId);
   const operatorLabel = includeAllUsers
     ? "Todos os operadores"
