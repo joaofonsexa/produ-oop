@@ -2712,7 +2712,14 @@ async function handleApi(request, url, db, env = {}) {
     if (plainMatches && !hashMatches) {
       user.password_hash = await hashPassword(inputPassword);
       user.updated_at = nowIso();
-      await persistSingleUserChange(db, env, user, false);
+      try {
+        await persistSingleUserChange(db, env, user, false);
+      } catch (error) {
+        console.error("Falha ao atualizar hash de senha no login", {
+          login: user.login,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     const token = await signSessionWithEnv({
       user_id: user.id,
