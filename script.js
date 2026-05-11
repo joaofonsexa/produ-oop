@@ -510,6 +510,13 @@ function formatQualityScopeLabel(value) {
   return "Geral";
 }
 
+function normalizeQualityScope(value) {
+  const scope = String(value || "all").trim().toLowerCase();
+  if (scope === "0800") return "0800";
+  if (scope === "nuvidio") return "nuvidio";
+  return "all";
+}
+
 function monthOptions(selectedValue = "") {
   const months = [
     "Janeiro",
