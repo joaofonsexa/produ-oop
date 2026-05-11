@@ -1941,8 +1941,6 @@ body.theme-contrast .modal-card {
   min-width: 280px;
   width: min(92vw, 430px);
   max-width: 430px;
-  max-height: min(78vh, 640px);
-  overflow: auto;
   padding: 14px 16px;
   border-radius: 16px;
   border: 1px solid var(--line);

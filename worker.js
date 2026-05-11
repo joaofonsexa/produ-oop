@@ -2572,7 +2572,7 @@ function buildReportSections(payload) {
   const operationalSection = `<div class="section"><h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
   const qualityColumns = payload.report_type === "qualidade" ? 5 : 4;
   const qualityNotesHeader = payload.report_type === "qualidade" ? "<th>Observações</th>" : "";
-  const qualitySection = `<div class="section"><h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>Esteira</th><th>Bruto</th>${qualityNotesHeader}</tr></thead><tbody>${qualityRows || `<tr><td colspan="${qualityColumns}" class="empty">Sem dados.</td></tr>`}</tbody></table></div>`;
+  const qualitySection = `<div class="section"><h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>Esteira</th><th>Nota</th>${qualityNotesHeader}</tr></thead><tbody>${qualityRows || `<tr><td colspan="${qualityColumns}" class="empty">Sem dados.</td></tr>`}</tbody></table></div>`;
   const offendersSection = `<div class="section"><h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
   return payload.report_type === "operacional"
     ? (payload.report_view === "sintetica" ? consolidatedSection : operationalSection)
@@ -2637,8 +2637,8 @@ function buildPdfSections(payload) {
   const quality = {
     title: "Qualidade",
     columns: payload.report_type === "qualidade"
-      ? ["Mês", "Operador", "Esteira", "Bruto", "Observações"]
-      : ["Mês", "Operador", "Esteira", "Bruto"],
+      ? ["Mês", "Operador", "Esteira", "Nota", "Observações"]
+      : ["Mês", "Operador", "Esteira", "Nota"],
     widths: payload.report_type === "qualidade"
       ? [84, 170, 72, 56, 150]
       : [90, 220, 90, 70],

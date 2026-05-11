@@ -1793,7 +1793,7 @@ function reportsTemplate() {
   const exportColumns = {
     consolidado: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
     operacional: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
-    qualidade: ["Mês", "Operador", "Esteira", "Bruto", "Observações"],
+    qualidade: ["Mês", "Operador", "Esteira", "Nota", "Observações"],
     ofensores: ["Operador", "Nota", "Prod. 0800", "Efet. 0800", "Prod. Nuvidio", "Efet. Nuvidio", "Qualidade"],
   }[reportType] || ["Data", "Operador", "Setor", "Produção", "Efetividade"];
   const previewBody = `
@@ -1956,7 +1956,7 @@ function detailedTemplate() {
         <th>${reportSortHeader("qualidade", "reference_month", "Mês")}</th>
         <th>${reportSortHeader("qualidade", "operator", "Operador")}</th>
         <th>${reportSortHeader("qualidade", "quality_scope", "Esteira")}</th>
-        <th>${reportSortHeader("qualidade", "gross_score", "Bruto")}</th>
+        <th>${reportSortHeader("qualidade", "gross_score", "Nota")}</th>
         <th>Observações</th>
       </tr>`;
   } else if (reportType === "ofensores") {
