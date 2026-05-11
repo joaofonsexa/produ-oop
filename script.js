@@ -38,6 +38,7 @@
     reportsType: "consolidado",
     reportsView: "detalhada",
     reportsSector: "all",
+    detailedPage: 1,
     operation: "all",
   },
   reportSorts: {
@@ -962,9 +963,6 @@ async function loadAlerts() {
 
 async function loadReportsData() {
   await loadHistory();
-  if (state.filters.reportsType === "ofensores") {
-    await loadAlerts();
-  }
 }
 
 async function loadUsers() {
@@ -1706,7 +1704,6 @@ function alertsTemplate() {
 }
 
 function reportsTemplate() {
-  const REPORT_PREVIEW_LIMIT = 100;
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
   const selectedName = state.filters.analysisUserId === "all"
@@ -1729,191 +1726,38 @@ function reportsTemplate() {
     ofensores: "Ofensores",
   }[reportType] || "Consolidado";
   const reportViewLabel = reportView === "sintetica" ? "Sintética" : "Detalhada";
-  const previewRows = reportRows.map((row) => ({
-    ...row,
-    operator: row.operator || getUserLabelById(row.userId) || "Operador",
-  }));
-  const previewQualityRows = qualityRows.map((row) => ({
-    ...row,
-    operator: row.operator || getUserLabelById(row.user_id) || "Operador",
-  }));
-  const previewOffenders = [...(state.alerts?.alerts || [])];
-  let previewBody = "";
-
-  if (reportType === "qualidade") {
-    const sortedQualityRows = sortReportRows("qualidade", previewQualityRows);
-    const visibleQualityRows = sortedQualityRows.slice(0, REPORT_PREVIEW_LIMIT);
-    previewBody = `
-      <table class="report-preview-table">
-        <thead>
-          <tr>
-            <th>${reportSortHeader("qualidade", "reference_month", "Mês")}</th>
-            <th>${reportSortHeader("qualidade", "operator", "Operador")}</th>
-            <th>${reportSortHeader("qualidade", "monitoria_1", "M1")}</th>
-            <th>${reportSortHeader("qualidade", "monitoria_2", "M2")}</th>
-            <th>${reportSortHeader("qualidade", "monitoria_3", "M3")}</th>
-            <th>${reportSortHeader("qualidade", "monitoria_4", "M4")}</th>
-            <th>${reportSortHeader("qualidade", "score", "Final")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${visibleQualityRows.length ? visibleQualityRows.map((row) => `
-            <tr>
-              <td>${esc(formatMonthLabel(row.reference_month))}</td>
-              <td>${esc(row.operator)}</td>
-              <td>${esc(row.monitoria_1 ?? "")}</td>
-              <td>${esc(row.monitoria_2 ?? "")}</td>
-              <td>${esc(row.monitoria_3 ?? "")}</td>
-              <td>${esc(row.monitoria_4 ?? "")}</td>
-              <td>${esc(number(row.score || 0))}</td>
-            </tr>
-          `).join("") : `<tr><td colspan="7">Sem dados para visualização.</td></tr>`}
-          </tbody>
-        </table>`;
-  } else if (reportType === "ofensores") {
-    const sortedOffenders = sortReportRows("ofensores", previewOffenders);
-    const visibleOffenders = sortedOffenders.slice(0, REPORT_PREVIEW_LIMIT);
-    previewBody = `
-      <table class="report-preview-table">
-        <thead>
-          <tr>
-            <th>${reportSortHeader("ofensores", "name", "Operador")}</th>
-            <th>${reportSortHeader("ofensores", "alert_score", "Nota")}</th>
-            <th>${reportSortHeader("ofensores", "avg_production_0800", "Prod. 0800")}</th>
-            <th>${reportSortHeader("ofensores", "effectiveness_0800", "Efet. 0800")}</th>
-            <th>${reportSortHeader("ofensores", "avg_production_nuvidio", "Prod. Nuvidio")}</th>
-            <th>${reportSortHeader("ofensores", "effectiveness_nuvidio", "Efet. Nuvidio")}</th>
-            <th>${reportSortHeader("ofensores", "quality", "Qualidade")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${visibleOffenders.length ? visibleOffenders.map((row) => `
-            <tr>
-              <td>${esc(row.name)}</td>
-              <td>${esc(number(row.alert_score))}</td>
-              <td>${esc(integer(row.avg_production_0800))}</td>
-              <td>${esc(percent(row.effectiveness_0800))}</td>
-              <td>${esc(integer(row.avg_production_nuvidio))}</td>
-              <td>${esc(percent(row.effectiveness_nuvidio))}</td>
-              <td>${esc(number(row.quality))}</td>
-            </tr>
-          `).join("") : `<tr><td colspan="7">Sem dados para visualização.</td></tr>`}
-        </tbody>
-      </table>`;
-  } else if (reportType === "consolidado") {
-    const consolidatedMap = new Map();
-    previewRows.forEach((row) => {
-      const operatorName = row.operator || "Operador";
-      const key = `${row.date}::${operatorName}::${row.operation}`;
-      const current = consolidatedMap.get(key) || {
-        date: row.date,
-        operator: operatorName,
-        operation: row.operation,
-        totalProduction: 0,
-        effectivenessParts: [],
-      };
-      current.totalProduction += Number(row.production || 0);
-      if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
-      consolidatedMap.set(key, current);
+  const consolidatedCount = (() => {
+    const map = new Set();
+    reportRows.forEach((row) => {
+      const operatorName = row.operator || getUserLabelById(row.userId) || "Operador";
+      map.add(`${row.date}::${operatorName}::${row.operation}`);
     });
-    const sortedConsolidatedRows = sortReportRows("consolidado", [...consolidatedMap.values()].map((row) => {
-      const avgEffectiveness = row.effectivenessParts.length
-        ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
-        : 0;
-      return {
-        date: row.date,
-        operator: row.operator,
-        operation: row.operation,
-        totalProduction: row.totalProduction,
-        avgEffectiveness,
-        production: row.totalProduction,
-        effectiveness: avgEffectiveness,
-      };
-    }));
-    const visibleConsolidatedRows = sortedConsolidatedRows.slice(0, REPORT_PREVIEW_LIMIT);
-    const sortedOperationalRows = reportView === "detalhada"
-      ? sortReportRows("operacional", previewRows)
-      : [];
-    const visibleOperationalRows = reportView === "detalhada"
-      ? sortedOperationalRows.slice(0, REPORT_PREVIEW_LIMIT)
-      : [];
-    previewBody = `
-      <table class="report-preview-table">
-        <thead>
-          <tr>
-            <th>${reportSortHeader("consolidado", "date", "Data")}</th>
-            <th>${reportSortHeader("consolidado", "operator", "Operador")}</th>
-            <th>${reportSortHeader("consolidado", "operation", "Setor")}</th>
-            <th>${reportSortHeader("consolidado", "production", "Produção")}</th>
-            <th>${reportSortHeader("consolidado", "effectiveness", "Efetividade")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${visibleConsolidatedRows.length ? visibleConsolidatedRows.map((row) => `
-            <tr>
-              <td>${esc(formatDateBr(row.date))}</td>
-              <td>${esc(row.operator)}</td>
-              <td>${esc(row.operation)}</td>
-              <td>${esc(integer(row.totalProduction))}</td>
-              <td>${esc(percent(row.avgEffectiveness || 0))}</td>
-            </tr>
-          `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
-        </tbody>
-      </table>
-      ${reportView === "detalhada" ? `
-        <div class="report-preview-subsection">
-          <span class="eyebrow">Base detalhada</span>
-          <table class="report-preview-table">
-            <thead>
-              <tr>
-                <th>${reportSortHeader("operacional", "date", "Data")}</th>
-                <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
-                <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
-                <th>${reportSortHeader("operacional", "production", "Produção")}</th>
-                <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${visibleOperationalRows.length ? visibleOperationalRows.map((row) => `
-                <tr>
-                  <td>${esc(formatDateBr(row.date))}</td>
-                  <td>${esc(row.operator)}</td>
-                  <td>${esc(row.operation)}</td>
-                  <td>${esc(integer(row.production || 0))}</td>
-                  <td>${esc(percent(row.effectiveness || 0))}</td>
-                </tr>
-              `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
-            </tbody>
-          </table>
-        </div>` : ""}
-    `;
-  } else {
-    const sortedOperationalRows = sortReportRows("operacional", previewRows);
-    const visibleOperationalRows = sortedOperationalRows.slice(0, REPORT_PREVIEW_LIMIT);
-    previewBody = `
-      <table class="report-preview-table">
-        <thead>
-          <tr>
-            <th>${reportSortHeader("operacional", "date", "Data")}</th>
-            <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
-            <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
-            <th>${reportSortHeader("operacional", "production", "Produção")}</th>
-            <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${visibleOperationalRows.length ? visibleOperationalRows.map((row) => `
-            <tr>
-              <td>${esc(formatDateBr(row.date))}</td>
-              <td>${esc(row.operator)}</td>
-              <td>${esc(row.operation)}</td>
-              <td>${esc(integer(row.production || 0))}</td>
-              <td>${esc(percent(row.effectiveness || 0))}</td>
-            </tr>
-          `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
-        </tbody>
-      </table>`;
-  }
+    return map.size;
+  })();
+  const offendersCount = Array.isArray(state.alerts?.alerts) ? state.alerts.alerts.length : 0;
+  const exportColumns = {
+    consolidado: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
+    operacional: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
+    qualidade: ["Mês", "Operador", "M1", "M2", "M3", "M4", "Final", "Observações"],
+    ofensores: ["Operador", "Nota", "Prod. 0800", "Efet. 0800", "Prod. Nuvidio", "Efet. Nuvidio", "Qualidade"],
+  }[reportType] || ["Data", "Operador", "Setor", "Produção", "Efetividade"];
+  const previewBody = `
+    <div class="mini-grid report-preview-cards">
+      <div class="mini-card"><span class="muted">Linhas operacionais</span><div class="metric-value">${integer(reportRows.length)}</div></div>
+      <div class="mini-card"><span class="muted">Linhas consolidadas</span><div class="metric-value">${integer(consolidatedCount)}</div></div>
+      <div class="mini-card"><span class="muted">Linhas de qualidade</span><div class="metric-value">${integer(qualityRows.length)}</div></div>
+      <div class="mini-card"><span class="muted">Ofensores no recorte</span><div class="metric-value">${integer(offendersCount)}</div></div>
+    </div>
+    <div class="report-preview-columns">
+      <span class="eyebrow">Colunas do arquivo</span>
+      <div class="report-preview-column-list">
+        ${exportColumns.map((column) => `<span class="report-column-pill">${esc(column)}</span>`).join("")}
+      </div>
+    </div>
+    <div class="info-box">
+      A exportação sai completa. Para consulta pesada e comparação linha a linha, use a aba <strong>Detalhada</strong>.
+    </div>
+  `;
   return `
     <section class="section">
       <div class="hero-grid">
@@ -2022,6 +1866,7 @@ function reportsTemplate() {
 }
 
 function detailedTemplate() {
+  const DETAILED_PAGE_SIZE = 200;
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
   const selectedName = state.filters.analysisUserId === "all"
@@ -2055,10 +1900,11 @@ function detailedTemplate() {
   let tableHead = "";
   let tableBody = "";
   let totalRows = 0;
+  let allRows = [];
 
   if (reportType === "qualidade") {
-    const rows = sortReportRows("qualidade", previewQualityRows);
-    totalRows = rows.length;
+    allRows = sortReportRows("qualidade", previewQualityRows);
+    totalRows = allRows.length;
     tableHead = `
       <tr>
         <th>${reportSortHeader("qualidade", "reference_month", "Mês")}</th>
@@ -2070,20 +1916,9 @@ function detailedTemplate() {
         <th>${reportSortHeader("qualidade", "score", "Final")}</th>
         <th>Observações</th>
       </tr>`;
-    tableBody = rows.length ? rows.map((row) => `
-      <tr>
-        <td>${esc(formatMonthLabel(row.reference_month))}</td>
-        <td>${esc(row.operator)}</td>
-        <td>${esc(row.monitoria_1 ?? "")}</td>
-        <td>${esc(row.monitoria_2 ?? "")}</td>
-        <td>${esc(row.monitoria_3 ?? "")}</td>
-        <td>${esc(row.monitoria_4 ?? "")}</td>
-        <td>${esc(number(row.score || 0))}</td>
-        <td>${esc(row.notes || "—")}</td>
-      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
   } else if (reportType === "ofensores") {
-    const rows = sortReportRows("ofensores", offendersRows);
-    totalRows = rows.length;
+    allRows = sortReportRows("ofensores", offendersRows);
+    totalRows = allRows.length;
     tableHead = `
       <tr>
         <th>${reportSortHeader("ofensores", "name", "Operador")}</th>
@@ -2095,17 +1930,6 @@ function detailedTemplate() {
         <th>${reportSortHeader("ofensores", "quality", "Qualidade")}</th>
         <th>Principais ofensores</th>
       </tr>`;
-    tableBody = rows.length ? rows.map((row) => `
-      <tr>
-        <td>${esc(row.name)}</td>
-        <td>${esc(number(row.alert_score))}</td>
-        <td>${esc(integer(row.avg_production_0800))}</td>
-        <td>${esc(percent(row.effectiveness_0800))}</td>
-        <td>${esc(integer(row.avg_production_nuvidio))}</td>
-        <td>${esc(percent(row.effectiveness_nuvidio))}</td>
-        <td>${esc(row.quality ? number(row.quality) : "--")}</td>
-        <td>${esc((row.reasons || []).map((reason) => reason.text).join(" | ") || "Sem ofensores destacados")}</td>
-      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
   } else if (reportType === "consolidado") {
     const consolidatedMap = new Map();
     previewRows.forEach((row) => {
@@ -2122,7 +1946,7 @@ function detailedTemplate() {
       if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
       consolidatedMap.set(key, current);
     });
-    const rows = sortReportRows("consolidado", [...consolidatedMap.values()].map((row) => {
+    allRows = sortReportRows("consolidado", [...consolidatedMap.values()].map((row) => {
       const avgEffectiveness = row.effectivenessParts.length
         ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
         : 0;
@@ -2134,7 +1958,7 @@ function detailedTemplate() {
         effectiveness: avgEffectiveness,
       };
     }));
-    totalRows = rows.length;
+    totalRows = allRows.length;
     tableHead = `
       <tr>
         <th>${reportSortHeader("consolidado", "date", "Data")}</th>
@@ -2143,17 +1967,9 @@ function detailedTemplate() {
         <th>${reportSortHeader("consolidado", "production", "Produção")}</th>
         <th>${reportSortHeader("consolidado", "effectiveness", "Efetividade")}</th>
       </tr>`;
-    tableBody = rows.length ? rows.map((row) => `
-      <tr>
-        <td>${esc(formatDateBr(row.date))}</td>
-        <td>${esc(row.operator)}</td>
-        <td>${esc(row.operation)}</td>
-        <td>${esc(integer(row.production))}</td>
-        <td>${esc(percent(row.effectiveness || 0))}</td>
-      </tr>`).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`;
   } else {
-    const rows = sortReportRows("operacional", previewRows);
-    totalRows = rows.length;
+    allRows = sortReportRows("operacional", previewRows);
+    totalRows = allRows.length;
     tableHead = `
       <tr>
         <th>${reportSortHeader("operacional", "date", "Data")}</th>
@@ -2162,7 +1978,52 @@ function detailedTemplate() {
         <th>${reportSortHeader("operacional", "production", "Produção")}</th>
         <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
       </tr>`;
-    tableBody = rows.length ? rows.map((row) => `
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalRows / DETAILED_PAGE_SIZE));
+  const currentPage = Math.min(Math.max(1, Number(state.filters.detailedPage || 1)), totalPages);
+  state.filters.detailedPage = currentPage;
+  const startIndex = (currentPage - 1) * DETAILED_PAGE_SIZE;
+  const endIndex = startIndex + DETAILED_PAGE_SIZE;
+  const visibleRows = allRows.slice(startIndex, endIndex);
+  const visibleFrom = totalRows ? startIndex + 1 : 0;
+  const visibleTo = totalRows ? Math.min(endIndex, totalRows) : 0;
+
+  if (reportType === "qualidade") {
+    tableBody = visibleRows.length ? visibleRows.map((row) => `
+      <tr>
+        <td>${esc(formatMonthLabel(row.reference_month))}</td>
+        <td>${esc(row.operator)}</td>
+        <td>${esc(row.monitoria_1 ?? "")}</td>
+        <td>${esc(row.monitoria_2 ?? "")}</td>
+        <td>${esc(row.monitoria_3 ?? "")}</td>
+        <td>${esc(row.monitoria_4 ?? "")}</td>
+        <td>${esc(number(row.score || 0))}</td>
+        <td>${esc(row.notes || "—")}</td>
+      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
+  } else if (reportType === "ofensores") {
+    tableBody = visibleRows.length ? visibleRows.map((row) => `
+      <tr>
+        <td>${esc(row.name)}</td>
+        <td>${esc(number(row.alert_score))}</td>
+        <td>${esc(integer(row.avg_production_0800))}</td>
+        <td>${esc(percent(row.effectiveness_0800))}</td>
+        <td>${esc(integer(row.avg_production_nuvidio))}</td>
+        <td>${esc(percent(row.effectiveness_nuvidio))}</td>
+        <td>${esc(row.quality ? number(row.quality) : "--")}</td>
+        <td>${esc((row.reasons || []).map((reason) => reason.text).join(" | ") || "Sem ofensores destacados")}</td>
+      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
+  } else if (reportType === "consolidado") {
+    tableBody = visibleRows.length ? visibleRows.map((row) => `
+      <tr>
+        <td>${esc(formatDateBr(row.date))}</td>
+        <td>${esc(row.operator)}</td>
+        <td>${esc(row.operation)}</td>
+        <td>${esc(integer(row.production))}</td>
+        <td>${esc(percent(row.effectiveness || 0))}</td>
+      </tr>`).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`;
+  } else {
+    tableBody = visibleRows.length ? visibleRows.map((row) => `
       <tr>
         <td>${esc(formatDateBr(row.date))}</td>
         <td>${esc(row.operator)}</td>
@@ -2216,6 +2077,7 @@ function detailedTemplate() {
           <div class="detailed-table-meta">
             <span>${esc(selectedName)}</span>
             <strong>${integer(totalRows)} linha(s)</strong>
+            <span>Exibindo ${integer(visibleFrom)}-${integer(visibleTo)}</span>
             <span>${esc(sectorLabel)}</span>
             <span>${esc(reportView === "sintetica" ? "Sintética" : "Detalhada")}</span>
           </div>
@@ -2226,6 +2088,13 @@ function detailedTemplate() {
             <tbody>${tableBody}</tbody>
           </table>
         </div>
+        ${totalPages > 1 ? `
+          <div class="detailed-pagination">
+            <button class="btn-secondary" type="button" data-action="detailed-prev-page" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
+            <span>Página ${integer(currentPage)} de ${integer(totalPages)}</span>
+            <button class="btn-secondary" type="button" data-action="detailed-next-page" ${currentPage >= totalPages ? "disabled" : ""}>Próxima</button>
+          </div>
+        ` : ""}
       </article>
     </section>
   `;
@@ -2993,10 +2862,10 @@ function bindShellEvents() {
   document.querySelectorAll("#reports-type-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsType = event.target.value; }));
   document.querySelectorAll("#reports-view-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsView = event.target.value; }));
   document.querySelectorAll("#reports-sector-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsSector = event.target.value; }));
-  document.querySelectorAll("#detailed-start-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.start = event.target.value; }));
-  document.querySelectorAll("#detailed-end-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.end = event.target.value; }));
-  document.querySelectorAll("#detailed-type-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsType = event.target.value; }));
-  document.querySelectorAll("#detailed-sector-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsSector = event.target.value; }));
+  document.querySelectorAll("#detailed-start-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.start = event.target.value; state.filters.detailedPage = 1; }));
+  document.querySelectorAll("#detailed-end-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.end = event.target.value; state.filters.detailedPage = 1; }));
+  document.querySelectorAll("#detailed-type-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsType = event.target.value; state.filters.detailedPage = 1; }));
+  document.querySelectorAll("#detailed-sector-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsSector = event.target.value; state.filters.detailedPage = 1; }));
   document.querySelectorAll("[data-report-sort-scope][data-report-sort-column]").forEach((button) => {
     button.addEventListener("click", () => {
       const scope = String(button.dataset.reportSortScope || "").trim();
@@ -3008,6 +2877,7 @@ function bindShellEvents() {
         ...state.reportSorts,
         [scope]: { column, direction },
       };
+      state.filters.detailedPage = 1;
       render();
     });
   });
@@ -3103,6 +2973,7 @@ function bindShellEvents() {
       setFlash("success", "Relatórios atualizados.");
     },
     "refresh-detailed": async () => {
+      state.filters.detailedPage = 1;
       await loadReportsData();
       render();
       setFlash("success", "Consulta detalhada atualizada.");
@@ -3122,9 +2993,18 @@ function bindShellEvents() {
       state.filters.end = "";
       state.filters.reportsType = "consolidado";
       state.filters.reportsSector = "all";
+      state.filters.detailedPage = 1;
       await loadReportsData();
       render();
       setFlash("success", "Filtros redefinidos.");
+    },
+    "detailed-prev-page": async () => {
+      state.filters.detailedPage = Math.max(1, Number(state.filters.detailedPage || 1) - 1);
+      render();
+    },
+    "detailed-next-page": async () => {
+      state.filters.detailedPage = Number(state.filters.detailedPage || 1) + 1;
+      render();
     },
     "export-report-excel": async () => {
       const userId = state.filters.analysisUserId || "all";
