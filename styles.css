@@ -2094,7 +2094,8 @@ body.theme-contrast .brand-copy h1 {
 
   .sidebar {
     position: static;
-    height: auto;
+    height: 100vh;
+    min-height: 100vh;
   }
 
   .kpi-grid,
