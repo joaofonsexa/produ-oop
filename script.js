@@ -1639,7 +1639,7 @@ function analysisTemplate() {
             </article>
           </div>
       </div>
-      ${showAllOperatorsTop ? `<div class="trend-tooltip" id="analysis-metric-tooltip" hidden></div>` : ""}
+      <div class="trend-tooltip" id="analysis-metric-tooltip" hidden></div>
     </section>
   `;
 }

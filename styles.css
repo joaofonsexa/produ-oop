@@ -778,23 +778,31 @@ body.theme-contrast .theme-toggle {
 
 .detailed-filter-panel {
   padding: 14px 18px;
+  overflow-x: hidden;
 }
 
 .detailed-filter-bar {
   display: grid;
-  grid-template-columns: minmax(140px, 180px) minmax(170px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(220px, auto);
-  gap: 14px;
+  grid-template-columns: minmax(130px, 160px) minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  gap: 12px;
   align-items: end;
-  min-width: 1140px;
 }
 
 .detailed-filter-bar .analysis-filter-actions {
   justify-self: end;
-  min-width: 220px;
+  min-width: 0;
+  display: flex;
+  gap: 12px;
 }
 
-.detailed-filter-panel {
-  overflow-x: auto;
+.detailed-filter-bar .analysis-inline-field,
+.detailed-filter-bar .analysis-filter-copy {
+  min-width: 0;
+}
+
+.detailed-filter-bar .analysis-filter-actions .btn,
+.detailed-filter-bar .analysis-filter-actions .btn-secondary {
+  min-width: 108px;
 }
 
 .detailed-table-panel {
