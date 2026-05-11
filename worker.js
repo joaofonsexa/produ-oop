@@ -14,7 +14,7 @@ const D1_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS idx_daily_metrics_user_date ON daily_metrics(user_id, metric_date)",
   "CREATE INDEX IF NOT EXISTS idx_daily_metrics_date_user ON daily_metrics(metric_date, user_id)",
   "CREATE INDEX IF NOT EXISTS idx_daily_metrics_date ON daily_metrics(metric_date)",
-  "CREATE TABLE IF NOT EXISTS quality_scores (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, reference_month TEXT NOT NULL, score REAL NOT NULL DEFAULT 0, monitoria_1 REAL, monitoria_2 REAL, monitoria_3 REAL, monitoria_4 REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS quality_scores (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, reference_month TEXT NOT NULL, score REAL NOT NULL DEFAULT 0, score_type TEXT NOT NULL DEFAULT 'monitorias', monitoria_1 REAL, monitoria_2 REAL, monitoria_3 REAL, monitoria_4 REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_quality_scores_user_month ON quality_scores(user_id, reference_month)",
   "CREATE INDEX IF NOT EXISTS idx_quality_scores_reference_month ON quality_scores(reference_month)",
   "CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
@@ -155,6 +155,40 @@ function toOptionalMonitoria(value) {
   return parsed;
 }
 
+function normalizeQualityScoreType(value) {
+  return String(value || "").trim().toLowerCase() === "general" ? "general" : "monitorias";
+}
+
+function inferQualityScoreType(score) {
+  if (normalizeQualityScoreType(score?.score_type) === "general") return "general";
+  const monitorias = [score?.monitoria_1, score?.monitoria_2, score?.monitoria_3, score?.monitoria_4]
+    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "");
+  if (!monitorias.length && score?.score !== null && score?.score !== undefined && String(score.score).trim() !== "") {
+    return "general";
+  }
+  return "monitorias";
+}
+
+function normalizeQualityScope(value) {
+  const scope = String(value || "").trim().toLowerCase();
+  if (scope === "0800") return "0800";
+  if (scope === "nuvidio") return "nuvidio";
+  return "all";
+}
+
+function parseQualityEntry(value) {
+  if (value === null || value === undefined) return { value: null, entered: false };
+  const text = String(value).trim();
+  if (!text) return { value: null, entered: false };
+  const explicitZero = /^-\s*0([.,]0+)?$/.test(text);
+  const parsed = Number(text.replace(",", "."));
+  if (!Number.isFinite(parsed)) return { value: null, entered: false };
+  if (explicitZero) return { value: 0, entered: true };
+  if (parsed === 0) return { value: null, entered: false };
+  if (parsed < 0 || parsed > 100) throw new Error("Valor de monitoria deve estar entre 0 e 100.");
+  return { value: parsed, entered: true };
+}
+
 function parseDate(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return todayIso();
@@ -228,7 +262,7 @@ function serializeUser(user) {
 function normalizeRouteForRole(route, role = "operator") {
   const safeRoute = String(route || "").trim();
   const allowed = role === "manager"
-    ? ["overview", "analysis", "alerts", "history", "reports", "admin"]
+    ? ["overview", "analysis", "alerts", "history", "reports", "detailed", "admin"]
     : ["overview", "analysis", "alerts", "history"];
   return allowed.includes(safeRoute) ? safeRoute : "overview";
 }
@@ -261,7 +295,15 @@ function normalizeDbState(db) {
     }
     return normalizedMetric;
   });
-  db.qualityScores = db.qualityScores || [];
+  db.qualityScores = (db.qualityScores || []).map((score) => ({
+    ...score,
+    score_type: inferQualityScoreType(score),
+    quality_scope: normalizeQualityScope(score.quality_scope),
+    m1_entered: score.m1_entered === true || Number(score.m1_entered) === 1 || (score.monitoria_1 !== null && score.monitoria_1 !== undefined && String(score.monitoria_1).trim() !== ""),
+    m2_entered: score.m2_entered === true || Number(score.m2_entered) === 1 || (score.monitoria_2 !== null && score.monitoria_2 !== undefined && String(score.monitoria_2).trim() !== ""),
+    m3_entered: score.m3_entered === true || Number(score.m3_entered) === 1 || (score.monitoria_3 !== null && score.monitoria_3 !== undefined && String(score.monitoria_3).trim() !== ""),
+    m4_entered: score.m4_entered === true || Number(score.m4_entered) === 1 || (score.monitoria_4 !== null && score.monitoria_4 !== undefined && String(score.monitoria_4).trim() !== ""),
+  }));
   db.importLogs = db.importLogs || [];
   db.r2ProcessedKeys = Array.isArray(db.r2ProcessedKeys) ? db.r2ProcessedKeys : [];
   db.appSettings = {
@@ -337,19 +379,27 @@ function normalizeD1DailyMetricRow(row) {
 
 function normalizeD1QualityScoreRow(row) {
   const normalizeMonitoria = (value) => (value === null || value === undefined || value === "" ? null : toFloat(value));
-  return {
+  const normalized = {
     id: Number(row.id),
     user_id: Number(row.user_id),
     reference_month: String(row.reference_month || "").trim(),
     score: toFloat(row.score),
+    score_type: normalizeQualityScoreType(row.score_type),
+    quality_scope: normalizeQualityScope(row.quality_scope),
     monitoria_1: normalizeMonitoria(row.monitoria_1),
     monitoria_2: normalizeMonitoria(row.monitoria_2),
     monitoria_3: normalizeMonitoria(row.monitoria_3),
     monitoria_4: normalizeMonitoria(row.monitoria_4),
+    m1_entered: Number(row.m1_entered) === 1,
+    m2_entered: Number(row.m2_entered) === 1,
+    m3_entered: Number(row.m3_entered) === 1,
+    m4_entered: Number(row.m4_entered) === 1,
     notes: String(row.notes || "").trim(),
     created_at: row.created_at || nowIso(),
     updated_at: row.updated_at || nowIso(),
   };
+  normalized.score_type = inferQualityScoreType(normalized);
+  return normalized;
 }
 
 function normalizeD1ImportLogRow(row) {
@@ -438,10 +488,16 @@ async function loadQualityScoresFromD1(connection) {
       user_id,
       reference_month,
       score,
+      score_type,
+      quality_scope,
       monitoria_1,
       monitoria_2,
       monitoria_3,
       monitoria_4,
+      m1_entered,
+      m2_entered,
+      m3_entered,
+      m4_entered,
       notes,
       created_at,
       updated_at
@@ -607,23 +663,35 @@ async function persistQualityScoreRecordToD1(connection, score) {
       user_id,
       reference_month,
       score,
+      score_type,
+      quality_scope,
       monitoria_1,
       monitoria_2,
       monitoria_3,
       monitoria_4,
+      m1_entered,
+      m2_entered,
+      m3_entered,
+      m4_entered,
       notes,
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       user_id = excluded.user_id,
       reference_month = excluded.reference_month,
       score = excluded.score,
+      score_type = excluded.score_type,
+      quality_scope = excluded.quality_scope,
       monitoria_1 = excluded.monitoria_1,
       monitoria_2 = excluded.monitoria_2,
       monitoria_3 = excluded.monitoria_3,
       monitoria_4 = excluded.monitoria_4,
+      m1_entered = excluded.m1_entered,
+      m2_entered = excluded.m2_entered,
+      m3_entered = excluded.m3_entered,
+      m4_entered = excluded.m4_entered,
       notes = excluded.notes,
       created_at = excluded.created_at,
       updated_at = excluded.updated_at
@@ -632,10 +700,16 @@ async function persistQualityScoreRecordToD1(connection, score) {
     Number(score.user_id),
     String(score.reference_month || "").trim(),
     toFloat(score.score),
+    normalizeQualityScoreType(score.score_type),
+    normalizeQualityScope(score.quality_scope),
     score.monitoria_1 === null || score.monitoria_1 === undefined || score.monitoria_1 === "" ? null : toFloat(score.monitoria_1),
     score.monitoria_2 === null || score.monitoria_2 === undefined || score.monitoria_2 === "" ? null : toFloat(score.monitoria_2),
     score.monitoria_3 === null || score.monitoria_3 === undefined || score.monitoria_3 === "" ? null : toFloat(score.monitoria_3),
     score.monitoria_4 === null || score.monitoria_4 === undefined || score.monitoria_4 === "" ? null : toFloat(score.monitoria_4),
+    score.m1_entered ? 1 : 0,
+    score.m2_entered ? 1 : 0,
+    score.m3_entered ? 1 : 0,
+    score.m4_entered ? 1 : 0,
     String(score.notes || "").trim(),
     score.created_at || nowIso(),
     score.updated_at || nowIso(),
@@ -871,6 +945,24 @@ async function ensureD1Schema(connection) {
 
   const qualityScoresTableInfo = await connection.prepare("PRAGMA table_info(quality_scores)").all();
   const qualityScoreColumns = new Set((qualityScoresTableInfo?.results || []).map((row) => String(row.name)));
+  if (!qualityScoreColumns.has("score_type")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN score_type TEXT NOT NULL DEFAULT 'monitorias'");
+    await connection.exec(`
+      UPDATE quality_scores
+      SET score_type = CASE
+        WHEN (monitoria_1 IS NULL OR monitoria_1 = '')
+         AND (monitoria_2 IS NULL OR monitoria_2 = '')
+         AND (monitoria_3 IS NULL OR monitoria_3 = '')
+         AND (monitoria_4 IS NULL OR monitoria_4 = '')
+         AND score IS NOT NULL
+        THEN 'general'
+        ELSE 'monitorias'
+      END
+    `);
+  }
+  if (!qualityScoreColumns.has("quality_scope")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN quality_scope TEXT NOT NULL DEFAULT 'all'");
+  }
   if (!qualityScoreColumns.has("monitoria_1")) {
     await connection.exec("ALTER TABLE quality_scores ADD COLUMN monitoria_1 REAL");
   }
@@ -882,6 +974,22 @@ async function ensureD1Schema(connection) {
   }
   if (!qualityScoreColumns.has("monitoria_4")) {
     await connection.exec("ALTER TABLE quality_scores ADD COLUMN monitoria_4 REAL");
+  }
+  if (!qualityScoreColumns.has("m1_entered")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN m1_entered INTEGER NOT NULL DEFAULT 0");
+    await connection.exec("UPDATE quality_scores SET m1_entered = CASE WHEN monitoria_1 IS NULL OR monitoria_1 = '' THEN 0 ELSE 1 END");
+  }
+  if (!qualityScoreColumns.has("m2_entered")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN m2_entered INTEGER NOT NULL DEFAULT 0");
+    await connection.exec("UPDATE quality_scores SET m2_entered = CASE WHEN monitoria_2 IS NULL OR monitoria_2 = '' THEN 0 ELSE 1 END");
+  }
+  if (!qualityScoreColumns.has("m3_entered")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN m3_entered INTEGER NOT NULL DEFAULT 0");
+    await connection.exec("UPDATE quality_scores SET m3_entered = CASE WHEN monitoria_3 IS NULL OR monitoria_3 = '' THEN 0 ELSE 1 END");
+  }
+  if (!qualityScoreColumns.has("m4_entered")) {
+    await connection.exec("ALTER TABLE quality_scores ADD COLUMN m4_entered INTEGER NOT NULL DEFAULT 0");
+    await connection.exec("UPDATE quality_scores SET m4_entered = CASE WHEN monitoria_4 IS NULL OR monitoria_4 = '' THEN 0 ELSE 1 END");
   }
   if (!qualityScoreColumns.has("notes")) {
     await connection.exec("ALTER TABLE quality_scores ADD COLUMN notes TEXT");
@@ -3123,15 +3231,24 @@ async function handleApi(request, url, db, env = {}) {
     if (!userId || !String(payload.reference_month || "").trim()) {
       return jsonResponse({ error: "user_id e reference_month sao obrigatorios" }, 400);
     }
-    const monitoria1 = toOptionalMonitoria(payload.monitoria_1);
-    const monitoria2 = toOptionalMonitoria(payload.monitoria_2);
-    const monitoria3 = toOptionalMonitoria(payload.monitoria_3);
-    const monitoria4 = toOptionalMonitoria(payload.monitoria_4);
-    const monitorias = [monitoria1, monitoria2, monitoria3, monitoria4]
-      .filter((value) => value !== null && Number.isFinite(value) && value >= 0 && value <= 100);
-    const resolvedScore = monitorias.length
-      ? Number((monitorias.reduce((sum, value) => sum + value, 0) / monitorias.length).toFixed(2))
-      : toFloat(payload.score);
+    const scoreType = normalizeQualityScoreType(payload.score_type);
+    const qualityScope = normalizeQualityScope(payload.quality_scope);
+    const monitoria1 = parseQualityEntry(payload.monitoria_1);
+    const monitoria2 = parseQualityEntry(payload.monitoria_2);
+    const monitoria3 = parseQualityEntry(payload.monitoria_3);
+    const monitoria4 = parseQualityEntry(payload.monitoria_4);
+    const monitorias = [monitoria1, monitoria2, monitoria3, monitoria4].filter((item) => item.entered);
+    const scoreEntry = scoreType === "general"
+      ? parseQualityEntry(payload.score)
+      : null;
+    const resolvedScore = scoreType === "general"
+      ? scoreEntry.value
+      : (monitorias.length
+        ? Number((monitorias.reduce((sum, item) => sum + item.value, 0) / monitorias.length).toFixed(2))
+        : null);
+    if (resolvedScore === null || !Number.isFinite(resolvedScore) || resolvedScore < 0 || resolvedScore > 100) {
+      return jsonResponse({ error: scoreType === "general" ? "Informe a nota geral do mês entre 0 e 100." : "Preencha pelo menos uma monitoria entre 0 e 100." }, 400);
+    }
 
     let score = db.qualityScores.find((item) => item.user_id === userId && item.reference_month === payload.reference_month);
     if (!score) {
@@ -3140,10 +3257,16 @@ async function handleApi(request, url, db, env = {}) {
         user_id: userId,
         reference_month: payload.reference_month,
         score: resolvedScore,
-        monitoria_1: monitoria1,
-        monitoria_2: monitoria2,
-        monitoria_3: monitoria3,
-        monitoria_4: monitoria4,
+        score_type: scoreType,
+        quality_scope: qualityScope,
+        monitoria_1: scoreType === "general" ? null : monitoria1.value,
+        monitoria_2: scoreType === "general" ? null : monitoria2.value,
+        monitoria_3: scoreType === "general" ? null : monitoria3.value,
+        monitoria_4: scoreType === "general" ? null : monitoria4.value,
+        m1_entered: scoreType === "general" ? false : monitoria1.entered,
+        m2_entered: scoreType === "general" ? false : monitoria2.entered,
+        m3_entered: scoreType === "general" ? false : monitoria3.entered,
+        m4_entered: scoreType === "general" ? false : monitoria4.entered,
         notes: String(payload.notes || "").trim(),
         created_at: nowIso(),
         updated_at: nowIso(),
@@ -3151,10 +3274,16 @@ async function handleApi(request, url, db, env = {}) {
       db.qualityScores.push(score);
     } else {
       score.score = resolvedScore;
-      score.monitoria_1 = monitoria1;
-      score.monitoria_2 = monitoria2;
-      score.monitoria_3 = monitoria3;
-      score.monitoria_4 = monitoria4;
+      score.score_type = scoreType;
+      score.quality_scope = qualityScope;
+      score.monitoria_1 = scoreType === "general" ? null : monitoria1.value;
+      score.monitoria_2 = scoreType === "general" ? null : monitoria2.value;
+      score.monitoria_3 = scoreType === "general" ? null : monitoria3.value;
+      score.monitoria_4 = scoreType === "general" ? null : monitoria4.value;
+      score.m1_entered = scoreType === "general" ? false : monitoria1.entered;
+      score.m2_entered = scoreType === "general" ? false : monitoria2.entered;
+      score.m3_entered = scoreType === "general" ? false : monitoria3.entered;
+      score.m4_entered = scoreType === "general" ? false : monitoria4.entered;
       score.notes = String(payload.notes || "").trim();
       score.updated_at = nowIso();
     }
@@ -3169,19 +3298,34 @@ async function handleApi(request, url, db, env = {}) {
     const score = db.qualityScores.find((entry) => entry.id === qualityId);
     if (!score) return jsonResponse({ error: "Registro de qualidade nao encontrado" }, 404);
     const payload = await request.json();
-    const monitoria1 = payload.monitoria_1 === "" ? null : toOptionalMonitoria(payload.monitoria_1 ?? score.monitoria_1);
-    const monitoria2 = payload.monitoria_2 === "" ? null : toOptionalMonitoria(payload.monitoria_2 ?? score.monitoria_2);
-    const monitoria3 = payload.monitoria_3 === "" ? null : toOptionalMonitoria(payload.monitoria_3 ?? score.monitoria_3);
-    const monitoria4 = payload.monitoria_4 === "" ? null : toOptionalMonitoria(payload.monitoria_4 ?? score.monitoria_4);
-    const monitorias = [monitoria1, monitoria2, monitoria3, monitoria4]
-      .filter((value) => value !== null && Number.isFinite(value) && value >= 0 && value <= 100);
-    const resolvedScore = monitorias.length
-      ? Number((monitorias.reduce((sum, value) => sum + Number(value || 0), 0) / monitorias.length).toFixed(2))
-      : 0;
-    score.monitoria_1 = monitoria1;
-    score.monitoria_2 = monitoria2;
-    score.monitoria_3 = monitoria3;
-    score.monitoria_4 = monitoria4;
+    const scoreType = normalizeQualityScoreType(payload.score_type || score.score_type);
+    const qualityScope = normalizeQualityScope(payload.quality_scope || score.quality_scope);
+    const monitoria1 = payload.monitoria_1 === "" ? { value: null, entered: false } : parseQualityEntry(payload.monitoria_1 ?? score.monitoria_1);
+    const monitoria2 = payload.monitoria_2 === "" ? { value: null, entered: false } : parseQualityEntry(payload.monitoria_2 ?? score.monitoria_2);
+    const monitoria3 = payload.monitoria_3 === "" ? { value: null, entered: false } : parseQualityEntry(payload.monitoria_3 ?? score.monitoria_3);
+    const monitoria4 = payload.monitoria_4 === "" ? { value: null, entered: false } : parseQualityEntry(payload.monitoria_4 ?? score.monitoria_4);
+    const monitorias = [monitoria1, monitoria2, monitoria3, monitoria4].filter((item) => item.entered);
+    const scoreEntry = scoreType === "general"
+      ? parseQualityEntry(payload.score ?? score.score)
+      : null;
+    const resolvedScore = scoreType === "general"
+      ? scoreEntry.value
+      : (monitorias.length
+        ? Number((monitorias.reduce((sum, item) => sum + Number(item.value || 0), 0) / monitorias.length).toFixed(2))
+        : null);
+    if (resolvedScore === null || !Number.isFinite(resolvedScore) || resolvedScore < 0 || resolvedScore > 100) {
+      return jsonResponse({ error: scoreType === "general" ? "Informe a nota geral do mês entre 0 e 100." : "Preencha pelo menos uma monitoria entre 0 e 100." }, 400);
+    }
+    score.score_type = scoreType;
+    score.quality_scope = qualityScope;
+    score.monitoria_1 = scoreType === "general" ? null : monitoria1.value;
+    score.monitoria_2 = scoreType === "general" ? null : monitoria2.value;
+    score.monitoria_3 = scoreType === "general" ? null : monitoria3.value;
+    score.monitoria_4 = scoreType === "general" ? null : monitoria4.value;
+    score.m1_entered = scoreType === "general" ? false : monitoria1.entered;
+    score.m2_entered = scoreType === "general" ? false : monitoria2.entered;
+    score.m3_entered = scoreType === "general" ? false : monitoria3.entered;
+    score.m4_entered = scoreType === "general" ? false : monitoria4.entered;
     score.score = resolvedScore;
     score.notes = String(payload.notes ?? score.notes ?? "").trim();
     score.updated_at = nowIso();
@@ -3209,17 +3353,22 @@ async function handleApi(request, url, db, env = {}) {
   if (url.pathname === "/api/admin/quality/template" && request.method === "GET") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
+    const qualityMode = normalizeQualityScoreType(url.searchParams.get("mode"));
     if (!isLocalNodeRuntime) {
       const operators = db.users.filter((user) => user.is_active && user.role === "operator");
       const csv = [
-        "Nome do Operador;Monitoria 1;Monitoria 2;Monitoria 3;Monitoria 4",
-        ...operators.map((user) => `"${String(user.full_name || "").replaceAll('"', '""')}";;;;`),
+        qualityMode === "general"
+          ? "Nome do Operador;Nota geral do mês"
+          : "Nome do Operador;Monitoria 1;Monitoria 2;Monitoria 3;Monitoria 4",
+        ...operators.map((user) => qualityMode === "general"
+          ? `"${String(user.full_name || "").replaceAll('"', '""')}";`
+          : `"${String(user.full_name || "").replaceAll('"', '""')}";;;;`),
       ].join("\n");
       return new Response(`\uFEFF${csv}`, {
         status: 200,
         headers: {
           "content-type": "text/csv; charset=utf-8",
-          "content-disposition": 'attachment; filename="modelo-monitoria.csv"',
+          "content-disposition": `attachment; filename="${qualityMode === "general" ? "modelo-nota-geral" : "modelo-monitoria"}.csv"`,
         },
       });
     }
@@ -3240,6 +3389,8 @@ async function handleApi(request, url, db, env = {}) {
     const form = await request.formData();
     const file = form.get("file");
     const referenceMonth = String(form.get("reference_month") || "").trim();
+    const qualityMode = normalizeQualityScoreType(form.get("quality_mode"));
+    const qualityScope = normalizeQualityScope(form.get("quality_scope"));
     if (!(file instanceof File)) {
       return jsonResponse({ error: "Arquivo de monitoria nao enviado" }, 400);
     }
@@ -3258,6 +3409,7 @@ async function handleApi(request, url, db, env = {}) {
     const rows = lowerName.endsWith(".csv")
       ? parseCsv(await file.text()).map((row) => ({
           name: row.nome_do_operador || row.nome_operador || row.operador || row.nome || "",
+          score: row.nota_geral_do_mes ?? row.nota_geral ?? row.nota_geral_mes ?? row.nota_geral_mensal ?? row.score ?? "",
           monitoria_1: row.monitoria_1 ?? "",
           monitoria_2: row.monitoria_2 ?? "",
           monitoria_3: row.monitoria_3 ?? "",
@@ -3272,15 +3424,21 @@ async function handleApi(request, url, db, env = {}) {
       try {
         const user = matchUserByName(operators, row.name);
         if (!user) throw new Error(`Operador nao encontrado: ${row.name}`);
-        const monitorias = [row.monitoria_1, row.monitoria_2, row.monitoria_3, row.monitoria_4];
-        const validMonitorias = monitorias.filter((value) => value !== null && value !== undefined && value !== "");
-        for (const value of validMonitorias) {
-          const numeric = toFloat(value);
-          if (numeric < 0 || numeric > 100) throw new Error(`Monitoria fora da faixa 0-100 para ${row.name}`);
+        const monitoria1 = parseQualityEntry(row.monitoria_1);
+        const monitoria2 = parseQualityEntry(row.monitoria_2);
+        const monitoria3 = parseQualityEntry(row.monitoria_3);
+        const monitoria4 = parseQualityEntry(row.monitoria_4);
+        const validMonitorias = [monitoria1, monitoria2, monitoria3, monitoria4].filter((item) => item.entered);
+        const scoreValue = qualityMode === "general"
+          ? parseQualityEntry(row.score).value
+          : (validMonitorias.length
+            ? Number((validMonitorias.reduce((sum, item) => sum + item.value, 0) / validMonitorias.length).toFixed(2))
+            : null);
+        if (scoreValue === null || !Number.isFinite(scoreValue) || scoreValue < 0 || scoreValue > 100) {
+          throw new Error(qualityMode === "general"
+            ? `Nota geral do mês inválida para ${row.name}`
+            : `Preencha ao menos uma monitoria válida para ${row.name}`);
         }
-        const scoreValue = validMonitorias.length
-          ? Number((validMonitorias.reduce((sum, value) => sum + toFloat(value), 0) / validMonitorias.length).toFixed(2))
-          : 0;
 
         let score = db.qualityScores.find((item) => item.user_id === user.id && item.reference_month === referenceMonth);
         if (!score) {
@@ -3289,21 +3447,33 @@ async function handleApi(request, url, db, env = {}) {
             user_id: user.id,
             reference_month: referenceMonth,
             score: scoreValue,
+            score_type: qualityMode,
+            quality_scope: qualityScope,
             notes: "",
-            monitoria_1: row.monitoria_1,
-            monitoria_2: row.monitoria_2,
-            monitoria_3: row.monitoria_3,
-            monitoria_4: row.monitoria_4,
+            monitoria_1: qualityMode === "general" ? null : monitoria1.value,
+            monitoria_2: qualityMode === "general" ? null : monitoria2.value,
+            monitoria_3: qualityMode === "general" ? null : monitoria3.value,
+            monitoria_4: qualityMode === "general" ? null : monitoria4.value,
+            m1_entered: qualityMode === "general" ? false : monitoria1.entered,
+            m2_entered: qualityMode === "general" ? false : monitoria2.entered,
+            m3_entered: qualityMode === "general" ? false : monitoria3.entered,
+            m4_entered: qualityMode === "general" ? false : monitoria4.entered,
             created_at: nowIso(),
             updated_at: nowIso(),
           };
           db.qualityScores.push(score);
         } else {
           score.score = scoreValue;
-          score.monitoria_1 = row.monitoria_1;
-          score.monitoria_2 = row.monitoria_2;
-          score.monitoria_3 = row.monitoria_3;
-          score.monitoria_4 = row.monitoria_4;
+          score.score_type = qualityMode;
+          score.quality_scope = qualityScope;
+          score.monitoria_1 = qualityMode === "general" ? null : monitoria1.value;
+          score.monitoria_2 = qualityMode === "general" ? null : monitoria2.value;
+          score.monitoria_3 = qualityMode === "general" ? null : monitoria3.value;
+          score.monitoria_4 = qualityMode === "general" ? null : monitoria4.value;
+          score.m1_entered = qualityMode === "general" ? false : monitoria1.entered;
+          score.m2_entered = qualityMode === "general" ? false : monitoria2.entered;
+          score.m3_entered = qualityMode === "general" ? false : monitoria3.entered;
+          score.m4_entered = qualityMode === "general" ? false : monitoria4.entered;
           score.updated_at = nowIso();
         }
         processed += 1;

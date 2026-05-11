@@ -1218,6 +1218,10 @@ body.theme-contrast .theme-toggle {
   cursor: pointer;
 }
 
+.quality-summary-point {
+  cursor: pointer;
+}
+
 .quality-months-wrap {
   display: grid;
   gap: 10px;
