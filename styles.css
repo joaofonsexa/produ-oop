@@ -785,11 +785,16 @@ body.theme-contrast .theme-toggle {
   grid-template-columns: minmax(140px, 180px) minmax(170px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(220px, auto);
   gap: 14px;
   align-items: end;
+  min-width: 1140px;
 }
 
 .detailed-filter-bar .analysis-filter-actions {
   justify-self: end;
   min-width: 220px;
+}
+
+.detailed-filter-panel {
+  overflow-x: auto;
 }
 
 .detailed-table-panel {
