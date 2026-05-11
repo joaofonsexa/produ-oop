@@ -2375,8 +2375,6 @@ function buildHistory(db, user, url) {
   const range = resolveDateRange(scopedMetrics, url.searchParams.get("start"), url.searchParams.get("end"));
   const start = range.start;
   const end = range.end;
-  const startMonth = String(start).slice(0, 7);
-  const endMonth = String(end).slice(0, 7);
   const history = baseMetrics
     .filter((row) => {
       if (row.metric_date < start || row.metric_date > end) return false;
@@ -2387,11 +2385,6 @@ function buildHistory(db, user, url) {
     .map((row) => ({ ...row, effectiveness: calculateEffectiveness(row) }));
   const qualitySource = includeAllUsers ? db.qualityScores : db.qualityScores.filter((item) => item.user_id === targetUserId);
   const quality = qualitySource
-    .filter((item) => {
-      if (String(item.reference_month || "") < startMonth || String(item.reference_month || "") > endMonth) return false;
-      if (includeAllUsers) return true;
-      return item.user_id === targetUserId;
-    })
     .sort((a, b) => b.reference_month.localeCompare(a.reference_month));
   return { history, quality };
 }

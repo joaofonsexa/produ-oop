@@ -727,9 +727,11 @@ function buildAnalysisModel() {
   const qualityByMonthMap = new Map();
   const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";
   qualityRows.forEach((item) => {
-    const key = String(item.reference_month || "");
+    const scope = normalizeQualityScope(item.quality_scope || item.qualityScope || "all");
+    const key = `${String(item.reference_month || "")}|${scope}`;
     const bucket = qualityByMonthMap.get(key) || {
-      reference_month: key,
+      reference_month: String(item.reference_month || ""),
+      quality_scope: scope,
       scoreValues: [],
       generalValues: [],
       m1Values: [],
@@ -745,8 +747,8 @@ function buildAnalysisModel() {
     if (hasValue(item.monitoria_1)) bucket.m1Values.push(Number(item.monitoria_1));
     if (hasValue(item.monitoria_2)) bucket.m2Values.push(Number(item.monitoria_2));
     if (hasValue(item.monitoria_3)) bucket.m3Values.push(Number(item.monitoria_3));
-    if (hasValue(item.monitoria_4)) bucket.m4Values.push(Number(item.monitoria_4));
-    bucket.rows.push(item);
+      if (hasValue(item.monitoria_4)) bucket.m4Values.push(Number(item.monitoria_4));
+      bucket.rows.push(item);
     qualityByMonthMap.set(key, bucket);
   });
   const qualityMonths = [...qualityByMonthMap.values()].map((bucket) => {
@@ -767,17 +769,21 @@ function buildAnalysisModel() {
     const hasGeneralScore = bucket.generalValues.length > 0;
     return {
       reference_month: bucket.reference_month,
+      quality_scope: bucket.quality_scope,
       monitoria_1: m1,
       monitoria_2: m2,
       monitoria_3: m3,
       monitoria_4: m4,
       has_general_score: hasGeneralScore,
       general_score: general,
-      score: avg(bucket.scoreValues),
+      score: hasGeneralScore ? general : final,
       final_score: final,
       rows: bucket.rows,
     };
-  }).sort((a, b) => a.reference_month.localeCompare(b.reference_month));
+  }).sort((a, b) =>
+    a.reference_month.localeCompare(b.reference_month)
+    || String(a.quality_scope || "").localeCompare(String(b.quality_scope || ""))
+  );
   const status0800 = historyRows.reduce((acc, row) => {
     acc.approved += Number(row.calls_0800_approved || 0);
     acc.pending += Number(row.calls_0800_pending || 0);
@@ -1577,9 +1583,10 @@ function analysisTemplate() {
               <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Meses lançados · nota média</h3></div></div>
               <div class="chart">
                 ${qualityMonths.length ? qualityMonths.map((monthItem) => `
-                  <div class="chart-col quality-summary-point" data-quality-summary="true" data-reference-month="${esc(monthItem.reference_month)}">
+                  <div class="chart-col quality-summary-point" data-quality-summary="true" data-reference-month="${esc(monthItem.reference_month)}" data-quality-scope="${esc(monthItem.quality_scope || "all")}">
                     <span class="chart-value">${number(Number(monthItem.score || 0))}</span>
                     <div class="column ${metricTone(Number(monthItem.score || 0), "quality")}" style="height:${Math.max(12, (Number(monthItem.score || 0) / maxQuality) * 110)}px;"></div>
+                    <small>${esc(formatQualityScopeLabel(monthItem.quality_scope || "all"))}</small>
                     <small>${esc(formatMonthLabel(monthItem.reference_month).split(" de ")[0])}</small>
                   </div>
                 `).join("") : `<div class="empty">Sem dados.</div>`}
@@ -2899,54 +2906,66 @@ function bindShellEvents() {
 
   if (analysisMetricTooltip) {
     const qualitySummaryPoints = document.querySelectorAll(".quality-summary-point[data-reference-month]");
-    const showQualitySummaryTooltip = (referenceMonth) => {
-      const monthRows = (state.history?.quality || []).filter((item) => String(item.reference_month || "") === String(referenceMonth || ""));
-      const average = (values) => values.length ? values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length : null;
-      const finalScore = average(monthRows.map((item) => Number(item.score || 0)).filter((value) => Number.isFinite(value)));
-      const lines = monthRows.length
-        ? monthRows.map((item) => {
-          const details = String(item.scoreType || "monitorias") === "general"
-            ? `<span>Nota geral do mês</span><strong>${number(item.quality || item.score || 0)}</strong>`
-            : [
-              item.m1_entered || item.monitoria_1 !== null && item.monitoria_1 !== undefined && String(item.monitoria_1).trim() !== "" ? `M1 ${number(Number(item.monitoria_1 || 0))}` : "",
-              item.m2_entered || item.monitoria_2 !== null && item.monitoria_2 !== undefined && String(item.monitoria_2).trim() !== "" ? `M2 ${number(Number(item.monitoria_2 || 0))}` : "",
-              item.m3_entered || item.monitoria_3 !== null && item.monitoria_3 !== undefined && String(item.monitoria_3).trim() !== "" ? `M3 ${number(Number(item.monitoria_3 || 0))}` : "",
-              item.m4_entered || item.monitoria_4 !== null && item.monitoria_4 !== undefined && String(item.monitoria_4).trim() !== "" ? `M4 ${number(Number(item.monitoria_4 || 0))}` : "",
-            ].filter(Boolean).join(" · ");
-          return `
-            <div class="trend-tooltip-rank">
-              <div class="trend-rank-order">${esc(formatQualityScopeLabel(item.qualityScope || item.quality_scope || "all"))}</div>
-              <div class="trend-rank-copy">
-                <strong>${String(item.scoreType || "monitorias") === "general" ? "Mês consolidado" : "4 monitorias"}</strong>
-                <span>${details || "Sem monitorias lançadas"}${details ? ` · Média ${number(item.quality || item.score || 0)}` : ""}</span>
+    const showQualitySummaryTooltip = (referenceMonth, qualityScope) => {
+        const scopeKey = normalizeQualityScope(qualityScope || "all");
+        const monthRows = (state.history?.quality || []).filter((item) =>
+          String(item.reference_month || "") === String(referenceMonth || "")
+          && normalizeQualityScope(item.quality_scope || item.qualityScope || "all") === scopeKey
+        );
+        const average = (values) => values.length ? values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length : null;
+        const finalScore = average(monthRows.map((item) => Number(item.score || 0)).filter((value) => Number.isFinite(value)));
+        const lines = monthRows.length
+          ? monthRows.map((item) => {
+            const scoreType = String(item.scoreType || item.score_type || "monitorias");
+            const enteredCount = [
+              Boolean(item.m1_entered),
+              Boolean(item.m2_entered),
+              Boolean(item.m3_entered),
+              Boolean(item.m4_entered),
+            ].filter(Boolean).length;
+            const monitorias = [
+              item.m1_entered ? `M1 ${number(Number(item.monitoria_1 || 0))}` : "",
+              item.m2_entered ? `M2 ${number(Number(item.monitoria_2 || 0))}` : "",
+              item.m3_entered ? `M3 ${number(Number(item.monitoria_3 || 0))}` : "",
+              item.m4_entered ? `M4 ${number(Number(item.monitoria_4 || 0))}` : "",
+            ].filter(Boolean);
+            const details = scoreType === "general"
+              ? `Mês - ${number(item.quality || item.score || 0)}`
+              : `${enteredCount} monitoria(s) lançada(s)${monitorias.length ? ` · ${monitorias.join(" · ")}` : ""}`;
+            return `
+              <div class="trend-tooltip-rank">
+                <div class="trend-rank-order">${esc(formatQualityScopeLabel(item.qualityScope || item.quality_scope || "all"))}</div>
+                <div class="trend-rank-copy">
+                  <strong>${scoreType === "general" ? "Lançamento bruto" : "Monitorias lançadas"}</strong>
+                  <span>${details}${scoreType === "general" ? "" : ` · Média ${number(item.quality || item.score || 0)}`}</span>
+                </div>
               </div>
-            </div>
-          `;
-        }).join("")
-        : `<div class="trend-tooltip-line trend-tooltip-line-single">Sem lançamentos neste mês.</div>`;
-      analysisMetricTooltip.innerHTML = `
-        <div class="trend-tooltip-head">
-          <div class="trend-tooltip-title">Qualidade · ${esc(formatMonthLabel(referenceMonth || ""))}</div>
-          <button class="trend-tooltip-close" type="button" data-close-popover aria-label="Fechar">×</button>
-        </div>
-        ${finalScore !== null ? `<div class="trend-tooltip-line"><span>Nota média do mês</span><strong>${number(finalScore)}</strong></div>` : ""}
-        ${lines}
-      `;
+            `;
+          }).join("")
+          : `<div class="trend-tooltip-line trend-tooltip-line-single">Sem lançamentos neste mês.</div>`;
+        analysisMetricTooltip.innerHTML = `
+          <div class="trend-tooltip-head">
+            <div class="trend-tooltip-title">Qualidade · ${esc(formatQualityScopeLabel(scopeKey))} · ${esc(formatMonthLabel(referenceMonth || ""))}</div>
+            <button class="trend-tooltip-close" type="button" data-close-popover aria-label="Fechar">×</button>
+          </div>
+          ${finalScore !== null ? `<div class="trend-tooltip-line"><span>Nota média do mês</span><strong>${number(finalScore)}</strong></div>` : ""}
+          ${lines}
+        `;
       attachPopoverClose(analysisMetricTooltip);
       placeTooltipCentered(analysisMetricTooltip);
     };
 
-    qualitySummaryPoints.forEach((point) => {
-      point.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const key = `quality-summary|${String(point.dataset.referenceMonth || "")}`;
-        const alreadyVisible = !analysisMetricTooltip.hidden && analysisMetricTooltip.dataset.anchorKey === key;
-        hideMetricPopovers();
-        if (alreadyVisible) return;
-        analysisMetricTooltip.dataset.anchorKey = key;
-        showQualitySummaryTooltip(point.dataset.referenceMonth || "");
+      qualitySummaryPoints.forEach((point) => {
+        point.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const key = `quality-summary|${String(point.dataset.referenceMonth || "")}|${String(point.dataset.qualityScope || "all")}`;
+          const alreadyVisible = !analysisMetricTooltip.hidden && analysisMetricTooltip.dataset.anchorKey === key;
+          hideMetricPopovers();
+          if (alreadyVisible) return;
+          analysisMetricTooltip.dataset.anchorKey = key;
+          showQualitySummaryTooltip(point.dataset.referenceMonth || "", point.dataset.qualityScope || "all");
+        });
       });
-    });
   }
 
   if (analysisMetricTooltip && isManager() && String(state.filters.analysisUserId) === "all") {
