@@ -1583,7 +1583,7 @@ function analysisTemplate() {
 
           <div class="analysis-grid-split">
             <article class="panel analysis-panel-primary">
-              <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Meses lançados · nota média</h3></div></div>
+              <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Meses lançados</h3></div></div>
               <div class="chart">
                 ${qualityMonths.length ? qualityMonths.map((monthItem) => `
                   <div class="chart-col quality-summary-point" data-quality-summary="true" data-reference-month="${esc(monthItem.reference_month)}" data-quality-scope="${esc(monthItem.quality_scope || "all")}">
@@ -2915,18 +2915,7 @@ function bindShellEvents() {
               `).join("")
             : lines;
         } else {
-          lines = monthRows.length
-            ? monthRows.map((item) => {
-              const operatorName = userMap.get(String(item.user_id || "")) || repairTextEncoding(state.user?.full_name || "Operador");
-              return `
-                <div class="trend-tooltip-rank">
-                  <div class="trend-rank-copy">
-                    <strong>${esc(operatorName)} ${number(item.quality || item.score || 0)}</strong>
-                  </div>
-                </div>
-              `;
-            }).join("")
-            : lines;
+          lines = "";
         }
         analysisMetricTooltip.innerHTML = `
           <div class="trend-tooltip-head">
