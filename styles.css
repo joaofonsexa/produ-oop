@@ -868,6 +868,77 @@ body.theme-contrast .theme-toggle {
   width: 22%;
 }
 
+.detailed-table--qualidade th:nth-child(1),
+.detailed-table--qualidade td:nth-child(1) {
+  width: 10%;
+}
+
+.detailed-table--qualidade th:nth-child(2),
+.detailed-table--qualidade td:nth-child(2) {
+  width: 18%;
+}
+
+.detailed-table--qualidade th:nth-child(3),
+.detailed-table--qualidade td:nth-child(3),
+.detailed-table--qualidade th:nth-child(4),
+.detailed-table--qualidade td:nth-child(4),
+.detailed-table--qualidade th:nth-child(5),
+.detailed-table--qualidade td:nth-child(5),
+.detailed-table--qualidade th:nth-child(6),
+.detailed-table--qualidade td:nth-child(6) {
+  width: 7%;
+}
+
+.detailed-table--qualidade th:nth-child(7),
+.detailed-table--qualidade td:nth-child(7) {
+  width: 7%;
+}
+
+.detailed-table--qualidade th:nth-child(8),
+.detailed-table--qualidade td:nth-child(8) {
+  width: 7%;
+}
+
+.detailed-table--qualidade th:nth-child(9),
+.detailed-table--qualidade td:nth-child(9) {
+  width: 8%;
+}
+
+.detailed-table--qualidade th:nth-child(10),
+.detailed-table--qualidade td:nth-child(10) {
+  width: 8%;
+}
+
+.detailed-table--qualidade th:nth-child(11),
+.detailed-table--qualidade td:nth-child(11) {
+  width: 14%;
+}
+
+.detailed-table--ofensores th:nth-child(1),
+.detailed-table--ofensores td:nth-child(1) {
+  width: 20%;
+}
+
+.detailed-table--ofensores th:nth-child(2),
+.detailed-table--ofensores td:nth-child(2),
+.detailed-table--ofensores th:nth-child(3),
+.detailed-table--ofensores td:nth-child(3),
+.detailed-table--ofensores th:nth-child(4),
+.detailed-table--ofensores td:nth-child(4),
+.detailed-table--ofensores th:nth-child(5),
+.detailed-table--ofensores td:nth-child(5),
+.detailed-table--ofensores th:nth-child(6),
+.detailed-table--ofensores td:nth-child(6),
+.detailed-table--ofensores th:nth-child(7),
+.detailed-table--ofensores td:nth-child(7) {
+  width: 10%;
+}
+
+.detailed-table--ofensores th:nth-child(8),
+.detailed-table--ofensores td:nth-child(8) {
+  width: 20%;
+}
+
 .detailed-pagination span {
   color: var(--muted);
   font-size: 0.82rem;

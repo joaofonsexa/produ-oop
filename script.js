@@ -1959,10 +1959,13 @@ function detailedTemplate() {
       <tr>
         <th>${reportSortHeader("qualidade", "reference_month", "Mês")}</th>
         <th>${reportSortHeader("qualidade", "operator", "Operador")}</th>
+        <th>${reportSortHeader("qualidade", "quality_scope", "Esteira")}</th>
+        <th>${reportSortHeader("qualidade", "score_type", "Tipo")}</th>
         <th>${reportSortHeader("qualidade", "monitoria_1", "M1")}</th>
         <th>${reportSortHeader("qualidade", "monitoria_2", "M2")}</th>
         <th>${reportSortHeader("qualidade", "monitoria_3", "M3")}</th>
         <th>${reportSortHeader("qualidade", "monitoria_4", "M4")}</th>
+        <th>${reportSortHeader("qualidade", "gross_score", "Bruto")}</th>
         <th>${reportSortHeader("qualidade", "score", "Final")}</th>
         <th>Observações</th>
       </tr>`;
@@ -2018,13 +2021,16 @@ function detailedTemplate() {
       <tr>
         <td>${esc(formatMonthLabel(row.reference_month))}</td>
         <td>${esc(row.operator)}</td>
+        <td>${esc(formatQualityScopeLabel(row.quality_scope || "all"))}</td>
+        <td>${esc(String(row.score_type || "monitorias") === "general" ? "Bruto" : "Monitorias")}</td>
         <td>${esc(row.monitoria_1 ?? "")}</td>
         <td>${esc(row.monitoria_2 ?? "")}</td>
         <td>${esc(row.monitoria_3 ?? "")}</td>
         <td>${esc(row.monitoria_4 ?? "")}</td>
+        <td>${row.gross_score === null || row.gross_score === undefined ? "—" : esc(number(row.gross_score))}</td>
         <td>${esc(number(row.score || 0))}</td>
         <td>${esc(row.notes || "—")}</td>
-      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
+      </tr>`).join("") : `<tr><td colspan="11">Sem dados para visualização.</td></tr>`;
   } else if (reportType === "ofensores") {
     tableBody = visibleRows.length ? visibleRows.map((row) => `
       <tr>
@@ -2107,7 +2113,7 @@ function detailedTemplate() {
           </div>
         </div>
         <div class="table-wrap detailed-table-wrap">
-          <table class="report-preview-table detailed-table">
+          <table class="report-preview-table detailed-table detailed-table--${esc(reportType)}">
             <thead>${tableHead}</thead>
             <tbody>${tableBody}</tbody>
           </table>
@@ -2220,6 +2226,8 @@ function buildReportDatasetModel() {
   const preparedQualityRows = qualityRows.map((row) => ({
     ...row,
     score_type: row.score_type || "monitorias",
+    quality_scope: row.quality_scope || "all",
+    gross_score: String(row.score_type || "monitorias") === "general" ? Number(row.score || 0) : null,
     operator: row.operator || getUserLabelById(row.user_id) || "Operador",
   }));
   const consolidatedMap = new Map();
@@ -2921,38 +2929,82 @@ function bindShellEvents() {
         );
         const average = (values) => values.length ? values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length : null;
         const finalScore = average(monthRows.map((item) => Number(item.score || 0)).filter((value) => Number.isFinite(value)));
-        const lines = monthRows.length
-          ? monthRows.map((item) => {
+        const userMap = new Map((state.users || []).map((user) => [String(user.id), repairTextEncoding(user.full_name)]));
+        const useRanking = isManager() && String(state.filters.analysisUserId) === "all";
+        let lines = `<div class="trend-tooltip-line trend-tooltip-line-single">Sem lançamentos neste mês.</div>`;
+        if (useRanking) {
+          const rankedEntries = monthRows.flatMap((item) => {
             const scoreType = String(item.scoreType || item.score_type || "monitorias");
-            const enteredCount = [
-              Boolean(item.m1_entered),
-              Boolean(item.m2_entered),
-              Boolean(item.m3_entered),
-              Boolean(item.m4_entered),
-            ].filter(Boolean).length;
-            const monitorias = [
-              item.m1_entered ? `M1 ${number(Number(item.monitoria_1 || 0))}` : "",
-              item.m2_entered ? `M2 ${number(Number(item.monitoria_2 || 0))}` : "",
-              item.m3_entered ? `M3 ${number(Number(item.monitoria_3 || 0))}` : "",
-              item.m4_entered ? `M4 ${number(Number(item.monitoria_4 || 0))}` : "",
-            ].filter(Boolean);
-            const details = scoreType === "general"
-              ? `Mês - ${number(item.quality || item.score || 0)}`
-              : `${enteredCount} monitoria(s) lançada(s)${monitorias.length ? ` · ${monitorias.join(" · ")}` : ""}`;
-            return `
-              <div class="trend-tooltip-rank">
-                <div class="trend-rank-order">${esc(formatQualityScopeLabel(item.qualityScope || item.quality_scope || "all"))}</div>
-                <div class="trend-rank-copy">
-                  <strong>${scoreType === "general" ? "Lançamento bruto" : "Monitorias lançadas"}</strong>
-                  <span>${details}${scoreType === "general" ? "" : ` · Média ${number(item.quality || item.score || 0)}`}</span>
+            const operatorName = userMap.get(String(item.user_id || "")) || "Operador";
+            if (scoreType === "general") {
+              return [{
+                name: operatorName,
+                label: "Bruto",
+                value: Number(item.quality || item.score || 0),
+                detail: `Mês - ${number(item.quality || item.score || 0)}`,
+              }];
+            }
+            const monitoriaEntries = [];
+            if (item.m1_entered) monitoriaEntries.push({ name: operatorName, label: "M1", value: Number(item.monitoria_1 || 0), detail: `M1 - ${number(Number(item.monitoria_1 || 0))}` });
+            if (item.m2_entered) monitoriaEntries.push({ name: operatorName, label: "M2", value: Number(item.monitoria_2 || 0), detail: `M2 - ${number(Number(item.monitoria_2 || 0))}` });
+            if (item.m3_entered) monitoriaEntries.push({ name: operatorName, label: "M3", value: Number(item.monitoria_3 || 0), detail: `M3 - ${number(Number(item.monitoria_3 || 0))}` });
+            if (item.m4_entered) monitoriaEntries.push({ name: operatorName, label: "M4", value: Number(item.monitoria_4 || 0), detail: `M4 - ${number(Number(item.monitoria_4 || 0))}` });
+            if (monitoriaEntries.length) return monitoriaEntries;
+            return [{
+              name: operatorName,
+              label: "Média",
+              value: Number(item.quality || item.score || 0),
+              detail: `Média - ${number(item.quality || item.score || 0)}`,
+            }];
+          })
+            .filter((item) => Number.isFinite(item.value))
+            .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }))
+            .slice(0, 10);
+          lines = rankedEntries.length
+            ? rankedEntries.map((item, index) => `
+                <div class="trend-tooltip-rank">
+                  <div class="trend-rank-order">${index + 1}</div>
+                  <div class="trend-rank-copy">
+                    <strong>${esc(item.name)} - ${esc(item.label)}</strong>
+                    <span>${esc(item.detail)}</span>
+                  </div>
                 </div>
-              </div>
-            `;
-          }).join("")
-          : `<div class="trend-tooltip-line trend-tooltip-line-single">Sem lançamentos neste mês.</div>`;
+              `).join("")
+            : lines;
+        } else {
+          lines = monthRows.length
+            ? monthRows.map((item) => {
+              const scoreType = String(item.scoreType || item.score_type || "monitorias");
+              const operatorName = userMap.get(String(item.user_id || "")) || repairTextEncoding(state.user?.full_name || "Operador");
+              if (scoreType === "general") {
+                return `
+                  <div class="trend-tooltip-rank">
+                    <div class="trend-rank-copy">
+                      <strong>${esc(operatorName)} - Bruto ${number(item.quality || item.score || 0)}</strong>
+                    </div>
+                  </div>
+                `;
+              }
+              const monitorias = [
+                item.m1_entered ? `M1 - ${number(Number(item.monitoria_1 || 0))}` : "",
+                item.m2_entered ? `M2 - ${number(Number(item.monitoria_2 || 0))}` : "",
+                item.m3_entered ? `M3 - ${number(Number(item.monitoria_3 || 0))}` : "",
+                item.m4_entered ? `M4 - ${number(Number(item.monitoria_4 || 0))}` : "",
+              ].filter(Boolean);
+              return `
+                <div class="trend-tooltip-rank">
+                  <div class="trend-rank-copy">
+                    <strong>${esc(operatorName)} ${number(item.quality || item.score || 0)}</strong>
+                    <span>${esc(monitorias.join(" · ") || "Sem monitorias lançadas")}</span>
+                  </div>
+                </div>
+              `;
+            }).join("")
+            : lines;
+        }
         analysisMetricTooltip.innerHTML = `
           <div class="trend-tooltip-head">
-            <div class="trend-tooltip-title">Qualidade · ${esc(formatQualityScopeLabel(scopeKey))} · ${esc(formatMonthLabel(referenceMonth || ""))}</div>
+            <div class="trend-tooltip-title">${useRanking ? "Top 10 Qualidade" : "Qualidade"} · ${esc(formatQualityScopeLabel(scopeKey))} · ${esc(formatMonthLabel(referenceMonth || ""))}</div>
             <button class="trend-tooltip-close" type="button" data-close-popover aria-label="Fechar">×</button>
           </div>
           ${finalScore !== null ? `<div class="trend-tooltip-line"><span>Nota média do mês</span><strong>${number(finalScore)}</strong></div>` : ""}
