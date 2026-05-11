@@ -51,6 +51,10 @@
 
 const DEFAULT_PASSWORD_HINT = "Trocar@01";
 const app = document.getElementById("app");
+const reportDatasetCache = {
+  key: "",
+  value: null,
+};
 const bootLoader = document.createElement("div");
 bootLoader.className = "boot-loader";
 bootLoader.innerHTML = `
@@ -938,6 +942,7 @@ async function loadHistory() {
     ? "all"
     : (isManager() ? state.filters.historyUserId || state.user.id : state.user.id);
   state.history = await api(`/api/history?user_id=${userId}&start=${state.filters.start}&end=${state.filters.end}`);
+  invalidateReportDatasetCache();
 }
 
 async function loadBootstrap() {
@@ -948,6 +953,7 @@ async function loadBootstrap() {
   state.overview = data.overview;
   state.analysis = data.analysis;
   state.history = data.history;
+  invalidateReportDatasetCache();
   if (data.app_settings) state.appSettings = data.app_settings;
   if (isManager() && Array.isArray(data.users) && data.users.length) {
     state.users = normalizeUsersPayload(data.users);
@@ -959,6 +965,7 @@ async function loadBootstrap() {
 async function loadAlerts() {
   const userId = isManager() ? (state.filters.analysisUserId || "all") : String(state.user?.id || "");
   state.alerts = await api(`/api/alerts?start=${state.filters.start}&end=${state.filters.end}&user_id=${encodeURIComponent(userId)}`);
+  invalidateReportDatasetCache();
 }
 
 async function loadReportsData() {
@@ -1706,35 +1713,15 @@ function alertsTemplate() {
 function reportsTemplate() {
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
-  const selectedName = state.filters.analysisUserId === "all"
-    ? "Todos os operadores"
-    : (getAnyOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
-  const reportRows = getScopedHistory().filter((row) => (
-    state.filters.reportsSector === "all"
-    || String(row.operation || "").toLowerCase() === String(state.filters.reportsSector || "").toLowerCase()
-  ));
-  const qualityRows = state.history?.quality || [];
-  const sectorLabel = state.filters.reportsSector === "0800"
-    ? "0800"
-    : state.filters.reportsSector === "nuvidio"
-      ? "Nuvidio"
-      : "0800 + Nuvidio";
-  const reportTypeLabel = {
-    consolidado: "Consolidado",
-    operacional: "Operacional",
-    qualidade: "Qualidade",
-    ofensores: "Ofensores",
-  }[reportType] || "Consolidado";
-  const reportViewLabel = reportView === "sintetica" ? "Sintética" : "Detalhada";
-  const consolidatedCount = (() => {
-    const map = new Set();
-    reportRows.forEach((row) => {
-      const operatorName = row.operator || getUserLabelById(row.userId) || "Operador";
-      map.add(`${row.date}::${operatorName}::${row.operation}`);
-    });
-    return map.size;
-  })();
-  const offendersCount = Array.isArray(state.alerts?.alerts) ? state.alerts.alerts.length : 0;
+  const model = buildReportDatasetModel();
+  const selectedName = model.selectedName;
+  const reportRows = model.reportRows;
+  const qualityRows = model.qualityRows;
+  const sectorLabel = model.sectorLabel;
+  const reportTypeLabel = model.reportTypeLabel;
+  const reportViewLabel = model.reportViewLabel;
+  const consolidatedCount = model.consolidatedRows.length;
+  const offendersCount = model.offendersRows.length;
   const exportColumns = {
     consolidado: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
     operacional: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
@@ -1869,41 +1856,17 @@ function detailedTemplate() {
   const DETAILED_PAGE_SIZE = 200;
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
-  const selectedName = state.filters.analysisUserId === "all"
-    ? "Todos os operadores"
-    : (getAnyOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
-  const reportRows = getScopedHistory().filter((row) => (
-    state.filters.reportsSector === "all"
-    || String(row.operation || "").toLowerCase() === String(state.filters.reportsSector || "").toLowerCase()
-  ));
-  const qualityRows = state.history?.quality || [];
-  const previewRows = reportRows.map((row) => ({
-    ...row,
-    operator: row.operator || getUserLabelById(row.userId) || "Operador",
-  }));
-  const previewQualityRows = qualityRows.map((row) => ({
-    ...row,
-    operator: row.operator || getUserLabelById(row.user_id) || "Operador",
-  }));
-  const offendersRows = [...(state.alerts?.alerts || [])];
-  const typeLabel = {
-    consolidado: "Consolidado",
-    operacional: "Operacional",
-    qualidade: "Qualidade",
-    ofensores: "Ofensores",
-  }[reportType] || "Consolidado";
-  const sectorLabel = state.filters.reportsSector === "0800"
-    ? "0800"
-    : state.filters.reportsSector === "nuvidio"
-      ? "Nuvidio"
-      : "0800 + Nuvidio";
+  const model = buildReportDatasetModel();
+  const selectedName = model.selectedName;
+  const typeLabel = model.reportTypeLabel;
+  const sectorLabel = model.sectorLabel;
   let tableHead = "";
   let tableBody = "";
   let totalRows = 0;
   let allRows = [];
 
   if (reportType === "qualidade") {
-    allRows = sortReportRows("qualidade", previewQualityRows);
+    allRows = model.qualityPreparedRows;
     totalRows = allRows.length;
     tableHead = `
       <tr>
@@ -1917,7 +1880,7 @@ function detailedTemplate() {
         <th>Observações</th>
       </tr>`;
   } else if (reportType === "ofensores") {
-    allRows = sortReportRows("ofensores", offendersRows);
+    allRows = model.offendersRows;
     totalRows = allRows.length;
     tableHead = `
       <tr>
@@ -1931,33 +1894,7 @@ function detailedTemplate() {
         <th>Principais ofensores</th>
       </tr>`;
   } else if (reportType === "consolidado") {
-    const consolidatedMap = new Map();
-    previewRows.forEach((row) => {
-      const operatorName = row.operator || "Operador";
-      const key = `${row.date}::${operatorName}::${row.operation}`;
-      const current = consolidatedMap.get(key) || {
-        date: row.date,
-        operator: operatorName,
-        operation: row.operation,
-        totalProduction: 0,
-        effectivenessParts: [],
-      };
-      current.totalProduction += Number(row.production || 0);
-      if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
-      consolidatedMap.set(key, current);
-    });
-    allRows = sortReportRows("consolidado", [...consolidatedMap.values()].map((row) => {
-      const avgEffectiveness = row.effectivenessParts.length
-        ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
-        : 0;
-      return {
-        date: row.date,
-        operator: row.operator,
-        operation: row.operation,
-        production: row.totalProduction,
-        effectiveness: avgEffectiveness,
-      };
-    }));
+    allRows = model.consolidatedRows;
     totalRows = allRows.length;
     tableHead = `
       <tr>
@@ -1968,7 +1905,7 @@ function detailedTemplate() {
         <th>${reportSortHeader("consolidado", "effectiveness", "Efetividade")}</th>
       </tr>`;
   } else {
-    allRows = sortReportRows("operacional", previewRows);
+    allRows = model.operationalRows;
     totalRows = allRows.length;
     tableHead = `
       <tr>
@@ -2139,6 +2076,108 @@ function reportSortHeader(scope, column, label) {
   const active = current.column === column;
   const marker = active ? (current.direction === "desc" ? "↓" : "↑") : "↕";
   return `<button class="report-sort-btn ${active ? "is-active" : ""}" type="button" data-report-sort-scope="${esc(scope)}" data-report-sort-column="${esc(column)}">${esc(label)} <span>${marker}</span></button>`;
+}
+
+function invalidateReportDatasetCache() {
+  reportDatasetCache.key = "";
+  reportDatasetCache.value = null;
+}
+
+function buildReportDatasetModel() {
+  const key = JSON.stringify({
+    route: state.route,
+    userId: state.filters.analysisUserId,
+    sector: state.filters.reportsSector,
+    type: state.filters.reportsType,
+    view: state.filters.reportsView,
+    start: state.filters.start,
+    end: state.filters.end,
+    historyCount: state.history?.history?.length || 0,
+    qualityCount: state.history?.quality?.length || 0,
+    alertsCount: state.alerts?.alerts?.length || 0,
+    sortConsolidado: state.reportSorts?.consolidado,
+    sortOperacional: state.reportSorts?.operacional,
+    sortQualidade: state.reportSorts?.qualidade,
+    sortOfensores: state.reportSorts?.ofensores,
+  });
+  if (reportDatasetCache.key === key && reportDatasetCache.value) {
+    return reportDatasetCache.value;
+  }
+
+  const reportType = state.filters.reportsType;
+  const reportView = state.filters.reportsView;
+  const selectedName = state.filters.analysisUserId === "all"
+    ? "Todos os operadores"
+    : (getAnyOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
+  const reportRows = getScopedHistory().filter((row) => (
+    state.filters.reportsSector === "all"
+    || String(row.operation || "").toLowerCase() === String(state.filters.reportsSector || "").toLowerCase()
+  ));
+  const qualityRows = state.history?.quality || [];
+  const sectorLabel = state.filters.reportsSector === "0800"
+    ? "0800"
+    : state.filters.reportsSector === "nuvidio"
+      ? "Nuvidio"
+      : "0800 + Nuvidio";
+  const reportTypeLabel = {
+    consolidado: "Consolidado",
+    operacional: "Operacional",
+    qualidade: "Qualidade",
+    ofensores: "Ofensores",
+  }[reportType] || "Consolidado";
+  const reportViewLabel = reportView === "sintetica" ? "Sintética" : "Detalhada";
+  const operationalRows = reportRows.map((row) => ({
+    ...row,
+    operator: row.operator || getUserLabelById(row.userId) || "Operador",
+  }));
+  const preparedQualityRows = qualityRows.map((row) => ({
+    ...row,
+    operator: row.operator || getUserLabelById(row.user_id) || "Operador",
+  }));
+  const consolidatedMap = new Map();
+  operationalRows.forEach((row) => {
+    const operatorName = row.operator || "Operador";
+    const keyPart = `${row.date}::${operatorName}::${row.operation}`;
+    const current = consolidatedMap.get(keyPart) || {
+      date: row.date,
+      operator: operatorName,
+      operation: row.operation,
+      totalProduction: 0,
+      effectivenessParts: [],
+    };
+    current.totalProduction += Number(row.production || 0);
+    if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
+    consolidatedMap.set(keyPart, current);
+  });
+  const consolidatedRows = [...consolidatedMap.values()].map((row) => {
+    const avgEffectiveness = row.effectivenessParts.length
+      ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
+      : 0;
+    return {
+      date: row.date,
+      operator: row.operator,
+      operation: row.operation,
+      production: row.totalProduction,
+      effectiveness: avgEffectiveness,
+    };
+  });
+
+  const model = {
+    selectedName,
+    sectorLabel,
+    reportTypeLabel,
+    reportViewLabel,
+    reportRows,
+    qualityRows,
+    operationalRows: sortReportRows("operacional", operationalRows),
+    qualityPreparedRows: sortReportRows("qualidade", preparedQualityRows),
+    offendersRows: sortReportRows("ofensores", [...(state.alerts?.alerts || [])]),
+    consolidatedRows: sortReportRows("consolidado", consolidatedRows),
+  };
+
+  reportDatasetCache.key = key;
+  reportDatasetCache.value = model;
+  return model;
 }
 
 function historyTemplate() {
