@@ -216,6 +216,7 @@ label {
 }
 
 .shell {
+  position: relative;
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
   min-height: 100vh;
@@ -224,21 +225,38 @@ label {
   overflow-x: hidden;
 }
 
+.shell::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 236px;
+  background: rgba(9, 10, 12, 0.82);
+  border-right: 1px solid var(--line);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
   height: 100vh;
   padding: 18px 14px;
-  background: rgba(9, 10, 12, 0.82);
-  border-right: 1px solid var(--line);
+  background: transparent;
+  border-right: 0;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  z-index: 1;
+}
+
+body.theme-contrast .shell::before {
+  background: #f4f6f8;
+  border-right-color: rgba(15, 23, 42, 0.05);
 }
 
 body.theme-contrast .sidebar {
-  background: #f4f6f8;
-  border-right-color: rgba(15, 23, 42, 0.05);
+  background: transparent;
+  border-right-color: transparent;
 }
 
 .brand-box,
@@ -452,6 +470,8 @@ body.theme-contrast .nav button.active {
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
+  position: relative;
+  z-index: 1;
 }
 
 .topbar {
@@ -2088,6 +2108,10 @@ body.theme-contrast .brand-copy h1 {
 }
 
 @media (max-width: 960px) {
+  .shell::before {
+    display: none;
+  }
+
   .shell {
     grid-template-columns: 1fr;
   }
