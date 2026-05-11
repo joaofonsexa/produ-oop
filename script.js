@@ -969,8 +969,14 @@ async function loadAll() {
     await loadUsers();
   }
   await loadBootstrap();
-  if (state.route === "alerts" || (state.route === "detailed" && state.filters.reportsType === "ofensores")) {
+  if (state.route === "reports" || state.route === "detailed") {
+    await loadReportsData();
+  }
+  if (state.route === "alerts" || ((state.route === "detailed" || state.route === "reports") && state.filters.reportsType === "ofensores")) {
     await loadAlerts();
+    if (state.route === "detailed") {
+      state.reportDataset = buildReportDatasetModel();
+    }
   }
 }
 
@@ -1297,23 +1303,13 @@ function shellTemplate() {
               <label class="history-edit-empty">Vazio<input type="number" min="0" step="1" id="history-edit-empty" name="empty"></label>
             </div>
             <div class="form-grid history-edit-quality-fields" hidden>
-              <label>Formato
-                <select id="history-edit-score-type" name="score_type">
-                  <option value="monitorias">4 monitorias</option>
-                  <option value="general">Nota geral do mês</option>
-                </select>
-              </label>
               <label>Esteira
                 <select id="history-edit-quality-scope" name="quality_scope">
                   <option value="0800">0800</option>
                   <option value="nuvidio">Nuvidio</option>
                 </select>
               </label>
-              <label class="history-edit-general-field" hidden>Nota geral do mês<input type="number" min="0" max="100" step="0.01" id="history-edit-score" name="score"></label>
-              <label>Monitoria 1<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-1" name="monitoria_1"></label>
-              <label>Monitoria 2<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-2" name="monitoria_2"></label>
-              <label>Monitoria 3<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-3" name="monitoria_3"></label>
-              <label>Monitoria 4<input type="number" min="0" max="100" step="0.01" id="history-edit-monitoria-4" name="monitoria_4"></label>
+              <label>Nota bruta do mês<input type="number" min="0" max="100" step="0.01" id="history-edit-score" name="score" required></label>
               <label>Observações<input id="history-edit-notes" name="notes"></label>
             </div>
             <div class="action-grid">
@@ -1797,7 +1793,7 @@ function reportsTemplate() {
   const exportColumns = {
     consolidado: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
     operacional: ["Data", "Operador", "Setor", "Produção", "Efetividade"],
-    qualidade: ["Mês", "Operador", "M1", "M2", "M3", "M4", "Final", "Observações"],
+    qualidade: ["Mês", "Operador", "Esteira", "Bruto", "Observações"],
     ofensores: ["Operador", "Nota", "Prod. 0800", "Efet. 0800", "Prod. Nuvidio", "Efet. Nuvidio", "Qualidade"],
   }[reportType] || ["Data", "Operador", "Setor", "Produção", "Efetividade"];
   const previewBody = `
@@ -1888,7 +1884,7 @@ function reportsTemplate() {
         <div class="mini-grid">
           <div class="mini-card"><span class="muted">Consolidado</span><div class="helper">Resumo por operador e operação com produção média, efetividade e volume.</div></div>
           <div class="mini-card"><span class="muted">Operacional</span><div class="helper">Base linha a linha por data, operador, setor, produção e efetividade.</div></div>
-          <div class="mini-card"><span class="muted">Qualidade</span><div class="helper">M1, M2, M3, M4, média final e observações.</div></div>
+          <div class="mini-card"><span class="muted">Qualidade</span><div class="helper">Mês, operador, esteira, nota bruta e observações.</div></div>
           <div class="mini-card"><span class="muted">Ofensores</span><div class="helper">Nota, produção, efetividade, qualidade e principais alertas do período.</div></div>
         </div>
       </article>
@@ -1960,13 +1956,7 @@ function detailedTemplate() {
         <th>${reportSortHeader("qualidade", "reference_month", "Mês")}</th>
         <th>${reportSortHeader("qualidade", "operator", "Operador")}</th>
         <th>${reportSortHeader("qualidade", "quality_scope", "Esteira")}</th>
-        <th>${reportSortHeader("qualidade", "score_type", "Tipo")}</th>
-        <th>${reportSortHeader("qualidade", "monitoria_1", "M1")}</th>
-        <th>${reportSortHeader("qualidade", "monitoria_2", "M2")}</th>
-        <th>${reportSortHeader("qualidade", "monitoria_3", "M3")}</th>
-        <th>${reportSortHeader("qualidade", "monitoria_4", "M4")}</th>
         <th>${reportSortHeader("qualidade", "gross_score", "Bruto")}</th>
-        <th>${reportSortHeader("qualidade", "score", "Final")}</th>
         <th>Observações</th>
       </tr>`;
   } else if (reportType === "ofensores") {
@@ -2022,15 +2012,9 @@ function detailedTemplate() {
         <td>${esc(formatMonthLabel(row.reference_month))}</td>
         <td>${esc(row.operator)}</td>
         <td>${esc(formatQualityScopeLabel(row.quality_scope || "all"))}</td>
-        <td>${esc(String(row.score_type || "monitorias") === "general" ? "Bruto" : "Monitorias")}</td>
-        <td>${esc(row.monitoria_1 ?? "")}</td>
-        <td>${esc(row.monitoria_2 ?? "")}</td>
-        <td>${esc(row.monitoria_3 ?? "")}</td>
-        <td>${esc(row.monitoria_4 ?? "")}</td>
-        <td>${row.gross_score === null || row.gross_score === undefined ? "—" : esc(number(row.gross_score))}</td>
-        <td>${esc(number(row.score || 0))}</td>
+        <td>${esc(number(row.gross_score ?? row.score ?? 0))}</td>
         <td>${esc(row.notes || "—")}</td>
-      </tr>`).join("") : `<tr><td colspan="11">Sem dados para visualização.</td></tr>`;
+      </tr>`).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`;
   } else if (reportType === "ofensores") {
     tableBody = visibleRows.length ? visibleRows.map((row) => `
       <tr>
@@ -2465,13 +2449,8 @@ function adminTemplate() {
           <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Referência mensal</h3></div></div>
           <form id="quality-upload-form" class="section">
             <input type="hidden" name="reference_month" id="quality-reference-month" value="${currentReferenceMonth}">
+            <input type="hidden" name="quality_mode" value="general">
             <div class="form-grid">
-              <label>Formato
-                <select name="quality_mode" id="quality-upload-mode-select">
-                  <option value="monitorias">4 monitorias</option>
-                  <option value="general">Nota geral do mês</option>
-                </select>
-              </label>
               <label>Esteira
                 <select name="quality_scope" id="quality-upload-scope-select">
                   <option value="0800">0800</option>
@@ -2506,12 +2485,6 @@ function adminTemplate() {
                   ${operatorUsers.map((user) => `<option value="${user.id}">${esc(user.full_name)}</option>`).join("")}
                 </select>
               </label>
-              <label>Formato
-                <select name="score_type" id="quality-manual-mode-select" required>
-                  <option value="monitorias">4 monitorias</option>
-                  <option value="general">Nota geral do mês</option>
-                </select>
-              </label>
               <label>Esteira
                 <select name="quality_scope" required>
                   <option value="0800">0800</option>
@@ -2528,11 +2501,7 @@ function adminTemplate() {
                   ${yearOptions(defaultYear)}
                 </select>
               </label>
-              <label class="quality-general-field" hidden>Nota geral do mês<input type="number" min="0" max="100" step="0.01" name="score"></label>
-              <label class="quality-monitoria-field">Monitoria 1<input type="number" min="0" max="100" step="0.01" name="monitoria_1"></label>
-              <label class="quality-monitoria-field">Monitoria 2<input type="number" min="0" max="100" step="0.01" name="monitoria_2"></label>
-              <label class="quality-monitoria-field">Monitoria 3<input type="number" min="0" max="100" step="0.01" name="monitoria_3"></label>
-              <label class="quality-monitoria-field">Monitoria 4<input type="number" min="0" max="100" step="0.01" name="monitoria_4"></label>
+              <label>Nota bruta do mês<input type="number" min="0" max="100" step="0.01" name="score" required></label>
               <label>Observações<input name="notes" maxlength="220" placeholder="Opcional"></label>
             </div>
             <input type="hidden" name="reference_month" id="quality-manual-reference-month" value="${currentReferenceMonth}">
@@ -2733,20 +2702,6 @@ function bindShellEvents() {
     if (form) form.reset();
   };
 
-  const syncHistoryQualityMode = (mode = "monitorias") => {
-    const isGeneral = String(mode || "monitorias") === "general";
-    document.querySelectorAll(".history-edit-general-field").forEach((field) => {
-      field.hidden = !isGeneral;
-    });
-    document.querySelectorAll(".history-edit-quality-fields label").forEach((field) => {
-      if (field.classList.contains("history-edit-general-field")) return;
-      const input = field.querySelector("input");
-      const select = field.querySelector("select");
-      const controlName = input?.name || select?.name || "";
-      if (controlName.startsWith("monitoria_")) field.hidden = isGeneral;
-    });
-  };
-
   const hideMetricPopovers = () => {
     if (trendTooltip) trendTooltip.hidden = true;
     if (analysisMetricTooltip) analysisMetricTooltip.hidden = true;
@@ -2931,30 +2886,18 @@ function bindShellEvents() {
         const finalScore = average(monthRows.map((item) => Number(item.score || 0)).filter((value) => Number.isFinite(value)));
         const userMap = new Map((state.users || []).map((user) => [String(user.id), repairTextEncoding(user.full_name)]));
         const useRanking = isManager() && String(state.filters.analysisUserId) === "all";
+        const qualityDescription = scopeKey === "nuvidio"
+          ? "Nota média refente a monitorias dos atendimentos na fila Nuvidio auditadas pela equipe de qualidade."
+          : "Nota média refente a monitorias dos atendimentos na fila do 0800 auditadas pela equipe de qualidade.";
         let lines = `<div class="trend-tooltip-line trend-tooltip-line-single">Sem lançamentos neste mês.</div>`;
         if (useRanking) {
           const rankedEntries = monthRows.flatMap((item) => {
-            const scoreType = String(item.scoreType || item.score_type || "monitorias");
             const operatorName = userMap.get(String(item.user_id || "")) || "Operador";
-            if (scoreType === "general") {
-              return [{
-                name: operatorName,
-                label: "Bruto",
-                value: Number(item.quality || item.score || 0),
-                detail: `Mês - ${number(item.quality || item.score || 0)}`,
-              }];
-            }
-            const monitoriaEntries = [];
-            if (item.m1_entered) monitoriaEntries.push({ name: operatorName, label: "M1", value: Number(item.monitoria_1 || 0), detail: `M1 - ${number(Number(item.monitoria_1 || 0))}` });
-            if (item.m2_entered) monitoriaEntries.push({ name: operatorName, label: "M2", value: Number(item.monitoria_2 || 0), detail: `M2 - ${number(Number(item.monitoria_2 || 0))}` });
-            if (item.m3_entered) monitoriaEntries.push({ name: operatorName, label: "M3", value: Number(item.monitoria_3 || 0), detail: `M3 - ${number(Number(item.monitoria_3 || 0))}` });
-            if (item.m4_entered) monitoriaEntries.push({ name: operatorName, label: "M4", value: Number(item.monitoria_4 || 0), detail: `M4 - ${number(Number(item.monitoria_4 || 0))}` });
-            if (monitoriaEntries.length) return monitoriaEntries;
             return [{
               name: operatorName,
-              label: "Média",
+              label: "Bruto",
               value: Number(item.quality || item.score || 0),
-              detail: `Média - ${number(item.quality || item.score || 0)}`,
+              detail: `Mês - ${number(item.quality || item.score || 0)}`,
             }];
           })
             .filter((item) => Number.isFinite(item.value))
@@ -2965,7 +2908,7 @@ function bindShellEvents() {
                 <div class="trend-tooltip-rank">
                   <div class="trend-rank-order">${index + 1}</div>
                   <div class="trend-rank-copy">
-                    <strong>${esc(item.name)} - ${esc(item.label)}</strong>
+                    <strong>${esc(item.name)}</strong>
                     <span>${esc(item.detail)}</span>
                   </div>
                 </div>
@@ -2974,28 +2917,11 @@ function bindShellEvents() {
         } else {
           lines = monthRows.length
             ? monthRows.map((item) => {
-              const scoreType = String(item.scoreType || item.score_type || "monitorias");
               const operatorName = userMap.get(String(item.user_id || "")) || repairTextEncoding(state.user?.full_name || "Operador");
-              if (scoreType === "general") {
-                return `
-                  <div class="trend-tooltip-rank">
-                    <div class="trend-rank-copy">
-                      <strong>${esc(operatorName)} - Bruto ${number(item.quality || item.score || 0)}</strong>
-                    </div>
-                  </div>
-                `;
-              }
-              const monitorias = [
-                item.m1_entered ? `M1 - ${number(Number(item.monitoria_1 || 0))}` : "",
-                item.m2_entered ? `M2 - ${number(Number(item.monitoria_2 || 0))}` : "",
-                item.m3_entered ? `M3 - ${number(Number(item.monitoria_3 || 0))}` : "",
-                item.m4_entered ? `M4 - ${number(Number(item.monitoria_4 || 0))}` : "",
-              ].filter(Boolean);
               return `
                 <div class="trend-tooltip-rank">
                   <div class="trend-rank-copy">
                     <strong>${esc(operatorName)} ${number(item.quality || item.score || 0)}</strong>
-                    <span>${esc(monitorias.join(" · ") || "Sem monitorias lançadas")}</span>
                   </div>
                 </div>
               `;
@@ -3008,6 +2934,7 @@ function bindShellEvents() {
             <button class="trend-tooltip-close" type="button" data-close-popover aria-label="Fechar">×</button>
           </div>
           ${finalScore !== null ? `<div class="trend-tooltip-line"><span>Nota média do mês</span><strong>${number(finalScore)}</strong></div>` : ""}
+          ${!useRanking ? `<div class="trend-tooltip-line trend-tooltip-line-single">${esc(qualityDescription)}</div>` : ""}
           ${lines}
         `;
       attachPopoverClose(analysisMetricTooltip);
@@ -3165,6 +3092,8 @@ function bindShellEvents() {
         [scope]: { column, direction },
       };
       state.filters.detailedPage = 1;
+      invalidateReportDatasetCache();
+      state.reportDataset = buildReportDatasetModel();
       render();
     });
   });
@@ -3394,25 +3323,13 @@ function bindShellEvents() {
     const monthSelect = document.getElementById("quality-manual-month-select");
     const yearSelect = document.getElementById("quality-manual-year-select");
     const monthInput = document.getElementById("quality-manual-reference-month");
-    const modeSelect = document.getElementById("quality-manual-mode-select");
     const syncManualReference = () => {
       if (!monthSelect || !yearSelect || !monthInput) return;
       monthInput.value = `${yearSelect.value}-${monthSelect.value}`;
     };
-    const syncManualQualityMode = () => {
-      const isGeneral = String(modeSelect?.value || "monitorias") === "general";
-      qualityManualForm.querySelectorAll(".quality-monitoria-field").forEach((field) => {
-        field.hidden = isGeneral;
-      });
-      qualityManualForm.querySelectorAll(".quality-general-field").forEach((field) => {
-        field.hidden = !isGeneral;
-      });
-    };
     syncManualReference();
     if (monthSelect) monthSelect.addEventListener("change", syncManualReference);
     if (yearSelect) yearSelect.addEventListener("change", syncManualReference);
-    modeSelect?.addEventListener("change", syncManualQualityMode);
-    syncManualQualityMode();
 
     qualityManualForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -3420,34 +3337,16 @@ function bindShellEvents() {
       const restoreButton = setButtonProcessing(submitButton, true, "Salvando...");
       try {
         const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
-        const isGeneral = String(payload.score_type || "monitorias") === "general";
-        if (isGeneral) {
-          const generalScore = Number(String(payload.score || "").replace(",", "."));
-          if (!Number.isFinite(generalScore) || generalScore < 0 || generalScore > 100) {
-            throw new Error("Informe a nota geral do mês entre 0 e 100.");
-          }
-          payload.score = generalScore;
-          payload.monitoria_1 = "";
-          payload.monitoria_2 = "";
-          payload.monitoria_3 = "";
-          payload.monitoria_4 = "";
-        } else {
-          const rawMonitorias = [
-            payload.monitoria_1,
-            payload.monitoria_2,
-            payload.monitoria_3,
-            payload.monitoria_4,
-          ];
-          const monitorias = rawMonitorias
-            .map((value) => String(value ?? "").trim())
-            .filter((value) => value !== "")
-            .map((value) => Number(value.replace(",", ".")))
-            .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100);
-          if (!monitorias.length) {
-            throw new Error("Preencha pelo menos uma monitoria (0 a 100).");
-          }
-          payload.score = monitorias.reduce((sum, value) => sum + value, 0) / monitorias.length;
+        const generalScore = Number(String(payload.score || "").replace(",", "."));
+        if (!Number.isFinite(generalScore) || generalScore < 0 || generalScore > 100) {
+          throw new Error("Informe a nota bruta do mês entre 0 e 100.");
         }
+        payload.score_type = "general";
+        payload.score = generalScore;
+        payload.monitoria_1 = "";
+        payload.monitoria_2 = "";
+        payload.monitoria_3 = "";
+        payload.monitoria_4 = "";
         await api("/api/admin/quality", {
           method: "POST",
           body: JSON.stringify(payload),
@@ -3709,15 +3608,9 @@ function bindShellEvents() {
         if (metricFields) metricFields.hidden = true;
         if (qualityFields) qualityFields.hidden = false;
         if (submitButton) submitButton.textContent = "Salvar qualidade";
-        setField("history-edit-score-type", historyRow.scoreType || "monitorias");
         setField("history-edit-quality-scope", historyRow.qualityScope === "nuvidio" ? "nuvidio" : "0800");
         setField("history-edit-score", historyRow.quality ?? "");
-        setField("history-edit-monitoria-1", historyRow.monitoria_1 ?? "");
-        setField("history-edit-monitoria-2", historyRow.monitoria_2 ?? "");
-        setField("history-edit-monitoria-3", historyRow.monitoria_3 ?? "");
-        setField("history-edit-monitoria-4", historyRow.monitoria_4 ?? "");
         setField("history-edit-notes", historyRow.notes ?? "");
-        syncHistoryQualityMode(historyRow.scoreType || "monitorias");
       } else {
         const is0800 = operation === "0800";
         if (metricFields) metricFields.hidden = false;
@@ -3737,9 +3630,6 @@ function bindShellEvents() {
 
   const historyEditForm = document.getElementById("history-edit-form");
   if (historyEditForm) {
-    document.getElementById("history-edit-score-type")?.addEventListener("change", (event) => {
-      syncHistoryQualityMode(event.target.value);
-    });
     historyEditForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -3756,13 +3646,13 @@ function bindShellEvents() {
       try {
         if (entryType === "quality") {
           const payload = {
-            score_type: form.get("score_type") || "monitorias",
-            quality_scope: form.get("quality_scope") || "all",
+            score_type: "general",
+            quality_scope: form.get("quality_scope") || "0800",
             score: form.get("score"),
-            monitoria_1: form.get("monitoria_1"),
-            monitoria_2: form.get("monitoria_2"),
-            monitoria_3: form.get("monitoria_3"),
-            monitoria_4: form.get("monitoria_4"),
+            monitoria_1: "",
+            monitoria_2: "",
+            monitoria_3: "",
+            monitoria_4: "",
             notes: form.get("notes"),
           };
           await api(`/api/admin/quality/${metricId}`, {
@@ -3855,8 +3745,7 @@ function bindShellEvents() {
   const downloadQualityTemplate = document.getElementById("download-quality-template");
   if (downloadQualityTemplate) {
     downloadQualityTemplate.addEventListener("click", () => {
-      const mode = document.getElementById("quality-upload-mode-select")?.value || "monitorias";
-      window.location.href = `/api/admin/quality/template?mode=${encodeURIComponent(mode)}`;
+      window.location.href = "/api/admin/quality/template?mode=general";
     });
   }
 

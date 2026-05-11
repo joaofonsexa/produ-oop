@@ -782,9 +782,14 @@ body.theme-contrast .theme-toggle {
 
 .detailed-filter-bar {
   display: grid;
-  grid-template-columns: minmax(140px, 180px) minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(140px, 180px) minmax(170px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(220px, auto);
   gap: 14px;
   align-items: end;
+}
+
+.detailed-filter-bar .analysis-filter-actions {
+  justify-self: end;
+  min-width: 220px;
 }
 
 .detailed-table-panel {
@@ -811,7 +816,7 @@ body.theme-contrast .theme-toggle {
 
 .detailed-table-wrap {
   max-height: none;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: visible;
   width: 100%;
   max-width: 100%;
@@ -912,6 +917,14 @@ body.theme-contrast .theme-toggle {
 .detailed-table--qualidade th:nth-child(11),
 .detailed-table--qualidade td:nth-child(11) {
   width: 14%;
+}
+
+.detailed-table--qualidade {
+  min-width: 1120px;
+}
+
+.detailed-table--ofensores {
+  min-width: 1120px;
 }
 
 .detailed-table--ofensores th:nth-child(1),
@@ -1926,7 +1939,10 @@ body.theme-contrast .modal-card {
   position: fixed;
   z-index: 60;
   min-width: 280px;
-  max-width: 380px;
+  width: min(92vw, 430px);
+  max-width: 430px;
+  max-height: min(78vh, 640px);
+  overflow: auto;
   padding: 14px 16px;
   border-radius: 16px;
   border: 1px solid var(--line);
@@ -2022,6 +2038,10 @@ body.theme-contrast .modal-card {
 .trend-rank-copy strong {
   color: var(--text);
   font-weight: 700;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .trend-rank-copy span {

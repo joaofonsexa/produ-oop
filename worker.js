@@ -2545,11 +2545,8 @@ function buildReportSections(payload) {
     <tr>
       <td>${escapeHtml(formatMonthBrServer(row.reference_month))}</td>
       <td>${escapeHtml(row.operator)}</td>
-      <td>${escapeHtml(String(row.monitoria_1 ?? ""))}</td>
-      <td>${escapeHtml(String(row.monitoria_2 ?? ""))}</td>
-      <td>${escapeHtml(String(row.monitoria_3 ?? ""))}</td>
-      <td>${escapeHtml(String(row.monitoria_4 ?? ""))}</td>
-      <td>${escapeHtml(String(row.final_score ?? ""))}</td>
+      <td>${escapeHtml(reportSectorLabel(row.quality_scope || "all"))}</td>
+      <td>${escapeHtml(String(row.score ?? row.final_score ?? ""))}</td>
       ${payload.report_type === "qualidade" ? `<td>${escapeHtml(row.notes || "")}</td>` : ""}
     </tr>`).join("");
   const consolidatedRows = payload.consolidated_rows.map((row) => `
@@ -2573,9 +2570,9 @@ function buildReportSections(payload) {
     </tr>`).join("");
   const consolidatedSection = `<div class="section"><h2>Consolidado</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Setor</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${consolidatedRows || '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
   const operationalSection = `<div class="section"><h2>Base operacional</h2><table><thead><tr><th>Data</th><th>Operador</th><th>Operação</th><th>Produção</th><th>Efetividade</th></tr></thead><tbody>${operationalRows || '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
-  const qualityColumns = payload.report_type === "qualidade" ? 8 : 7;
+  const qualityColumns = payload.report_type === "qualidade" ? 5 : 4;
   const qualityNotesHeader = payload.report_type === "qualidade" ? "<th>Observações</th>" : "";
-  const qualitySection = `<div class="section"><h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Final</th>${qualityNotesHeader}</tr></thead><tbody>${qualityRows || `<tr><td colspan="${qualityColumns}" class="empty">Sem dados.</td></tr>`}</tbody></table></div>`;
+  const qualitySection = `<div class="section"><h2>Qualidade</h2><table><thead><tr><th>Mês</th><th>Operador</th><th>Esteira</th><th>Bruto</th>${qualityNotesHeader}</tr></thead><tbody>${qualityRows || `<tr><td colspan="${qualityColumns}" class="empty">Sem dados.</td></tr>`}</tbody></table></div>`;
   const offendersSection = `<div class="section"><h2>Ofensores</h2><table><thead><tr><th>Operador</th><th>Login</th><th>Nota</th><th>Prod. 0800</th><th>Efet. 0800</th><th>Prod. Nuvidio</th><th>Efet. Nuvidio</th><th>Qualidade</th></tr></thead><tbody>${offenderRows || '<tr><td colspan="8" class="empty">Sem dados.</td></tr>'}</tbody></table></div>`;
   return payload.report_type === "operacional"
     ? (payload.report_view === "sintetica" ? consolidatedSection : operationalSection)
@@ -2611,11 +2608,8 @@ function buildPdfSections(payload) {
   const makeQualityRows = () => payload.quality_rows.map((row) => ([
     formatMonthBrServer(row.reference_month),
     row.operator,
-    String(row.monitoria_1 ?? ""),
-    String(row.monitoria_2 ?? ""),
-    String(row.monitoria_3 ?? ""),
-    String(row.monitoria_4 ?? ""),
-    String(row.final_score ?? ""),
+    reportSectorLabel(row.quality_scope || "all"),
+    String(row.score ?? row.final_score ?? ""),
     ...(payload.report_type === "qualidade" ? [String(row.notes || "")] : []),
   ]));
   const makeOffenderRows = () => payload.offenders_rows.map((row) => ([
@@ -2643,11 +2637,11 @@ function buildPdfSections(payload) {
   const quality = {
     title: "Qualidade",
     columns: payload.report_type === "qualidade"
-      ? ["Mês", "Operador", "M1", "M2", "M3", "M4", "Final", "Observações"]
-      : ["Mês", "Operador", "M1", "M2", "M3", "M4", "Final"],
+      ? ["Mês", "Operador", "Esteira", "Bruto", "Observações"]
+      : ["Mês", "Operador", "Esteira", "Bruto"],
     widths: payload.report_type === "qualidade"
-      ? [66, 160, 42, 42, 42, 42, 48, 110]
-      : [72, 190, 44, 44, 44, 44, 58],
+      ? [84, 170, 72, 56, 150]
+      : [90, 220, 90, 70],
     rows: makeQualityRows(),
   };
   const offenders = {
