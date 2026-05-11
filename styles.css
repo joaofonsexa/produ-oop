@@ -790,7 +790,7 @@ body.theme-contrast .theme-toggle {
 
 .detailed-table-wrap {
   max-height: none;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: visible;
 }
 
@@ -809,7 +809,40 @@ body.theme-contrast .theme-toggle {
 }
 
 .detailed-table {
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.detailed-table th,
+.detailed-table td {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.detailed-table th:nth-child(1),
+.detailed-table td:nth-child(1) {
+  width: 16%;
+}
+
+.detailed-table th:nth-child(2),
+.detailed-table td:nth-child(2) {
+  width: 34%;
+}
+
+.detailed-table th:nth-child(3),
+.detailed-table td:nth-child(3) {
+  width: 14%;
+}
+
+.detailed-table th:nth-child(4),
+.detailed-table td:nth-child(4) {
+  width: 14%;
+}
+
+.detailed-table th:nth-child(5),
+.detailed-table td:nth-child(5) {
+  width: 22%;
 }
 
 .detailed-pagination span {

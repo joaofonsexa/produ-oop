@@ -23,6 +23,7 @@
   analysis: null,
   alerts: null,
   history: null,
+  reportDataset: null,
   users: [],
   flash: null,
   forcePasswordChange: false,
@@ -942,6 +943,7 @@ async function loadHistory() {
     ? "all"
     : (isManager() ? state.filters.historyUserId || state.user.id : state.user.id);
   state.history = await api(`/api/history?user_id=${userId}&start=${state.filters.start}&end=${state.filters.end}`);
+  state.reportDataset = null;
   invalidateReportDatasetCache();
 }
 
@@ -953,6 +955,7 @@ async function loadBootstrap() {
   state.overview = data.overview;
   state.analysis = data.analysis;
   state.history = data.history;
+  state.reportDataset = null;
   invalidateReportDatasetCache();
   if (data.app_settings) state.appSettings = data.app_settings;
   if (isManager() && Array.isArray(data.users) && data.users.length) {
@@ -965,11 +968,13 @@ async function loadBootstrap() {
 async function loadAlerts() {
   const userId = isManager() ? (state.filters.analysisUserId || "all") : String(state.user?.id || "");
   state.alerts = await api(`/api/alerts?start=${state.filters.start}&end=${state.filters.end}&user_id=${encodeURIComponent(userId)}`);
+  state.reportDataset = null;
   invalidateReportDatasetCache();
 }
 
 async function loadReportsData() {
   await loadHistory();
+  state.reportDataset = buildReportDatasetModel();
 }
 
 async function loadUsers() {
@@ -1713,7 +1718,22 @@ function alertsTemplate() {
 function reportsTemplate() {
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
-  const model = buildReportDatasetModel();
+  const model = state.reportDataset;
+  if (!model) {
+    return `
+      <section class="section">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Relatórios</span>
+              <h3>Preparando dados</h3>
+            </div>
+          </div>
+          <div class="empty">Carregando base para exportação...</div>
+        </article>
+      </section>
+    `;
+  }
   const selectedName = model.selectedName;
   const reportRows = model.reportRows;
   const qualityRows = model.qualityRows;
@@ -1856,7 +1876,22 @@ function detailedTemplate() {
   const DETAILED_PAGE_SIZE = 200;
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
-  const model = buildReportDatasetModel();
+  const model = state.reportDataset;
+  if (!model) {
+    return `
+      <section class="section">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Consulta</span>
+              <h3>Detalhada</h3>
+            </div>
+          </div>
+          <div class="empty">Carregando consulta detalhada...</div>
+        </article>
+      </section>
+    `;
+  }
   const selectedName = model.selectedName;
   const typeLabel = model.reportTypeLabel;
   const sectorLabel = model.sectorLabel;
@@ -2876,13 +2911,18 @@ function bindShellEvents() {
       clearFlash();
       state.route = button.dataset.route;
       if (state.route === "alerts") state.alerts = null;
+      if (state.route === "reports" || state.route === "detailed") state.reportDataset = null;
       render();
       try {
         if (state.route === "alerts") {
           await loadAlerts();
           render();
-        } else if (state.route === "detailed" && state.filters.reportsType === "ofensores") {
-          await loadAlerts();
+        } else if (state.route === "reports" || state.route === "detailed") {
+          await loadReportsData();
+          if (state.route === "detailed" && state.filters.reportsType === "ofensores") {
+            await loadAlerts();
+            state.reportDataset = buildReportDatasetModel();
+          }
           render();
         }
         await saveUserPreferences({ last_route: state.route });
