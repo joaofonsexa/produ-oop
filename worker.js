@@ -9,10 +9,14 @@ const D1_SCHEMA_STATEMENTS = [
   "CREATE TABLE IF NOT EXISTS app_state (id INTEGER PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, login TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, password_plain TEXT, role TEXT NOT NULL, platform_0800_id TEXT, nuvidio_id TEXT, must_change_password INTEGER NOT NULL DEFAULT 1, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_users_login ON users(login)",
+  "CREATE INDEX IF NOT EXISTS idx_users_role_active_name ON users(role, is_active, full_name)",
   "CREATE TABLE IF NOT EXISTS daily_metrics (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, metric_date TEXT NOT NULL, production INTEGER NOT NULL DEFAULT 0, production_0800 INTEGER NOT NULL DEFAULT 0, production_nuvidio INTEGER NOT NULL DEFAULT 0, calls_0800_approved INTEGER NOT NULL DEFAULT 0, calls_0800_rejected INTEGER NOT NULL DEFAULT 0, calls_0800_pending INTEGER NOT NULL DEFAULT 0, calls_0800_no_action INTEGER NOT NULL DEFAULT 0, calls_nuvidio_approved INTEGER NOT NULL DEFAULT 0, calls_nuvidio_rejected INTEGER NOT NULL DEFAULT 0, calls_nuvidio_no_action INTEGER NOT NULL DEFAULT 0, calls_nuvidio_empty INTEGER NOT NULL DEFAULT 0, import_source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_daily_metrics_user_date ON daily_metrics(user_id, metric_date)",
+  "CREATE INDEX IF NOT EXISTS idx_daily_metrics_date_user ON daily_metrics(metric_date, user_id)",
+  "CREATE INDEX IF NOT EXISTS idx_daily_metrics_date ON daily_metrics(metric_date)",
   "CREATE TABLE IF NOT EXISTS quality_scores (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, reference_month TEXT NOT NULL, score REAL NOT NULL DEFAULT 0, monitoria_1 REAL, monitoria_2 REAL, monitoria_3 REAL, monitoria_4 REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_quality_scores_user_month ON quality_scores(user_id, reference_month)",
+  "CREATE INDEX IF NOT EXISTS idx_quality_scores_reference_month ON quality_scores(reference_month)",
   "CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS import_logs (id INTEGER PRIMARY KEY, imported_by INTEGER, source_name TEXT NOT NULL, imported_at TEXT NOT NULL, rows_processed INTEGER NOT NULL DEFAULT 0, rows_rejected INTEGER NOT NULL DEFAULT 0)",
   "CREATE INDEX IF NOT EXISTS idx_import_logs_imported_at ON import_logs(imported_at)",
@@ -63,7 +67,7 @@ let storageCache = null;
 let storageCacheLoadedAt = 0;
 let d1SchemaEnsured = false;
 let d1SchemaEnsurePromise = null;
-const STORAGE_CACHE_TTL_MS = 1500;
+const STORAGE_CACHE_TTL_MS = 10000;
 
 async function nodeModules() {
   if (!isLocalNodeRuntime) return null;
@@ -708,6 +712,20 @@ async function persistProcessedKeysToD1(connection, processedKeys) {
   await connection.prepare("DELETE FROM processed_keys").run();
 }
 
+async function persistCountersStateToD1(connection, counters) {
+  await connection.prepare(`
+    INSERT INTO app_state (id, data, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      data = excluded.data,
+      updated_at = excluded.updated_at
+  `).bind(
+    D1_STATE_ID,
+    JSON.stringify({ counters: counters || seedState().counters }),
+    nowIso(),
+  ).run();
+}
+
 async function persistUsersToD1(connection, users) {
   for (const user of users) {
     await persistUserRecordToD1(connection, user);
@@ -759,21 +777,26 @@ function buildPersistableMetaState(db) {
   };
 }
 
-async function persistMetaStateToD1(connection, db) {
-  await persistAppSettingsToD1(connection, db.appSettings || seedState().appSettings);
-  await persistImportLogsToD1(connection, db.importLogs || []);
-  await persistProcessedKeysToD1(connection, db.r2ProcessedKeys || []);
-  await connection.prepare(`
-    INSERT INTO app_state (id, data, updated_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      data = excluded.data,
-      updated_at = excluded.updated_at
-  `).bind(
-    D1_STATE_ID,
-    JSON.stringify({ counters: db.counters || seedState().counters }),
-    nowIso(),
-  ).run();
+async function persistMetaStateToD1(connection, db, scope = {}) {
+  const options = {
+    appSettings: true,
+    importLogs: true,
+    processedKeys: true,
+    counters: true,
+    ...scope,
+  };
+  if (options.appSettings) {
+    await persistAppSettingsToD1(connection, db.appSettings || seedState().appSettings);
+  }
+  if (options.importLogs) {
+    await persistImportLogsToD1(connection, db.importLogs || []);
+  }
+  if (options.processedKeys) {
+    await persistProcessedKeysToD1(connection, db.r2ProcessedKeys || []);
+  }
+  if (options.counters) {
+    await persistCountersStateToD1(connection, db.counters || seedState().counters);
+  }
 }
 
 async function ensureD1Schema(connection) {
@@ -1263,10 +1286,10 @@ async function persistSingleQualityScoreChange(db, env, score, includeMeta = fal
   await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: includeMeta });
 }
 
-async function persistMetaOnly(db, env) {
+async function persistMetaOnly(db, env, scope = {}) {
   if (env?.DB) {
     await ensureD1SchemaCached(env.DB);
-    await persistMetaStateToD1(env.DB, db);
+    await persistMetaStateToD1(env.DB, db, scope);
     rememberStorage(db);
     return;
   }
@@ -2888,7 +2911,7 @@ async function handleApi(request, url, db, env = {}) {
         },
       };
     }
-    await persistMetaOnly(db, env);
+    await persistMetaOnly(db, env, { appSettings: true, importLogs: false, processedKeys: false, counters: true });
     return jsonResponse({ app_settings: serializeAppSettings(db) });
   }
 
@@ -3084,7 +3107,7 @@ async function handleApi(request, url, db, env = {}) {
     if (env?.DB) {
       await ensureD1SchemaCached(env.DB);
       await deleteUserDataFromD1(env.DB, userId);
-      await persistMetaStateToD1(env.DB, db);
+      await persistMetaStateToD1(env.DB, db, { appSettings: false, importLogs: false, processedKeys: false, counters: true });
       rememberStorage(db);
     } else {
       await persistStorage(db, env);

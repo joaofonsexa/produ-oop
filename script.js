@@ -1469,30 +1469,29 @@ function analysisTemplate() {
   const showAllOperatorsTop = isManager() && String(state.filters.analysisUserId) === "all";
   return `
     <section class="section">
-      <div class="two-col">
-        <aside class="filter-card">
-          <div class="panel-head">
-            <div>
-              <span class="eyebrow">Filtros</span>
-              <h3>Recorte</h3>
-            </div>
+      <article class="panel analysis-filter-panel">
+        <div class="analysis-filter-bar">
+          <div class="analysis-filter-copy">
+            <span class="eyebrow">Filtros</span>
+            <h3>Recorte</h3>
           </div>
-          <label>Início<input type="date" id="start-filter" value="${state.filters.start}"></label>
-          <label>Fim<input type="date" id="end-filter" value="${state.filters.end}"></label>
-          <div class="filter-actions">
+          <label class="analysis-inline-field">Início<input type="date" id="start-filter" value="${state.filters.start}"></label>
+          <label class="analysis-inline-field">Fim<input type="date" id="end-filter" value="${state.filters.end}"></label>
+          <div class="analysis-filter-actions">
             <button class="btn" data-action="refresh-analysis">Aplicar</button>
             <button class="btn-secondary" data-action="reset-analysis">Limpar</button>
           </div>
-        </aside>
-        <div class="section">
-          <div class="hero-grid">
-            <article class="panel">
+        </div>
+      </article>
+      <div class="analysis-dashboard">
+          <div class="analysis-grid-split">
+            <article class="panel analysis-panel-primary">
               <div class="panel-head"><div><span class="eyebrow">0800</span><h3>Produção diária</h3></div></div>
               <div class="chart">
                 ${trend0800.length ? trend0800.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="production" data-operation="0800" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${integer(item.production)}</span><div class="column ${metricTone(item.production, "production")}" style="height:${Math.max(12, (item.production / maxProd0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
-            <article class="panel">
+            <article class="panel analysis-panel-secondary">
               <div class="panel-head"><div><span class="eyebrow">0800</span><h3>Efetividade diária</h3></div></div>
               <div class="chart">
                 ${trend0800.length ? trend0800.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="effectiveness" data-operation="0800" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${percent(item.effectiveness)}</span><div class="column ${metricTone(item.effectiveness, "effectiveness")}" style="height:${Math.max(12, (item.effectiveness / maxEff0800) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
@@ -1500,14 +1499,14 @@ function analysisTemplate() {
             </article>
           </div>
 
-          <div class="hero-grid">
-            <article class="panel">
+          <div class="analysis-grid-split">
+            <article class="panel analysis-panel-primary">
               <div class="panel-head"><div><span class="eyebrow">Nuvidio</span><h3>Produção diária</h3></div></div>
               <div class="chart">
                 ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="production" data-operation="nuvidio" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${integer(item.production)}</span><div class="column ${metricTone(item.production, "production")}" style="height:${Math.max(12, (item.production / maxProdNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
-            <article class="panel">
+            <article class="panel analysis-panel-secondary">
               <div class="panel-head"><div><span class="eyebrow">Nuvidio</span><h3>Efetividade diária</h3></div></div>
               <div class="chart">
                 ${trendNuvidio.length ? trendNuvidio.map((item) => `<div class="chart-col ${showAllOperatorsTop ? "analysis-point" : ""}" ${showAllOperatorsTop ? `data-metric="effectiveness" data-operation="nuvidio" data-date="${esc(item.date)}"` : ""}><span class="chart-value">${percent(item.effectiveness)}</span><div class="column ${metricTone(item.effectiveness, "effectiveness")}" style="height:${Math.max(12, (item.effectiveness / maxEffNuvidio) * 110)}px;"></div><small>${shortDate(item.date)}</small></div>`).join("") : `<div class="empty">Sem dados.</div>`}
@@ -1515,8 +1514,8 @@ function analysisTemplate() {
             </article>
           </div>
 
-          <div class="hero-grid">
-            <article class="panel">
+          <div class="analysis-grid-split">
+            <article class="panel analysis-panel-primary">
               <div class="panel-head"><div><span class="eyebrow">Qualidade</span><h3>Monitorias + média final</h3></div></div>
               <div class="quality-months-wrap">
                 ${qualityMonths.length ? qualityMonths.map((monthItem) => `
@@ -1535,7 +1534,7 @@ function analysisTemplate() {
                 `).join("") : `<div class="empty">Sem dados.</div>`}
               </div>
             </article>
-            <article class="panel">
+            <article class="panel analysis-panel-secondary">
               <div class="panel-head"><div><span class="eyebrow">Resumo</span><h3>Consolidado</h3></div></div>
               <div class="mini-grid">
                 <div class="mini-card"><span class="muted">Produção média</span><div class="metric-value">${integer(model.summary.production)}</div></div>
@@ -1544,7 +1543,7 @@ function analysisTemplate() {
             </article>
           </div>
 
-          <div class="hero-grid">
+          <div class="analysis-grid-split analysis-grid-equal">
             <article class="panel">
               <div class="panel-head"><div><span class="eyebrow">Tags · 0800</span><h3>Divisão por tags</h3></div></div>
               <div class="tag-split">
@@ -1578,7 +1577,6 @@ function analysisTemplate() {
               </div>
             </article>
           </div>
-        </div>
       </div>
       ${showAllOperatorsTop ? `<div class="trend-tooltip" id="analysis-metric-tooltip" hidden></div>` : ""}
     </section>
@@ -1705,6 +1703,8 @@ function alertsTemplate() {
 }
 
 function reportsTemplate() {
+  const reportType = state.filters.reportsType;
+  const reportView = state.filters.reportsView;
   const selectedName = state.filters.analysisUserId === "all"
     ? "Todos os operadores"
     : (getAnyOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
@@ -1723,39 +1723,8 @@ function reportsTemplate() {
     operacional: "Operacional",
     qualidade: "Qualidade",
     ofensores: "Ofensores",
-  }[state.filters.reportsType] || "Consolidado";
-  const reportViewLabel = state.filters.reportsView === "sintetica" ? "Sintética" : "Detalhada";
-  const consolidatedMap = new Map();
-  reportRows.forEach((row) => {
-    const operatorName = row.operator || getUserLabelById(row.userId) || "Operador";
-    const key = `${row.date}::${operatorName}::${row.operation}`;
-    const current = consolidatedMap.get(key) || {
-      date: row.date,
-      operator: operatorName,
-      operation: row.operation,
-      totalProduction: 0,
-      effectivenessParts: [],
-    };
-    current.totalProduction += Number(row.production || 0);
-    if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
-    consolidatedMap.set(key, current);
-  });
-  const previewConsolidatedRows = [...consolidatedMap.values()]
-    .map((row) => ({
-      date: row.date,
-      operator: row.operator,
-      operation: row.operation,
-      totalProduction: row.totalProduction,
-      avgEffectiveness: row.effectivenessParts.length
-        ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
-        : 0,
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date) || a.operator.localeCompare(b.operator) || a.operation.localeCompare(b.operation))
-    .map((row) => ({
-      ...row,
-      production: row.totalProduction,
-      effectiveness: row.avgEffectiveness,
-    }));
+  }[reportType] || "Consolidado";
+  const reportViewLabel = reportView === "sintetica" ? "Sintética" : "Detalhada";
   const previewRows = reportRows.map((row) => ({
     ...row,
     operator: row.operator || getUserLabelById(row.userId) || "Operador",
@@ -1765,12 +1734,11 @@ function reportsTemplate() {
     operator: row.operator || getUserLabelById(row.user_id) || "Operador",
   }));
   const previewOffenders = [...(state.alerts?.alerts || [])];
-  const sortedConsolidatedRows = sortReportRows("consolidado", previewConsolidatedRows);
-  const sortedOperationalRows = sortReportRows("operacional", previewRows);
-  const sortedQualityRows = sortReportRows("qualidade", previewQualityRows);
-  const sortedOffenders = sortReportRows("ofensores", previewOffenders);
-  const previewBody = state.filters.reportsType === "qualidade"
-    ? `
+  let previewBody = "";
+
+  if (reportType === "qualidade") {
+    const sortedQualityRows = sortReportRows("qualidade", previewQualityRows);
+    previewBody = `
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1796,109 +1764,145 @@ function reportsTemplate() {
             </tr>
           `).join("") : `<tr><td colspan="7">Sem dados para visualização.</td></tr>`}
           </tbody>
-        </table>`
-      : state.filters.reportsType === "ofensores"
-      ? `
-        <table class="report-preview-table">
-          <thead>
+        </table>`;
+  } else if (reportType === "ofensores") {
+    const sortedOffenders = sortReportRows("ofensores", previewOffenders);
+    previewBody = `
+      <table class="report-preview-table">
+        <thead>
+          <tr>
+            <th>${reportSortHeader("ofensores", "name", "Operador")}</th>
+            <th>${reportSortHeader("ofensores", "alert_score", "Nota")}</th>
+            <th>${reportSortHeader("ofensores", "avg_production_0800", "Prod. 0800")}</th>
+            <th>${reportSortHeader("ofensores", "effectiveness_0800", "Efet. 0800")}</th>
+            <th>${reportSortHeader("ofensores", "avg_production_nuvidio", "Prod. Nuvidio")}</th>
+            <th>${reportSortHeader("ofensores", "effectiveness_nuvidio", "Efet. Nuvidio")}</th>
+            <th>${reportSortHeader("ofensores", "quality", "Qualidade")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sortedOffenders.length ? sortedOffenders.map((row) => `
             <tr>
-              <th>${reportSortHeader("ofensores", "name", "Operador")}</th>
-              <th>${reportSortHeader("ofensores", "alert_score", "Nota")}</th>
-              <th>${reportSortHeader("ofensores", "avg_production_0800", "Prod. 0800")}</th>
-              <th>${reportSortHeader("ofensores", "effectiveness_0800", "Efet. 0800")}</th>
-              <th>${reportSortHeader("ofensores", "avg_production_nuvidio", "Prod. Nuvidio")}</th>
-              <th>${reportSortHeader("ofensores", "effectiveness_nuvidio", "Efet. Nuvidio")}</th>
-              <th>${reportSortHeader("ofensores", "quality", "Qualidade")}</th>
+              <td>${esc(row.name)}</td>
+              <td>${esc(number(row.alert_score))}</td>
+              <td>${esc(integer(row.avg_production_0800))}</td>
+              <td>${esc(percent(row.effectiveness_0800))}</td>
+              <td>${esc(integer(row.avg_production_nuvidio))}</td>
+              <td>${esc(percent(row.effectiveness_nuvidio))}</td>
+              <td>${esc(number(row.quality))}</td>
             </tr>
-          </thead>
-          <tbody>
-            ${sortedOffenders.length ? sortedOffenders.map((row) => `
-              <tr>
-                <td>${esc(row.name)}</td>
-                <td>${esc(number(row.alert_score))}</td>
-                <td>${esc(integer(row.avg_production_0800))}</td>
-                <td>${esc(percent(row.effectiveness_0800))}</td>
-                <td>${esc(integer(row.avg_production_nuvidio))}</td>
-                <td>${esc(percent(row.effectiveness_nuvidio))}</td>
-                <td>${esc(number(row.quality))}</td>
-              </tr>
-            `).join("") : `<tr><td colspan="7">Sem dados para visualização.</td></tr>`}
-          </tbody>
-        </table>`
-      : state.filters.reportsType === "consolidado"
-        ? `
+          `).join("") : `<tr><td colspan="7">Sem dados para visualização.</td></tr>`}
+        </tbody>
+      </table>`;
+  } else if (reportType === "consolidado") {
+    const consolidatedMap = new Map();
+    previewRows.forEach((row) => {
+      const operatorName = row.operator || "Operador";
+      const key = `${row.date}::${operatorName}::${row.operation}`;
+      const current = consolidatedMap.get(key) || {
+        date: row.date,
+        operator: operatorName,
+        operation: row.operation,
+        totalProduction: 0,
+        effectivenessParts: [],
+      };
+      current.totalProduction += Number(row.production || 0);
+      if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
+      consolidatedMap.set(key, current);
+    });
+    const sortedConsolidatedRows = sortReportRows("consolidado", [...consolidatedMap.values()].map((row) => {
+      const avgEffectiveness = row.effectivenessParts.length
+        ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
+        : 0;
+      return {
+        date: row.date,
+        operator: row.operator,
+        operation: row.operation,
+        totalProduction: row.totalProduction,
+        avgEffectiveness,
+        production: row.totalProduction,
+        effectiveness: avgEffectiveness,
+      };
+    }));
+    const sortedOperationalRows = reportView === "detalhada"
+      ? sortReportRows("operacional", previewRows)
+      : [];
+    previewBody = `
+      <table class="report-preview-table">
+        <thead>
+          <tr>
+            <th>${reportSortHeader("consolidado", "date", "Data")}</th>
+            <th>${reportSortHeader("consolidado", "operator", "Operador")}</th>
+            <th>${reportSortHeader("consolidado", "operation", "Setor")}</th>
+            <th>${reportSortHeader("consolidado", "production", "Produção")}</th>
+            <th>${reportSortHeader("consolidado", "effectiveness", "Efetividade")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sortedConsolidatedRows.length ? sortedConsolidatedRows.map((row) => `
+            <tr>
+              <td>${esc(formatDateBr(row.date))}</td>
+              <td>${esc(row.operator)}</td>
+              <td>${esc(row.operation)}</td>
+              <td>${esc(integer(row.totalProduction))}</td>
+              <td>${esc(percent(row.avgEffectiveness || 0))}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
+        </tbody>
+      </table>
+      ${reportView === "detalhada" ? `
+        <div class="report-preview-subsection">
+          <span class="eyebrow">Base detalhada</span>
           <table class="report-preview-table">
             <thead>
               <tr>
-                <th>${reportSortHeader("consolidado", "date", "Data")}</th>
-                <th>${reportSortHeader("consolidado", "operator", "Operador")}</th>
-                <th>${reportSortHeader("consolidado", "operation", "Setor")}</th>
-                <th>${reportSortHeader("consolidado", "production", "Produção")}</th>
-                <th>${reportSortHeader("consolidado", "effectiveness", "Efetividade")}</th>
+                <th>${reportSortHeader("operacional", "date", "Data")}</th>
+                <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
+                <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
+                <th>${reportSortHeader("operacional", "production", "Produção")}</th>
+                <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
               </tr>
             </thead>
             <tbody>
-              ${sortedConsolidatedRows.length ? sortedConsolidatedRows.map((row) => `
+              ${sortedOperationalRows.length ? sortedOperationalRows.map((row) => `
                 <tr>
                   <td>${esc(formatDateBr(row.date))}</td>
                   <td>${esc(row.operator)}</td>
                   <td>${esc(row.operation)}</td>
-                  <td>${esc(integer(row.totalProduction))}</td>
-                  <td>${esc(percent(row.avgEffectiveness || 0))}</td>
+                  <td>${esc(integer(row.production || 0))}</td>
+                  <td>${esc(percent(row.effectiveness || 0))}</td>
                 </tr>
               `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
             </tbody>
           </table>
-          ${state.filters.reportsView === "detalhada" ? `
-            <div class="report-preview-subsection">
-              <span class="eyebrow">Base detalhada</span>
-              <table class="report-preview-table">
-                <thead>
-                  <tr>
-                    <th>${reportSortHeader("operacional", "date", "Data")}</th>
-                    <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
-                    <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
-                    <th>${reportSortHeader("operacional", "production", "Produção")}</th>
-                    <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${sortedOperationalRows.length ? sortedOperationalRows.map((row) => `
-                    <tr>
-                      <td>${esc(formatDateBr(row.date))}</td>
-                      <td>${esc(row.operator)}</td>
-                      <td>${esc(row.operation)}</td>
-                      <td>${esc(integer(row.production || 0))}</td>
-                      <td>${esc(percent(row.effectiveness || 0))}</td>
-                    </tr>
-                  `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
-                </tbody>
-              </table>
-            </div>` : ""}
-        `
-      : `
-        <table class="report-preview-table">
-          <thead>
+        </div>` : ""}
+    `;
+  } else {
+    const sortedOperationalRows = sortReportRows("operacional", previewRows);
+    previewBody = `
+      <table class="report-preview-table">
+        <thead>
+          <tr>
+            <th>${reportSortHeader("operacional", "date", "Data")}</th>
+            <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
+            <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
+            <th>${reportSortHeader("operacional", "production", "Produção")}</th>
+            <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sortedOperationalRows.length ? sortedOperationalRows.map((row) => `
             <tr>
-              <th>${reportSortHeader("operacional", "date", "Data")}</th>
-              <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
-              <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
-              <th>${reportSortHeader("operacional", "production", "Produção")}</th>
-              <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
+              <td>${esc(formatDateBr(row.date))}</td>
+              <td>${esc(row.operator)}</td>
+              <td>${esc(row.operation)}</td>
+              <td>${esc(integer(row.production || 0))}</td>
+              <td>${esc(percent(row.effectiveness || 0))}</td>
             </tr>
-          </thead>
-          <tbody>
-            ${sortedOperationalRows.length ? sortedOperationalRows.map((row) => `
-              <tr>
-                <td>${esc(formatDateBr(row.date))}</td>
-                <td>${esc(row.operator)}</td>
-                <td>${esc(row.operation)}</td>
-                <td>${esc(integer(row.production || 0))}</td>
-                <td>${esc(percent(row.effectiveness || 0))}</td>
-              </tr>
-            `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
-          </tbody>
-        </table>`;
+          `).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`}
+        </tbody>
+      </table>`;
+  }
   return `
     <section class="section">
       <div class="hero-grid">
