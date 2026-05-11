@@ -1703,6 +1703,7 @@ function alertsTemplate() {
 }
 
 function reportsTemplate() {
+  const REPORT_PREVIEW_LIMIT = 160;
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
   const selectedName = state.filters.analysisUserId === "all"
@@ -1734,11 +1735,16 @@ function reportsTemplate() {
     operator: row.operator || getUserLabelById(row.user_id) || "Operador",
   }));
   const previewOffenders = [...(state.alerts?.alerts || [])];
+  const buildPreviewMeta = (total, shown) => total > shown
+    ? `<div class="report-preview-meta-note">Prévia exibindo <strong>${shown}</strong> de <strong>${total}</strong> linhas. A exportação sai completa.</div>`
+    : "";
   let previewBody = "";
 
   if (reportType === "qualidade") {
     const sortedQualityRows = sortReportRows("qualidade", previewQualityRows);
+    const visibleQualityRows = sortedQualityRows.slice(0, REPORT_PREVIEW_LIMIT);
     previewBody = `
+      ${buildPreviewMeta(sortedQualityRows.length, visibleQualityRows.length)}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1752,7 +1758,7 @@ function reportsTemplate() {
           </tr>
         </thead>
         <tbody>
-          ${sortedQualityRows.length ? sortedQualityRows.map((row) => `
+          ${visibleQualityRows.length ? visibleQualityRows.map((row) => `
             <tr>
               <td>${esc(formatMonthLabel(row.reference_month))}</td>
               <td>${esc(row.operator)}</td>
@@ -1767,7 +1773,9 @@ function reportsTemplate() {
         </table>`;
   } else if (reportType === "ofensores") {
     const sortedOffenders = sortReportRows("ofensores", previewOffenders);
+    const visibleOffenders = sortedOffenders.slice(0, REPORT_PREVIEW_LIMIT);
     previewBody = `
+      ${buildPreviewMeta(sortedOffenders.length, visibleOffenders.length)}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1781,7 +1789,7 @@ function reportsTemplate() {
           </tr>
         </thead>
         <tbody>
-          ${sortedOffenders.length ? sortedOffenders.map((row) => `
+          ${visibleOffenders.length ? visibleOffenders.map((row) => `
             <tr>
               <td>${esc(row.name)}</td>
               <td>${esc(number(row.alert_score))}</td>
@@ -1824,10 +1832,18 @@ function reportsTemplate() {
         effectiveness: avgEffectiveness,
       };
     }));
+    const visibleConsolidatedRows = sortedConsolidatedRows.slice(0, REPORT_PREVIEW_LIMIT);
     const sortedOperationalRows = reportView === "detalhada"
       ? sortReportRows("operacional", previewRows)
       : [];
+    const visibleOperationalRows = reportView === "detalhada"
+      ? sortedOperationalRows.slice(0, REPORT_PREVIEW_LIMIT)
+      : [];
     previewBody = `
+      ${buildPreviewMeta(
+        sortedConsolidatedRows.length + (reportView === "detalhada" ? sortedOperationalRows.length : 0),
+        visibleConsolidatedRows.length + (reportView === "detalhada" ? visibleOperationalRows.length : 0),
+      )}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1839,7 +1855,7 @@ function reportsTemplate() {
           </tr>
         </thead>
         <tbody>
-          ${sortedConsolidatedRows.length ? sortedConsolidatedRows.map((row) => `
+          ${visibleConsolidatedRows.length ? visibleConsolidatedRows.map((row) => `
             <tr>
               <td>${esc(formatDateBr(row.date))}</td>
               <td>${esc(row.operator)}</td>
@@ -1864,7 +1880,7 @@ function reportsTemplate() {
               </tr>
             </thead>
             <tbody>
-              ${sortedOperationalRows.length ? sortedOperationalRows.map((row) => `
+              ${visibleOperationalRows.length ? visibleOperationalRows.map((row) => `
                 <tr>
                   <td>${esc(formatDateBr(row.date))}</td>
                   <td>${esc(row.operator)}</td>
@@ -1879,7 +1895,9 @@ function reportsTemplate() {
     `;
   } else {
     const sortedOperationalRows = sortReportRows("operacional", previewRows);
+    const visibleOperationalRows = sortedOperationalRows.slice(0, REPORT_PREVIEW_LIMIT);
     previewBody = `
+      ${buildPreviewMeta(sortedOperationalRows.length, visibleOperationalRows.length)}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1891,7 +1909,7 @@ function reportsTemplate() {
           </tr>
         </thead>
         <tbody>
-          ${sortedOperationalRows.length ? sortedOperationalRows.map((row) => `
+          ${visibleOperationalRows.length ? visibleOperationalRows.map((row) => `
             <tr>
               <td>${esc(formatDateBr(row.date))}</td>
               <td>${esc(row.operator)}</td>
