@@ -346,7 +346,7 @@ function isManager() {
 function normalizeRoute(route, role = state.user?.role) {
   const value = String(route || "").trim();
   const allowed = role === "manager"
-    ? ["overview", "analysis", "alerts", "history", "reports", "admin"]
+    ? ["overview", "analysis", "alerts", "history", "reports", "detailed", "admin"]
     : ["overview", "analysis", "alerts", "history"];
   return allowed.includes(value) ? value : "overview";
 }
@@ -919,7 +919,7 @@ async function loadAll() {
     await loadUsers();
   }
   await loadBootstrap();
-  if (state.route === "alerts") {
+  if (state.route === "alerts" || (state.route === "detailed" && state.filters.reportsType === "ofensores")) {
     await loadAlerts();
   }
 }
@@ -983,6 +983,7 @@ function navMeta() {
     alerts: "Ofensores",
     history: "Histórico",
     reports: "Relatórios",
+    detailed: "Detalhada",
     admin: "Gestão",
   };
 }
@@ -1091,6 +1092,7 @@ function shellTemplate() {
     alerts: { title: "Ofensores", desc: "" },
     history: { title: "Histórico", desc: "" },
     reports: { title: "Relatórios", desc: "" },
+    detailed: { title: "Detalhada", desc: "" },
     admin: { title: "Gestão", desc: "" },
   };
   const current = titles[state.route];
@@ -1114,7 +1116,7 @@ function shellTemplate() {
           </div>
         </div>
         <nav class="nav">
-          ${Object.entries(navMeta()).filter(([key]) => (key !== "admin" && key !== "reports") || isManager()).map(([key, label]) => `
+          ${Object.entries(navMeta()).filter(([key]) => (key !== "admin" && key !== "reports" && key !== "detailed") || isManager()).map(([key, label]) => `
             <button class="${state.route === key ? "active" : ""}" data-route="${key}">${label}</button>
           `).join("")}
         </nav>
@@ -1350,6 +1352,7 @@ function renderPage() {
   if (state.route === "alerts") return alertsTemplate();
   if (state.route === "history") return historyTemplate();
   if (state.route === "reports") return reportsTemplate();
+  if (state.route === "detailed") return detailedTemplate();
   if (state.route === "admin") return adminTemplate();
   return overviewTemplate();
 }
@@ -1703,7 +1706,7 @@ function alertsTemplate() {
 }
 
 function reportsTemplate() {
-  const REPORT_PREVIEW_LIMIT = 160;
+  const REPORT_PREVIEW_LIMIT = 100;
   const reportType = state.filters.reportsType;
   const reportView = state.filters.reportsView;
   const selectedName = state.filters.analysisUserId === "all"
@@ -1735,16 +1738,12 @@ function reportsTemplate() {
     operator: row.operator || getUserLabelById(row.user_id) || "Operador",
   }));
   const previewOffenders = [...(state.alerts?.alerts || [])];
-  const buildPreviewMeta = (total, shown) => total > shown
-    ? `<div class="report-preview-meta-note">Prévia exibindo <strong>${shown}</strong> de <strong>${total}</strong> linhas. A exportação sai completa.</div>`
-    : "";
   let previewBody = "";
 
   if (reportType === "qualidade") {
     const sortedQualityRows = sortReportRows("qualidade", previewQualityRows);
     const visibleQualityRows = sortedQualityRows.slice(0, REPORT_PREVIEW_LIMIT);
     previewBody = `
-      ${buildPreviewMeta(sortedQualityRows.length, visibleQualityRows.length)}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1775,7 +1774,6 @@ function reportsTemplate() {
     const sortedOffenders = sortReportRows("ofensores", previewOffenders);
     const visibleOffenders = sortedOffenders.slice(0, REPORT_PREVIEW_LIMIT);
     previewBody = `
-      ${buildPreviewMeta(sortedOffenders.length, visibleOffenders.length)}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1840,10 +1838,6 @@ function reportsTemplate() {
       ? sortedOperationalRows.slice(0, REPORT_PREVIEW_LIMIT)
       : [];
     previewBody = `
-      ${buildPreviewMeta(
-        sortedConsolidatedRows.length + (reportView === "detalhada" ? sortedOperationalRows.length : 0),
-        visibleConsolidatedRows.length + (reportView === "detalhada" ? visibleOperationalRows.length : 0),
-      )}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -1897,7 +1891,6 @@ function reportsTemplate() {
     const sortedOperationalRows = sortReportRows("operacional", previewRows);
     const visibleOperationalRows = sortedOperationalRows.slice(0, REPORT_PREVIEW_LIMIT);
     previewBody = `
-      ${buildPreviewMeta(sortedOperationalRows.length, visibleOperationalRows.length)}
       <table class="report-preview-table">
         <thead>
           <tr>
@@ -2022,6 +2015,216 @@ function reportsTemplate() {
             <div><span>Período</span><strong>${esc(formatDateBr(state.filters.start) || "Todos")} - ${esc(formatDateBr(state.filters.end) || "Todos")}</strong></div>
           </div>
           ${previewBody}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function detailedTemplate() {
+  const reportType = state.filters.reportsType;
+  const reportView = state.filters.reportsView;
+  const selectedName = state.filters.analysisUserId === "all"
+    ? "Todos os operadores"
+    : (getAnyOperatorUsers().find((user) => String(user.id) === String(state.filters.analysisUserId))?.full_name || "Operador");
+  const reportRows = getScopedHistory().filter((row) => (
+    state.filters.reportsSector === "all"
+    || String(row.operation || "").toLowerCase() === String(state.filters.reportsSector || "").toLowerCase()
+  ));
+  const qualityRows = state.history?.quality || [];
+  const previewRows = reportRows.map((row) => ({
+    ...row,
+    operator: row.operator || getUserLabelById(row.userId) || "Operador",
+  }));
+  const previewQualityRows = qualityRows.map((row) => ({
+    ...row,
+    operator: row.operator || getUserLabelById(row.user_id) || "Operador",
+  }));
+  const offendersRows = [...(state.alerts?.alerts || [])];
+  const typeLabel = {
+    consolidado: "Consolidado",
+    operacional: "Operacional",
+    qualidade: "Qualidade",
+    ofensores: "Ofensores",
+  }[reportType] || "Consolidado";
+  const sectorLabel = state.filters.reportsSector === "0800"
+    ? "0800"
+    : state.filters.reportsSector === "nuvidio"
+      ? "Nuvidio"
+      : "0800 + Nuvidio";
+  let tableHead = "";
+  let tableBody = "";
+  let totalRows = 0;
+
+  if (reportType === "qualidade") {
+    const rows = sortReportRows("qualidade", previewQualityRows);
+    totalRows = rows.length;
+    tableHead = `
+      <tr>
+        <th>${reportSortHeader("qualidade", "reference_month", "Mês")}</th>
+        <th>${reportSortHeader("qualidade", "operator", "Operador")}</th>
+        <th>${reportSortHeader("qualidade", "monitoria_1", "M1")}</th>
+        <th>${reportSortHeader("qualidade", "monitoria_2", "M2")}</th>
+        <th>${reportSortHeader("qualidade", "monitoria_3", "M3")}</th>
+        <th>${reportSortHeader("qualidade", "monitoria_4", "M4")}</th>
+        <th>${reportSortHeader("qualidade", "score", "Final")}</th>
+        <th>Observações</th>
+      </tr>`;
+    tableBody = rows.length ? rows.map((row) => `
+      <tr>
+        <td>${esc(formatMonthLabel(row.reference_month))}</td>
+        <td>${esc(row.operator)}</td>
+        <td>${esc(row.monitoria_1 ?? "")}</td>
+        <td>${esc(row.monitoria_2 ?? "")}</td>
+        <td>${esc(row.monitoria_3 ?? "")}</td>
+        <td>${esc(row.monitoria_4 ?? "")}</td>
+        <td>${esc(number(row.score || 0))}</td>
+        <td>${esc(row.notes || "—")}</td>
+      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
+  } else if (reportType === "ofensores") {
+    const rows = sortReportRows("ofensores", offendersRows);
+    totalRows = rows.length;
+    tableHead = `
+      <tr>
+        <th>${reportSortHeader("ofensores", "name", "Operador")}</th>
+        <th>${reportSortHeader("ofensores", "alert_score", "Nota")}</th>
+        <th>${reportSortHeader("ofensores", "avg_production_0800", "Prod. 0800")}</th>
+        <th>${reportSortHeader("ofensores", "effectiveness_0800", "Efet. 0800")}</th>
+        <th>${reportSortHeader("ofensores", "avg_production_nuvidio", "Prod. Nuvidio")}</th>
+        <th>${reportSortHeader("ofensores", "effectiveness_nuvidio", "Efet. Nuvidio")}</th>
+        <th>${reportSortHeader("ofensores", "quality", "Qualidade")}</th>
+        <th>Principais ofensores</th>
+      </tr>`;
+    tableBody = rows.length ? rows.map((row) => `
+      <tr>
+        <td>${esc(row.name)}</td>
+        <td>${esc(number(row.alert_score))}</td>
+        <td>${esc(integer(row.avg_production_0800))}</td>
+        <td>${esc(percent(row.effectiveness_0800))}</td>
+        <td>${esc(integer(row.avg_production_nuvidio))}</td>
+        <td>${esc(percent(row.effectiveness_nuvidio))}</td>
+        <td>${esc(row.quality ? number(row.quality) : "--")}</td>
+        <td>${esc((row.reasons || []).map((reason) => reason.text).join(" | ") || "Sem ofensores destacados")}</td>
+      </tr>`).join("") : `<tr><td colspan="8">Sem dados para visualização.</td></tr>`;
+  } else if (reportType === "consolidado") {
+    const consolidatedMap = new Map();
+    previewRows.forEach((row) => {
+      const operatorName = row.operator || "Operador";
+      const key = `${row.date}::${operatorName}::${row.operation}`;
+      const current = consolidatedMap.get(key) || {
+        date: row.date,
+        operator: operatorName,
+        operation: row.operation,
+        totalProduction: 0,
+        effectivenessParts: [],
+      };
+      current.totalProduction += Number(row.production || 0);
+      if (Number(row.effectiveness || 0) > 0) current.effectivenessParts.push(Number(row.effectiveness || 0));
+      consolidatedMap.set(key, current);
+    });
+    const rows = sortReportRows("consolidado", [...consolidatedMap.values()].map((row) => {
+      const avgEffectiveness = row.effectivenessParts.length
+        ? row.effectivenessParts.reduce((sum, value) => sum + value, 0) / row.effectivenessParts.length
+        : 0;
+      return {
+        date: row.date,
+        operator: row.operator,
+        operation: row.operation,
+        production: row.totalProduction,
+        effectiveness: avgEffectiveness,
+      };
+    }));
+    totalRows = rows.length;
+    tableHead = `
+      <tr>
+        <th>${reportSortHeader("consolidado", "date", "Data")}</th>
+        <th>${reportSortHeader("consolidado", "operator", "Operador")}</th>
+        <th>${reportSortHeader("consolidado", "operation", "Setor")}</th>
+        <th>${reportSortHeader("consolidado", "production", "Produção")}</th>
+        <th>${reportSortHeader("consolidado", "effectiveness", "Efetividade")}</th>
+      </tr>`;
+    tableBody = rows.length ? rows.map((row) => `
+      <tr>
+        <td>${esc(formatDateBr(row.date))}</td>
+        <td>${esc(row.operator)}</td>
+        <td>${esc(row.operation)}</td>
+        <td>${esc(integer(row.production))}</td>
+        <td>${esc(percent(row.effectiveness || 0))}</td>
+      </tr>`).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`;
+  } else {
+    const rows = sortReportRows("operacional", previewRows);
+    totalRows = rows.length;
+    tableHead = `
+      <tr>
+        <th>${reportSortHeader("operacional", "date", "Data")}</th>
+        <th>${reportSortHeader("operacional", "operator", "Operador")}</th>
+        <th>${reportSortHeader("operacional", "operation", "Setor")}</th>
+        <th>${reportSortHeader("operacional", "production", "Produção")}</th>
+        <th>${reportSortHeader("operacional", "effectiveness", "Efetividade")}</th>
+      </tr>`;
+    tableBody = rows.length ? rows.map((row) => `
+      <tr>
+        <td>${esc(formatDateBr(row.date))}</td>
+        <td>${esc(row.operator)}</td>
+        <td>${esc(row.operation)}</td>
+        <td>${esc(integer(row.production || 0))}</td>
+        <td>${esc(percent(row.effectiveness || 0))}</td>
+      </tr>`).join("") : `<tr><td colspan="5">Sem dados para visualização.</td></tr>`;
+  }
+
+  return `
+    <section class="section detailed-dashboard">
+      <article class="panel analysis-filter-panel detailed-filter-panel">
+        <div class="analysis-filter-bar detailed-filter-bar">
+          <div class="analysis-filter-copy">
+            <span class="eyebrow">Consulta</span>
+            <h3>Detalhada</h3>
+          </div>
+          <label class="analysis-inline-field">Início
+            <input type="date" id="detailed-start-filter" value="${state.filters.start}">
+          </label>
+          <label class="analysis-inline-field">Fim
+            <input type="date" id="detailed-end-filter" value="${state.filters.end}">
+          </label>
+          <label class="analysis-inline-field">Tipo
+            <select id="detailed-type-filter">
+              <option value="consolidado" ${reportType === "consolidado" ? "selected" : ""}>Consolidado</option>
+              <option value="operacional" ${reportType === "operacional" ? "selected" : ""}>Operacional</option>
+              <option value="qualidade" ${reportType === "qualidade" ? "selected" : ""}>Qualidade</option>
+              <option value="ofensores" ${reportType === "ofensores" ? "selected" : ""}>Ofensores</option>
+            </select>
+          </label>
+          <label class="analysis-inline-field">Setor
+            <select id="detailed-sector-filter">
+              <option value="all" ${state.filters.reportsSector === "all" ? "selected" : ""}>0800 + Nuvidio</option>
+              <option value="0800" ${state.filters.reportsSector === "0800" ? "selected" : ""}>0800</option>
+              <option value="nuvidio" ${state.filters.reportsSector === "nuvidio" ? "selected" : ""}>Nuvidio</option>
+            </select>
+          </label>
+          <div class="analysis-filter-actions">
+            <button class="btn" data-action="refresh-detailed">Aplicar</button>
+            <button class="btn-secondary" data-action="reset-detailed">Limpar</button>
+          </div>
+        </div>
+      </article>
+      <article class="panel detailed-table-panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">${esc(typeLabel)}</span>
+            <h3>Comparativo detalhado</h3>
+          </div>
+          <div class="detailed-table-meta">
+            <span>${esc(selectedName)}</span>
+            <strong>${integer(totalRows)} linha(s)</strong>
+            <span>${esc(sectorLabel)}</span>
+            <span>${esc(reportView === "sintetica" ? "Sintética" : "Detalhada")}</span>
+          </div>
+        </div>
+        <div class="table-wrap detailed-table-wrap">
+          <table class="report-preview-table detailed-table">
+            <thead>${tableHead}</thead>
+            <tbody>${tableBody}</tbody>
+          </table>
         </div>
       </article>
     </section>
@@ -2770,6 +2973,9 @@ function bindShellEvents() {
         if (state.route === "alerts") {
           await loadAlerts();
           render();
+        } else if (state.route === "detailed" && state.filters.reportsType === "ofensores") {
+          await loadAlerts();
+          render();
         }
         await saveUserPreferences({ last_route: state.route });
       } catch (error) {
@@ -2787,6 +2993,10 @@ function bindShellEvents() {
   document.querySelectorAll("#reports-type-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsType = event.target.value; }));
   document.querySelectorAll("#reports-view-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsView = event.target.value; }));
   document.querySelectorAll("#reports-sector-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsSector = event.target.value; }));
+  document.querySelectorAll("#detailed-start-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.start = event.target.value; }));
+  document.querySelectorAll("#detailed-end-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.end = event.target.value; }));
+  document.querySelectorAll("#detailed-type-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsType = event.target.value; }));
+  document.querySelectorAll("#detailed-sector-filter").forEach((input) => input.addEventListener("change", (event) => { state.filters.reportsSector = event.target.value; }));
   document.querySelectorAll("[data-report-sort-scope][data-report-sort-column]").forEach((button) => {
     button.addEventListener("click", () => {
       const scope = String(button.dataset.reportSortScope || "").trim();
@@ -2825,6 +3035,10 @@ function bindShellEvents() {
       state.filters.historyUserId = event.target.value === "all" ? "all" : event.target.value;
       state.filters.historyQuery = event.target.value === "all" ? "" : (getUserLabelById(state.filters.historyUserId) || "");
       if (state.route === "alerts") {
+        state.alerts = null;
+        render();
+        await loadAlerts();
+      } else if (state.route === "detailed" && state.filters.reportsType === "ofensores") {
         state.alerts = null;
         render();
         await loadAlerts();
@@ -2888,6 +3102,11 @@ function bindShellEvents() {
       await loadReportsData();
       setFlash("success", "Relatórios atualizados.");
     },
+    "refresh-detailed": async () => {
+      await loadReportsData();
+      render();
+      setFlash("success", "Consulta detalhada atualizada.");
+    },
     "reset-reports": async () => {
       state.filters.start = "";
       state.filters.end = "";
@@ -2897,6 +3116,15 @@ function bindShellEvents() {
       await loadReportsData();
       render();
       setFlash("success", "Período redefinido.");
+    },
+    "reset-detailed": async () => {
+      state.filters.start = "";
+      state.filters.end = "";
+      state.filters.reportsType = "consolidado";
+      state.filters.reportsSector = "all";
+      await loadReportsData();
+      render();
+      setFlash("success", "Filtros redefinidos.");
     },
     "export-report-excel": async () => {
       const userId = state.filters.analysisUserId || "all";
