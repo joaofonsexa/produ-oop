@@ -1344,11 +1344,17 @@ function shellTemplate() {
             <button class="icon-close" type="button" id="close-history-delete-day-modal" aria-label="Fechar">×</button>
           </div>
           <form id="history-delete-day-form" class="section compact-form">
-            <div class="info-box">Essa ação remove os registros de todos os operadores na data e setor selecionados.</div>
-            <label>Data com registros
+            <div class="info-box" id="history-delete-day-info">Essa ação remove os registros de todos os operadores na data e setor selecionados.</div>
+            <label id="history-delete-day-date-label">Data com registros
               <select id="history-delete-day-date" name="date" required>
                 <option value="">Selecione um dia</option>
                 ${historyAvailableDates().map((date) => `<option value="${esc(date)}">${esc(formatDateBr(date))}</option>`).join("")}
+              </select>
+            </label>
+            <label id="history-delete-quality-month-label" hidden>Mês com qualidade lançada
+              <select id="history-delete-quality-month" name="reference_month">
+                <option value="">Selecione um mês</option>
+                ${historyAvailableQualityMonths().map((month) => `<option value="${esc(month)}">${esc(formatMonthLabel(month))}</option>`).join("")}
               </select>
             </label>
             <label>Setor
@@ -1356,6 +1362,9 @@ function shellTemplate() {
                 <option value="all">0800 + Nuvidio</option>
                 <option value="0800">0800</option>
                 <option value="nuvidio">Nuvidio</option>
+                <option value="quality-all">Qualidade · 0800 + Nuvidio</option>
+                <option value="quality-0800">Qualidade · 0800</option>
+                <option value="quality-nuvidio">Qualidade · Nuvidio</option>
               </select>
             </label>
             <div class="action-grid">
@@ -2134,6 +2143,13 @@ function historyAvailableDates() {
     .map((row) => String(row.metric_date || row.date || "").trim())
     .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
   return [...new Set(dates)].sort((a, b) => b.localeCompare(a));
+}
+
+function historyAvailableQualityMonths() {
+  const months = (state.history?.quality || [])
+    .map((row) => String(row.reference_month || "").trim())
+    .filter((value) => /^\d{4}-\d{2}$/.test(value));
+  return [...new Set(months)].sort((a, b) => b.localeCompare(a));
 }
 
 function compareReportValues(left, right, direction = "asc") {
@@ -3770,25 +3786,61 @@ function bindShellEvents() {
 
   const historyDeleteDayForm = document.getElementById("history-delete-day-form");
   if (historyDeleteDayForm) {
+    const operationSelect = document.getElementById("history-delete-day-operation");
+    const dateLabel = document.getElementById("history-delete-day-date-label");
+    const dateSelect = document.getElementById("history-delete-day-date");
+    const qualityMonthLabel = document.getElementById("history-delete-quality-month-label");
+    const qualityMonthSelect = document.getElementById("history-delete-quality-month");
+    const infoBox = document.getElementById("history-delete-day-info");
+    const syncBulkDeleteMode = () => {
+      const operation = String(operationSelect?.value || "all").trim().toLowerCase();
+      const isQuality = operation.startsWith("quality-");
+      if (dateLabel) dateLabel.hidden = isQuality;
+      if (qualityMonthLabel) qualityMonthLabel.hidden = !isQuality;
+      if (dateSelect) dateSelect.required = !isQuality;
+      if (qualityMonthSelect) qualityMonthSelect.required = isQuality;
+      if (infoBox) {
+        infoBox.textContent = isQuality
+          ? "Essa ação remove os lançamentos de qualidade de todos os operadores no mês e esteira selecionados."
+          : "Essa ação remove os registros de todos os operadores na data e setor selecionados.";
+      }
+    };
+    operationSelect?.addEventListener("change", syncBulkDeleteMode);
+    syncBulkDeleteMode();
+
     historyDeleteDayForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
-      const metricDate = String(form.get("date") || "").trim();
       const operation = String(form.get("operation") || "all").trim().toLowerCase();
-      if (!metricDate) {
-        setFlash("error", "Selecione um dia para excluir.");
-        return;
-      }
-      const operationLabel = operation === "0800" ? "0800" : operation === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
-      if (!window.confirm(`Excluir todos os registros de ${operationLabel} do dia ${formatDateBr(metricDate)} para todos os operadores?`)) return;
       const submitButton = historyDeleteDayForm.querySelector('button[type="submit"]');
       const restoreButton = setButtonProcessing(submitButton, true, "Excluindo...");
       try {
-        await api(`/api/admin/daily-metrics/by-day?date=${encodeURIComponent(metricDate)}&operation=${encodeURIComponent(operation)}`, {
-          method: "DELETE",
-        });
+        if (operation.startsWith("quality-")) {
+          const referenceMonth = String(form.get("reference_month") || "").trim();
+          if (!referenceMonth) {
+            setFlash("error", "Selecione um mês para excluir a qualidade.");
+            return;
+          }
+          const scope = operation === "quality-0800" ? "0800" : operation === "quality-nuvidio" ? "nuvidio" : "all";
+          const scopeLabel = scope === "0800" ? "0800" : scope === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+          if (!window.confirm(`Excluir toda a qualidade de ${scopeLabel} do mês ${formatMonthLabel(referenceMonth)} para todos os operadores?`)) return;
+          await api(`/api/admin/quality/by-month?reference_month=${encodeURIComponent(referenceMonth)}&scope=${encodeURIComponent(scope)}`, {
+            method: "DELETE",
+          });
+        } else {
+          const metricDate = String(form.get("date") || "").trim();
+          if (!metricDate) {
+            setFlash("error", "Selecione um dia para excluir.");
+            return;
+          }
+          const operationLabel = operation === "0800" ? "0800" : operation === "nuvidio" ? "Nuvidio" : "0800 + Nuvidio";
+          if (!window.confirm(`Excluir todos os registros de ${operationLabel} do dia ${formatDateBr(metricDate)} para todos os operadores?`)) return;
+          await api(`/api/admin/daily-metrics/by-day?date=${encodeURIComponent(metricDate)}&operation=${encodeURIComponent(operation)}`, {
+            method: "DELETE",
+          });
+        }
         closeHistoryDeleteDayModal();
-        refreshDashboardInBackground("Registros do dia removidos com sucesso.");
+        refreshDashboardInBackground(operation.startsWith("quality-") ? "Qualidade em massa removida com sucesso." : "Registros do dia removidos com sucesso.");
       } catch (error) {
         setFlash("error", error.message);
       } finally {

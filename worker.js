@@ -3341,6 +3341,33 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ ok: true });
   }
 
+  if (url.pathname === "/api/admin/quality/by-month" && request.method === "DELETE") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const referenceMonth = String(url.searchParams.get("reference_month") || "").trim();
+    const scope = normalizeQualityScope(url.searchParams.get("scope"));
+    if (!/^\d{4}-\d{2}$/.test(referenceMonth)) {
+      return jsonResponse({ error: "Mes de referencia invalido." }, 400);
+    }
+    const shouldDelete = (entry) =>
+      String(entry.reference_month || "").trim() === referenceMonth
+      && (scope === "all" || normalizeQualityScope(entry.quality_scope) === scope);
+    const idsToDelete = db.qualityScores.filter(shouldDelete).map((entry) => Number(entry.id));
+    if (!idsToDelete.length) {
+      return jsonResponse({ error: "Nenhum registro de qualidade encontrado para este mês." }, 404);
+    }
+    db.qualityScores = db.qualityScores.filter((entry) => !idsToDelete.includes(Number(entry.id)));
+    if (env?.DB) {
+      await ensureD1SchemaCached(env.DB);
+      const placeholders = idsToDelete.map(() => "?").join(", ");
+      await env.DB.prepare(`DELETE FROM quality_scores WHERE id IN (${placeholders})`).bind(...idsToDelete).run();
+      rememberStorage(db);
+    } else {
+      await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: false });
+    }
+    return jsonResponse({ ok: true, deleted: idsToDelete.length });
+  }
+
   if (url.pathname === "/api/admin/quality/template" && request.method === "GET") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
