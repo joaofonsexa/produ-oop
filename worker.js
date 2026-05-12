@@ -3237,7 +3237,11 @@ async function handleApi(request, url, db, env = {}) {
       return jsonResponse({ error: scoreType === "general" ? "Informe a nota geral do mês entre 0 e 100." : "Preencha pelo menos uma monitoria entre 0 e 100." }, 400);
     }
 
-    let score = db.qualityScores.find((item) => item.user_id === userId && item.reference_month === payload.reference_month);
+    let score = db.qualityScores.find((item) =>
+      item.user_id === userId
+      && item.reference_month === payload.reference_month
+      && normalizeQualityScope(item.quality_scope) === qualityScope
+    );
     if (!score) {
       score = {
         id: nextId(db, "qualityScores"),
@@ -3427,7 +3431,11 @@ async function handleApi(request, url, db, env = {}) {
             : `Preencha ao menos uma monitoria válida para ${row.name}`);
         }
 
-        let score = db.qualityScores.find((item) => item.user_id === user.id && item.reference_month === referenceMonth);
+        let score = db.qualityScores.find((item) =>
+          item.user_id === user.id
+          && item.reference_month === referenceMonth
+          && normalizeQualityScope(item.quality_scope) === qualityScope
+        );
         if (!score) {
           score = {
             id: nextId(db, "qualityScores"),

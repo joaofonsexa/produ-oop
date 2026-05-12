@@ -1319,6 +1319,21 @@ function shellTemplate() {
           </form>
         </div>
       </div>
+      <div class="modal-backdrop" id="history-view-modal" hidden>
+        <div class="modal-card">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Histórico</span>
+              <h3>Qualidade lançada</h3>
+            </div>
+            <button class="icon-close" type="button" id="close-history-view-modal" aria-label="Fechar">×</button>
+          </div>
+          <div class="section compact-form" id="history-view-content"></div>
+          <div class="action-grid">
+            <button class="btn-secondary" type="button" id="cancel-history-view-modal">Fechar</button>
+          </div>
+        </div>
+      </div>
       <div class="modal-backdrop" id="history-delete-day-modal" hidden>
         <div class="modal-card">
           <div class="panel-head">
@@ -2263,6 +2278,7 @@ function buildReportDatasetModel() {
 function historyTemplate() {
   const rows = getScopedHistory();
   const currentHistoryUser = getUserLabelById(state.filters.historyUserId);
+  const showActionsColumn = isManager() || rows.some((row) => row.entryType === "quality");
   const historyInputValue = isManager()
     ? (state.filters.historyUserId === "all" && !String(state.filters.historyQuery || "").trim()
       ? "Todos os operadores"
@@ -2302,7 +2318,7 @@ function historyTemplate() {
                 <th>Efetividade</th>
                 <th>Qualidade</th>
                 <th>Atualizado</th>
-                ${isManager() ? "<th>Ações</th>" : ""}
+                ${showActionsColumn ? "<th>Ações</th>" : ""}
               </tr>
             </thead>
             <tbody>
@@ -2315,16 +2331,17 @@ function historyTemplate() {
                   <td>${row.effectiveness === null ? "—" : percent(row.effectiveness)}</td>
                   <td>${number(row.quality)}</td>
                   <td>${esc(formatDateTimeBr(row.updatedAt))}</td>
-                  ${isManager() ? `
+                  ${showActionsColumn ? `
                     <td>
                       <div class="row-actions">
-                        <button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Editar</button>
-                        <button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Remover</button>
+                        ${row.entryType === "quality" ? `<button class="btn-secondary btn-small" type="button" data-history-view="${row.metricId}" data-history-type="${row.entryType}">Ver</button>` : ""}
+                        ${isManager() ? `<button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Editar</button>` : ""}
+                        ${isManager() ? `<button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Remover</button>` : ""}
                       </div>
                     </td>
                   ` : ""}
                 </tr>
-              `).join("") : `<tr><td colspan="${(isManager() ? 7 : 6) + (showOperatorColumn ? 1 : 0)}"><div class="empty">Sem resultados.</div></td></tr>`}
+              `).join("") : `<tr><td colspan="${6 + (showOperatorColumn ? 1 : 0) + (showActionsColumn ? 1 : 0)}"><div class="empty">Sem resultados.</div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -2657,6 +2674,7 @@ function bindShellEvents() {
   const passwordModal = document.getElementById("password-modal");
   const userModal = document.getElementById("user-modal");
   const historyEditModal = document.getElementById("history-edit-modal");
+  const historyViewModal = document.getElementById("history-view-modal");
   const historyDeleteDayModal = document.getElementById("history-delete-day-modal");
   const trendTooltip = document.getElementById("trend-tooltip");
   const analysisMetricTooltip = document.getElementById("analysis-metric-tooltip");
@@ -2693,6 +2711,13 @@ function bindShellEvents() {
     historyEditModal.hidden = true;
     const form = document.getElementById("history-edit-form");
     if (form) form.reset();
+  };
+
+  const closeHistoryViewModal = () => {
+    if (!historyViewModal) return;
+    historyViewModal.hidden = true;
+    const content = document.getElementById("history-view-content");
+    if (content) content.innerHTML = "";
   };
 
   const closeHistoryDeleteDayModal = () => {
@@ -2764,6 +2789,10 @@ function bindShellEvents() {
 
   document.querySelectorAll("#close-history-edit-modal, #cancel-history-edit-modal").forEach((button) => {
     button.addEventListener("click", closeHistoryEditModal);
+  });
+
+  document.querySelectorAll("#close-history-view-modal, #cancel-history-view-modal").forEach((button) => {
+    button.addEventListener("click", closeHistoryViewModal);
   });
 
   document.querySelectorAll("#close-history-delete-day-modal, #cancel-history-delete-day-modal").forEach((button) => {
@@ -3614,6 +3643,43 @@ function bindShellEvents() {
         if (emptyRow) emptyRow.style.display = is0800 ? "none" : "grid";
       }
       if (historyEditModal) historyEditModal.hidden = false;
+    });
+  });
+
+  document.querySelectorAll("[data-history-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const metricId = Number(button.dataset.historyView);
+      const historyRow = getScopedHistory().find((item) => Number(item.metricId) === metricId && String(item.entryType) === "quality");
+      if (!historyRow || !historyViewModal) {
+        setFlash("error", "Registro de qualidade não encontrado.");
+        return;
+      }
+      const operatorName = getUserLabelById(historyRow.userId) || state.user?.full_name || "Operador";
+      const launchedMonitorias = [
+        historyRow.m1_entered ? ["M1", historyRow.monitoria_1] : null,
+        historyRow.m2_entered ? ["M2", historyRow.monitoria_2] : null,
+        historyRow.m3_entered ? ["M3", historyRow.monitoria_3] : null,
+        historyRow.m4_entered ? ["M4", historyRow.monitoria_4] : null,
+      ].filter(Boolean);
+      const content = document.getElementById("history-view-content");
+      if (content) {
+        content.innerHTML = `
+          <div class="form-grid">
+            <label>Operador<input value="${esc(operatorName)}" readonly></label>
+            <label>Mês<input value="${esc(historyRow.dateLabel || formatMonthLabel(historyRow.referenceMonth || ""))}" readonly></label>
+            <label>Esteira<input value="${esc(formatQualityScopeLabel(historyRow.qualityScope || "all"))}" readonly></label>
+            <label>Nota<input value="${esc(number(historyRow.quality || 0))}" readonly></label>
+          </div>
+          ${launchedMonitorias.length ? `
+            <div class="info-box">Monitorias lançadas para este mês.</div>
+            <div class="mini-grid">
+              ${launchedMonitorias.map(([label, value]) => `<div class="mini-card"><span class="muted">${esc(label)}</span><div class="metric-value">${esc(number(value || 0))}</div></div>`).join("")}
+            </div>
+          ` : `<div class="info-box">Lançamento bruto do mês.</div>`}
+          <label>Observações<input value="${esc(historyRow.notes || "")}" readonly></label>
+        `;
+      }
+      historyViewModal.hidden = false;
     });
   });
 
