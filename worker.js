@@ -1000,6 +1000,17 @@ async function ensureD1Schema(connection) {
   if (!qualityScoreColumns.has("updated_at")) {
     await connection.exec("ALTER TABLE quality_scores ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
   }
+
+  const qualityIndexList = await connection.prepare("PRAGMA index_list(quality_scores)").all();
+  for (const index of qualityIndexList?.results || []) {
+    if (!index?.name || Number(index.unique) !== 1) continue;
+    const indexInfo = await connection.prepare(`PRAGMA index_info(${JSON.stringify(index.name)})`).all();
+    const columns = (indexInfo?.results || []).map((item) => String(item.name || "").trim());
+    if (columns.length === 2 && columns[0] === "user_id" && columns[1] === "reference_month") {
+      await connection.exec(`DROP INDEX IF EXISTS "${String(index.name).replaceAll('"', '""')}"`);
+    }
+  }
+  await connection.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_scores_user_month_scope ON quality_scores(user_id, reference_month, quality_scope)");
 }
 
 async function ensureD1SchemaCached(connection) {

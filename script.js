@@ -3340,7 +3340,7 @@ function bindShellEvents() {
       try {
         const response = await fetch("/api/admin/quality/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Erro ao importar qualidade");
+        if (!response.ok) throw new Error(data.details ? `${data.error || "Erro ao importar qualidade"}: ${data.details}` : (data.error || "Erro ao importar qualidade"));
         await loadBootstrap();
         setFlash("success", `Qualidade importada com ${data.processed} operadores.`);
         render();
