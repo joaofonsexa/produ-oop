@@ -873,6 +873,75 @@ async function persistMetaStateToD1(connection, db, scope = {}) {
   }
 }
 
+async function rebuildQualityScoresTable(connection) {
+  await connection.exec(`
+    CREATE TABLE IF NOT EXISTS quality_scores__new (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      reference_month TEXT NOT NULL,
+      score REAL NOT NULL DEFAULT 0,
+      score_type TEXT NOT NULL DEFAULT 'monitorias',
+      quality_scope TEXT NOT NULL DEFAULT 'all',
+      monitoria_1 REAL,
+      monitoria_2 REAL,
+      monitoria_3 REAL,
+      monitoria_4 REAL,
+      m1_entered INTEGER NOT NULL DEFAULT 0,
+      m2_entered INTEGER NOT NULL DEFAULT 0,
+      m3_entered INTEGER NOT NULL DEFAULT 0,
+      m4_entered INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    )
+  `);
+  await connection.exec(`
+    INSERT INTO quality_scores__new (
+      id,
+      user_id,
+      reference_month,
+      score,
+      score_type,
+      quality_scope,
+      monitoria_1,
+      monitoria_2,
+      monitoria_3,
+      monitoria_4,
+      m1_entered,
+      m2_entered,
+      m3_entered,
+      m4_entered,
+      notes,
+      created_at,
+      updated_at
+    )
+    SELECT
+      id,
+      user_id,
+      reference_month,
+      score,
+      COALESCE(NULLIF(score_type, ''), 'general'),
+      COALESCE(NULLIF(quality_scope, ''), 'all'),
+      monitoria_1,
+      monitoria_2,
+      monitoria_3,
+      monitoria_4,
+      COALESCE(m1_entered, CASE WHEN monitoria_1 IS NULL OR monitoria_1 = '' THEN 0 ELSE 1 END),
+      COALESCE(m2_entered, CASE WHEN monitoria_2 IS NULL OR monitoria_2 = '' THEN 0 ELSE 1 END),
+      COALESCE(m3_entered, CASE WHEN monitoria_3 IS NULL OR monitoria_3 = '' THEN 0 ELSE 1 END),
+      COALESCE(m4_entered, CASE WHEN monitoria_4 IS NULL OR monitoria_4 = '' THEN 0 ELSE 1 END),
+      COALESCE(notes, ''),
+      COALESCE(created_at, ''),
+      COALESCE(updated_at, '')
+    FROM quality_scores
+  `);
+  await connection.exec("DROP TABLE quality_scores");
+  await connection.exec("ALTER TABLE quality_scores__new RENAME TO quality_scores");
+  await connection.exec("CREATE INDEX IF NOT EXISTS idx_quality_scores_user_month ON quality_scores(user_id, reference_month)");
+  await connection.exec("CREATE INDEX IF NOT EXISTS idx_quality_scores_reference_month ON quality_scores(reference_month)");
+  await connection.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_scores_user_month_scope ON quality_scores(user_id, reference_month, quality_scope)");
+}
+
 async function ensureD1Schema(connection) {
   for (const statement of D1_SCHEMA_STATEMENTS) {
     await connection.prepare(statement).run();
@@ -1002,13 +1071,18 @@ async function ensureD1Schema(connection) {
   }
 
   const qualityIndexList = await connection.prepare("PRAGMA index_list(quality_scores)").all();
+  let hasLegacyQualityUnique = false;
   for (const index of qualityIndexList?.results || []) {
     if (!index?.name || Number(index.unique) !== 1) continue;
     const indexInfo = await connection.prepare(`PRAGMA index_info(${JSON.stringify(index.name)})`).all();
     const columns = (indexInfo?.results || []).map((item) => String(item.name || "").trim());
     if (columns.length === 2 && columns[0] === "user_id" && columns[1] === "reference_month") {
-      await connection.exec(`DROP INDEX IF EXISTS "${String(index.name).replaceAll('"', '""')}"`);
+      hasLegacyQualityUnique = true;
+      break;
     }
+  }
+  if (hasLegacyQualityUnique) {
+    await rebuildQualityScoresTable(connection);
   }
   await connection.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_scores_user_month_scope ON quality_scores(user_id, reference_month, quality_scope)");
 }
