@@ -3413,110 +3413,130 @@ async function handleApi(request, url, db, env = {}) {
   }
 
   if (url.pathname === "/api/admin/quality/import" && request.method === "POST") {
-    const auth = await requireManager(request, db, env);
-    if (auth.error) return auth.error;
-    const form = await request.formData();
-    const file = form.get("file");
-    const referenceMonth = String(form.get("reference_month") || "").trim();
-    const qualityMode = normalizeQualityScoreType(form.get("quality_mode"));
-    const qualityScope = normalizeQualityScope(form.get("quality_scope"));
-    if (!(file instanceof File)) {
-      return jsonResponse({ error: "Arquivo de monitoria nao enviado" }, 400);
-    }
-    if (!isValidMonthRef(referenceMonth)) {
-      return jsonResponse({ error: "Informe o mes de referencia no formato AAAA-MM" }, 400);
-    }
-    const lowerName = file.name.toLowerCase();
-    if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".csv")) {
-      return jsonResponse({ error: "Use um arquivo XLSX ou CSV para a monitoria" }, 400);
-    }
-
-    if (!isLocalNodeRuntime && lowerName.endsWith(".xlsx")) {
-      return cloudQualityUnsupported();
-    }
-
-    const rows = lowerName.endsWith(".csv")
-      ? parseCsv(await file.text()).map((row) => ({
-          name: row.nome_do_operador || row.nome_operador || row.operador || row.nome || "",
-          score: row.nota_geral_do_mes ?? row.nota_geral ?? row.nota_geral_mes ?? row.nota_geral_mensal ?? row.score ?? "",
-          monitoria_1: row.monitoria_1 ?? "",
-          monitoria_2: row.monitoria_2 ?? "",
-          monitoria_3: row.monitoria_3 ?? "",
-          monitoria_4: row.monitoria_4 ?? "",
-        }))
-      : await parseQualityWorkbook(file);
-    const operators = db.users.filter((user) => user.is_active && user.role === "operator");
-    const errors = [];
-    let processed = 0;
-
-    for (const row of rows) {
-      try {
-        const user = matchUserByName(operators, row.name);
-        if (!user) throw new Error(`Operador nao encontrado: ${row.name}`);
-        const monitoria1 = parseQualityEntry(row.monitoria_1);
-        const monitoria2 = parseQualityEntry(row.monitoria_2);
-        const monitoria3 = parseQualityEntry(row.monitoria_3);
-        const monitoria4 = parseQualityEntry(row.monitoria_4);
-        const validMonitorias = [monitoria1, monitoria2, monitoria3, monitoria4].filter((item) => item.entered);
-        const scoreValue = qualityMode === "general"
-          ? parseQualityEntry(row.score).value
-          : (validMonitorias.length
-            ? Number((validMonitorias.reduce((sum, item) => sum + item.value, 0) / validMonitorias.length).toFixed(2))
-            : null);
-        if (scoreValue === null || !Number.isFinite(scoreValue) || scoreValue < 0 || scoreValue > 100) {
-          throw new Error(qualityMode === "general"
-            ? `Nota geral do mês inválida para ${row.name}`
-            : `Preencha ao menos uma monitoria válida para ${row.name}`);
-        }
-
-        let score = db.qualityScores.find((item) =>
-          item.user_id === user.id
-          && item.reference_month === referenceMonth
-          && normalizeQualityScope(item.quality_scope) === qualityScope
-        );
-        if (!score) {
-          score = {
-            id: nextId(db, "qualityScores"),
-            user_id: user.id,
-            reference_month: referenceMonth,
-            score: scoreValue,
-            score_type: qualityMode,
-            quality_scope: qualityScope,
-            notes: "",
-            monitoria_1: qualityMode === "general" ? null : monitoria1.value,
-            monitoria_2: qualityMode === "general" ? null : monitoria2.value,
-            monitoria_3: qualityMode === "general" ? null : monitoria3.value,
-            monitoria_4: qualityMode === "general" ? null : monitoria4.value,
-            m1_entered: qualityMode === "general" ? false : monitoria1.entered,
-            m2_entered: qualityMode === "general" ? false : monitoria2.entered,
-            m3_entered: qualityMode === "general" ? false : monitoria3.entered,
-            m4_entered: qualityMode === "general" ? false : monitoria4.entered,
-            created_at: nowIso(),
-            updated_at: nowIso(),
-          };
-          db.qualityScores.push(score);
-        } else {
-          score.score = scoreValue;
-          score.score_type = qualityMode;
-          score.quality_scope = qualityScope;
-          score.monitoria_1 = qualityMode === "general" ? null : monitoria1.value;
-          score.monitoria_2 = qualityMode === "general" ? null : monitoria2.value;
-          score.monitoria_3 = qualityMode === "general" ? null : monitoria3.value;
-          score.monitoria_4 = qualityMode === "general" ? null : monitoria4.value;
-          score.m1_entered = qualityMode === "general" ? false : monitoria1.entered;
-          score.m2_entered = qualityMode === "general" ? false : monitoria2.entered;
-          score.m3_entered = qualityMode === "general" ? false : monitoria3.entered;
-          score.m4_entered = qualityMode === "general" ? false : monitoria4.entered;
-          score.updated_at = nowIso();
-        }
-        processed += 1;
-      } catch (error) {
-        errors.push(error.message);
+    try {
+      const auth = await requireManager(request, db, env);
+      if (auth.error) return auth.error;
+      const form = await request.formData();
+      const file = form.get("file");
+      const referenceMonth = String(form.get("reference_month") || "").trim();
+      const qualityMode = normalizeQualityScoreType(form.get("quality_mode"));
+      const qualityScope = normalizeQualityScope(form.get("quality_scope"));
+      if (!(file instanceof File)) {
+        return jsonResponse({ error: "Arquivo de monitoria nao enviado" }, 400);
       }
-    }
+      if (!isValidMonthRef(referenceMonth)) {
+        return jsonResponse({ error: "Informe o mes de referencia no formato AAAA-MM" }, 400);
+      }
+      const lowerName = file.name.toLowerCase();
+      if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".csv")) {
+        return jsonResponse({ error: "Use um arquivo XLSX ou CSV para a monitoria" }, 400);
+      }
 
-    await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: true });
-    return jsonResponse({ processed, rejected: errors.length, errors: errors.slice(0, 20) });
+      if (!isLocalNodeRuntime && lowerName.endsWith(".xlsx")) {
+        return cloudQualityUnsupported();
+      }
+
+      const rows = lowerName.endsWith(".csv")
+        ? parseCsv(await file.text()).map((row) => ({
+            name: row.nome_do_operador || row.nome_operador || row.operador || row.nome || "",
+            login: row.login || row.usuario || row.usuario_nuvidio || row.email || row.email_do_atendente || "",
+            id_0800: row.id_0800 || row.usuario_0800 || row.plataforma_0800 || "",
+            id_nuvidio: row.id_nuvidio || row.usuario_nuvidio || row.plataforma_nuvidio || row.email || row.email_do_atendente || "",
+            score: row.nota_geral_do_mes ?? row.nota_geral ?? row.nota_geral_mes ?? row.nota_geral_mensal ?? row.nota ?? row.score ?? "",
+            monitoria_1: row.monitoria_1 ?? "",
+            monitoria_2: row.monitoria_2 ?? "",
+            monitoria_3: row.monitoria_3 ?? "",
+            monitoria_4: row.monitoria_4 ?? "",
+          }))
+        : await parseQualityWorkbook(file);
+      const operators = db.users.filter((user) => user.role === "operator");
+      const touchedScores = [];
+      const errors = [];
+      let processed = 0;
+
+      for (const row of rows) {
+        try {
+          const user = matchUser(operators, row) || matchUserByName(operators, row.name);
+          if (!user) throw new Error(`Operador nao encontrado: ${row.name || row.login || row.id_nuvidio || row.id_0800 || "sem identificador"}`);
+          const monitoria1 = parseQualityEntry(row.monitoria_1);
+          const monitoria2 = parseQualityEntry(row.monitoria_2);
+          const monitoria3 = parseQualityEntry(row.monitoria_3);
+          const monitoria4 = parseQualityEntry(row.monitoria_4);
+          const validMonitorias = [monitoria1, monitoria2, monitoria3, monitoria4].filter((item) => item.entered);
+          const scoreValue = qualityMode === "general"
+            ? parseQualityEntry(row.score).value
+            : (validMonitorias.length
+              ? Number((validMonitorias.reduce((sum, item) => sum + item.value, 0) / validMonitorias.length).toFixed(2))
+              : null);
+          if (scoreValue === null || !Number.isFinite(scoreValue) || scoreValue < 0 || scoreValue > 100) {
+            throw new Error(qualityMode === "general"
+              ? `Nota geral do mês inválida para ${row.name || user.full_name}`
+              : `Preencha ao menos uma monitoria válida para ${row.name || user.full_name}`);
+          }
+
+          let score = db.qualityScores.find((item) =>
+            item.user_id === user.id
+            && item.reference_month === referenceMonth
+            && normalizeQualityScope(item.quality_scope) === qualityScope
+          );
+          if (!score) {
+            score = {
+              id: nextId(db, "qualityScores"),
+              user_id: user.id,
+              reference_month: referenceMonth,
+              score: scoreValue,
+              score_type: qualityMode,
+              quality_scope: qualityScope,
+              notes: "",
+              monitoria_1: qualityMode === "general" ? null : monitoria1.value,
+              monitoria_2: qualityMode === "general" ? null : monitoria2.value,
+              monitoria_3: qualityMode === "general" ? null : monitoria3.value,
+              monitoria_4: qualityMode === "general" ? null : monitoria4.value,
+              m1_entered: qualityMode === "general" ? false : monitoria1.entered,
+              m2_entered: qualityMode === "general" ? false : monitoria2.entered,
+              m3_entered: qualityMode === "general" ? false : monitoria3.entered,
+              m4_entered: qualityMode === "general" ? false : monitoria4.entered,
+              created_at: nowIso(),
+              updated_at: nowIso(),
+            };
+            db.qualityScores.push(score);
+          } else {
+            score.score = scoreValue;
+            score.score_type = qualityMode;
+            score.quality_scope = qualityScope;
+            score.monitoria_1 = qualityMode === "general" ? null : monitoria1.value;
+            score.monitoria_2 = qualityMode === "general" ? null : monitoria2.value;
+            score.monitoria_3 = qualityMode === "general" ? null : monitoria3.value;
+            score.monitoria_4 = qualityMode === "general" ? null : monitoria4.value;
+            score.m1_entered = qualityMode === "general" ? false : monitoria1.entered;
+            score.m2_entered = qualityMode === "general" ? false : monitoria2.entered;
+            score.m3_entered = qualityMode === "general" ? false : monitoria3.entered;
+            score.m4_entered = qualityMode === "general" ? false : monitoria4.entered;
+            score.updated_at = nowIso();
+          }
+          touchedScores.push(score);
+          processed += 1;
+        } catch (error) {
+          errors.push(error.message);
+        }
+      }
+
+      if (env?.DB) {
+        await ensureD1SchemaCached(env.DB);
+        for (const score of touchedScores) {
+          await persistQualityScoreRecordToD1(env.DB, score);
+        }
+        rememberStorage(db);
+      } else {
+        await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: false });
+      }
+      return jsonResponse({ processed, rejected: errors.length, errors: errors.slice(0, 20) });
+    } catch (error) {
+      return jsonResponse({
+        error: "Erro ao importar qualidade",
+        details: error?.message || String(error),
+      }, 500);
+    }
   }
 
   if (url.pathname === "/api/admin/import/template" && request.method === "GET") {
