@@ -2352,7 +2352,7 @@ function historyTemplate() {
                       <div class="row-actions">
                         ${row.entryType === "quality" ? `<button class="btn-secondary btn-small" type="button" data-history-view="${row.metricId}" data-history-type="${row.entryType}">Ver</button>` : ""}
                         ${isManager() ? `<button class="btn-secondary btn-small" type="button" data-history-edit="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Editar</button>` : ""}
-                        ${isManager() ? `<button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}">Remover</button>` : ""}
+                        ${isManager() ? `<button class="btn-secondary btn-small danger-outline" type="button" data-history-delete="${row.metricId}" data-history-operation="${row.operation}" data-history-type="${row.entryType}" data-history-user-id="${row.userId ?? ""}" data-history-reference-month="${row.referenceMonth ?? ""}" data-history-quality-scope="${row.qualityScope ?? ""}">Remover</button>` : ""}
                       </div>
                     </td>
                   ` : ""}
@@ -3774,7 +3774,19 @@ function bindShellEvents() {
       if (!window.confirm(entryType === "quality" ? "Remover este registro de qualidade?" : "Remover este registro diário?")) return;
       const restoreButton = setButtonProcessing(button, true, "Removendo...");
       try {
-        await api(entryType === "quality" ? `/api/admin/quality/${metricId}` : `/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
+        if (entryType === "quality") {
+          const params = new URLSearchParams();
+          const fallbackUserId = String(button.dataset.historyUserId || "").trim();
+          const fallbackReferenceMonth = String(button.dataset.historyReferenceMonth || "").trim();
+          const fallbackScope = String(button.dataset.historyQualityScope || "").trim();
+          if (fallbackUserId) params.set("user_id", fallbackUserId);
+          if (fallbackReferenceMonth) params.set("reference_month", fallbackReferenceMonth);
+          if (fallbackScope) params.set("scope", fallbackScope);
+          const suffix = params.toString() ? `?${params.toString()}` : "";
+          await api(`/api/admin/quality/${metricId}${suffix}`, { method: "DELETE" });
+        } else {
+          await api(`/api/admin/daily-metrics/${metricId}`, { method: "DELETE" });
+        }
         refreshDashboardInBackground(entryType === "quality" ? "Qualidade removida com sucesso." : "Registro removido com sucesso.");
       } catch (error) {
         setFlash("error", error.message);

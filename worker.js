@@ -3324,23 +3324,6 @@ async function handleApi(request, url, db, env = {}) {
     return jsonResponse({ quality: score });
   }
 
-  if (url.pathname.startsWith("/api/admin/quality/") && request.method === "DELETE") {
-    const auth = await requireManager(request, db, env);
-    if (auth.error) return auth.error;
-    const qualityId = Number(url.pathname.split("/").pop());
-    const index = db.qualityScores.findIndex((entry) => entry.id === qualityId);
-    if (index === -1) return jsonResponse({ error: "Registro de qualidade nao encontrado" }, 404);
-    db.qualityScores.splice(index, 1);
-    if (env?.DB) {
-      await ensureD1SchemaCached(env.DB);
-      await env.DB.prepare("DELETE FROM quality_scores WHERE id = ?").bind(qualityId).run();
-      rememberStorage(db);
-    } else {
-      await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: false });
-    }
-    return jsonResponse({ ok: true });
-  }
-
   if (url.pathname === "/api/admin/quality/by-month" && request.method === "DELETE") {
     const auth = await requireManager(request, db, env);
     if (auth.error) return auth.error;
@@ -3366,6 +3349,34 @@ async function handleApi(request, url, db, env = {}) {
       await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: false });
     }
     return jsonResponse({ ok: true, deleted: idsToDelete.length });
+  }
+
+  if (url.pathname.startsWith("/api/admin/quality/") && request.method === "DELETE") {
+    const auth = await requireManager(request, db, env);
+    if (auth.error) return auth.error;
+    const qualityId = Number(url.pathname.split("/").pop());
+    const fallbackUserId = Number(url.searchParams.get("user_id"));
+    const fallbackReferenceMonth = String(url.searchParams.get("reference_month") || "").trim();
+    const fallbackScope = normalizeQualityScope(url.searchParams.get("scope"));
+    let index = db.qualityScores.findIndex((entry) => entry.id === qualityId);
+    if (index === -1 && fallbackUserId && /^\d{4}-\d{2}$/.test(fallbackReferenceMonth)) {
+      index = db.qualityScores.findIndex((entry) =>
+        Number(entry.user_id) === fallbackUserId
+        && String(entry.reference_month || "").trim() === fallbackReferenceMonth
+        && normalizeQualityScope(entry.quality_scope) === fallbackScope
+      );
+    }
+    if (index === -1) return jsonResponse({ error: "Registro de qualidade nao encontrado" }, 404);
+    const record = db.qualityScores[index];
+    db.qualityScores.splice(index, 1);
+    if (env?.DB) {
+      await ensureD1SchemaCached(env.DB);
+      await env.DB.prepare("DELETE FROM quality_scores WHERE id = ?").bind(Number(record.id)).run();
+      rememberStorage(db);
+    } else {
+      await persistStorage(db, env, { users: false, dailyMetrics: false, qualityScores: true, meta: false });
+    }
+    return jsonResponse({ ok: true });
   }
 
   if (url.pathname === "/api/admin/quality/template" && request.method === "GET") {
