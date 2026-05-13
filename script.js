@@ -353,7 +353,7 @@ function normalizeRoute(route, role = state.user?.role) {
   const value = String(route || "").trim();
   const allowed = role === "manager"
     ? ["overview", "analysis", "alerts", "history", "reports", "detailed", "admin"]
-    : ["overview", "analysis", "alerts", "history"];
+    : ["overview", "analysis", "history"];
   return allowed.includes(value) ? value : "overview";
 }
 
@@ -881,12 +881,12 @@ function buildAnalysisModel() {
     .pop() || "";
   const latest0800 = trend0800.find((item) => item.date === latestTrendDate);
   const latestNuvidio = trendNuvidio.find((item) => item.date === latestTrendDate);
-  const latestEffectivenessValues = [];
+  const averageEffectivenessValues = [];
   if (state.filters.operation === "all" || state.filters.operation === "0800") {
-    latestEffectivenessValues.push(Number(latest0800?.effectiveness || 0));
+    averageEffectivenessValues.push(...trend0800.map((item) => Number(item.effectiveness || 0)));
   }
   if (state.filters.operation === "all" || state.filters.operation === "nuvidio") {
-    latestEffectivenessValues.push(Number(latestNuvidio?.effectiveness || 0));
+    averageEffectivenessValues.push(...trendNuvidio.map((item) => Number(item.effectiveness || 0)));
   }
   return {
     trend,
@@ -901,7 +901,7 @@ function buildAnalysisModel() {
     tagsNuvidio,
     summary: {
       production: average(filteredRanking.map((item) => item.avg_production), { ignoreZero: true }),
-      effectiveness: average(latestEffectivenessValues, { ignoreZero: true }),
+      effectiveness: average(averageEffectivenessValues, { ignoreZero: true }),
     },
   };
 }
@@ -1040,7 +1040,7 @@ function navMeta() {
   return {
     overview: "Visão geral",
     analysis: "Análises",
-    alerts: "Ofensores",
+    ...(isManager() ? { alerts: "Ofensores" } : {}),
     history: "Histórico",
     reports: "Relatórios",
     detailed: "Detalhada",
