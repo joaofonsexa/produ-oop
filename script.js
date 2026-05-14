@@ -360,11 +360,26 @@ function normalizeRoute(route, role = state.user?.role) {
 function applyUserPreferences() {
   if (!state.user) return;
   state.theme = state.user.preferred_theme === "contrast" ? "contrast" : "dark";
-  state.route = normalizeRoute(state.user.last_route, state.user.role);
+  const storedRoute = (() => {
+    try {
+      return localStorage.getItem(`kr:last-route:${state.user.login || state.user.id || "user"}`);
+    } catch {
+      return "";
+    }
+  })();
+  state.route = normalizeRoute(storedRoute || state.user.last_route, state.user.role);
 }
 
 async function saveUserPreferences(partial) {
   if (!state.user) return;
+  const keys = Object.keys(partial || {});
+  if (keys.length === 1 && keys[0] === "last_route") {
+    state.user = normalizeUserPayload({ ...state.user, last_route: partial.last_route });
+    try {
+      localStorage.setItem(`kr:last-route:${state.user.login || state.user.id || "user"}`, normalizeRoute(partial.last_route, state.user.role));
+    } catch {}
+    return;
+  }
   const response = await api("/api/auth/preferences", {
     method: "PATCH",
     body: JSON.stringify(partial),
