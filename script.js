@@ -68,6 +68,33 @@ document.body.appendChild(bootLoader);
 let maintenanceWatcher = null;
 let maintenanceWatcherInFlight = false;
 let maintenanceVisibilityHandlerBound = false;
+const API_TIMEOUT_MS = 20000;
+
+function getUserStorageKey(user = state.user) {
+  return user?.login || user?.id || "user";
+}
+
+function getLocalPreference(key, user = state.user) {
+  try {
+    return localStorage.getItem(`kr:${key}:${getUserStorageKey(user)}`) || "";
+  } catch {
+    return "";
+  }
+}
+
+function setLocalPreference(key, value, user = state.user) {
+  try {
+    localStorage.setItem(`kr:${key}:${getUserStorageKey(user)}`, String(value ?? ""));
+  } catch {}
+}
+
+function clearLocalUiPreferences(user = state.user) {
+  try {
+    const userKey = getUserStorageKey(user);
+    localStorage.removeItem(`kr:last-route:${userKey}`);
+    localStorage.removeItem(`kr:theme:${userKey}`);
+  } catch {}
+}
 
 function setBootLoaderMessage(message) {
   const label = document.getElementById("boot-loader-message");
@@ -216,7 +243,20 @@ function enhancePasswordFields(root = document) {
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-  const response = await fetch(path, { headers, credentials: "same-origin", ...options });
+  const controller = new AbortController();
+  const timeoutMs = Number(options.timeout_ms || API_TIMEOUT_MS);
+  const timeoutHandle = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
+  let response;
+  try {
+    response = await fetch(path, { headers, credentials: "same-origin", ...options, signal: controller.signal });
+  } catch (error) {
+    clearTimeout(timeoutHandle);
+    if (error?.name === "AbortError") {
+      throw new Error("Tempo excedido ao carregar os dados. Tente novamente.");
+    }
+    throw error;
+  }
+  clearTimeout(timeoutHandle);
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json")
     ? await response.json()
@@ -359,25 +399,29 @@ function normalizeRoute(route, role = state.user?.role) {
 
 function applyUserPreferences() {
   if (!state.user) return;
-  state.theme = state.user.preferred_theme === "contrast" ? "contrast" : "dark";
-  const storedRoute = (() => {
-    try {
-      return localStorage.getItem(`kr:last-route:${state.user.login || state.user.id || "user"}`);
-    } catch {
-      return "";
-    }
-  })();
+  const storedTheme = getLocalPreference("theme", state.user);
+  state.theme = storedTheme === "contrast"
+    ? "contrast"
+    : (state.user.preferred_theme === "contrast" ? "contrast" : "dark");
+  const storedRoute = getLocalPreference("last-route", state.user);
   state.route = normalizeRoute(storedRoute || state.user.last_route, state.user.role);
 }
 
 async function saveUserPreferences(partial) {
   if (!state.user) return;
   const keys = Object.keys(partial || {});
-  if (keys.length === 1 && keys[0] === "last_route") {
-    state.user = normalizeUserPayload({ ...state.user, last_route: partial.last_route });
-    try {
-      localStorage.setItem(`kr:last-route:${state.user.login || state.user.id || "user"}`, normalizeRoute(partial.last_route, state.user.role));
-    } catch {}
+  if (keys.length === 1 && (keys[0] === "last_route" || keys[0] === "preferred_theme")) {
+    state.user = normalizeUserPayload({
+      ...state.user,
+      ...(partial.last_route !== undefined ? { last_route: partial.last_route } : {}),
+      ...(partial.preferred_theme !== undefined ? { preferred_theme: partial.preferred_theme } : {}),
+    });
+    if (partial.last_route !== undefined) {
+      setLocalPreference("last-route", normalizeRoute(partial.last_route, state.user.role), state.user);
+    }
+    if (partial.preferred_theme !== undefined) {
+      setLocalPreference("theme", partial.preferred_theme === "contrast" ? "contrast" : "dark", state.user);
+    }
     return;
   }
   const response = await api("/api/auth/preferences", {
@@ -385,6 +429,21 @@ async function saveUserPreferences(partial) {
     body: JSON.stringify(partial),
   });
   state.user = normalizeUserPayload(response.user);
+}
+
+async function loadAllWithRecovery() {
+  try {
+    await loadAll();
+    return { recovered: false };
+  } catch (error) {
+    clearLocalUiPreferences(state.user);
+    state.route = "overview";
+    state.theme = "dark";
+    state.reportDataset = null;
+    invalidateReportDatasetCache();
+    await loadBootstrap();
+    return { recovered: true, error };
+  }
 }
 
 function enforceOperatorScope() {
@@ -967,7 +1026,10 @@ async function boot() {
       if (!isManager()) state.filters.analysisUserId = String(state.user.id);
       enforceOperatorScope();
       if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
-        await loadAll();
+        const result = await loadAllWithRecovery();
+        if (result?.recovered) {
+          setFlash("error", "Preferências locais foram redefinidas para recuperar o carregamento.");
+        }
       }
       state.filters.historyQuery = isManager() ? "" : (getUserLabelById(state.filters.historyUserId) || state.user.full_name);
       state.forcePasswordChange = Boolean(state.user.must_change_password);
@@ -2678,9 +2740,12 @@ function bindLogin() {
       enforceOperatorScope();
       render();
       if (!(state.user.role !== "manager" && state.appSettings.maintenance_for_operators)) {
-        loadAll()
-          .then(() => {
+        loadAllWithRecovery()
+          .then((result) => {
             state.filters.historyQuery = isManager() ? "" : (getUserLabelById(state.filters.historyUserId) || state.user.full_name);
+            if (result?.recovered) {
+              setFlash("error", "Preferências locais foram redefinidas para recuperar o carregamento.");
+            }
             render();
           })
           .catch((error) => {
