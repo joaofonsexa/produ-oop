@@ -3487,7 +3487,7 @@ function bindShellEvents() {
       try {
         const response = await fetch("/api/admin/import", { method: "POST", body: form, credentials: "same-origin" });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Erro ao importar base.");
+        if (!response.ok) throw new Error(data.details ? `${data.error || "Erro ao importar base"}: ${data.details}` : (data.error || "Erro ao importar base."));
         if (data.period?.start && data.period?.end) {
           state.filters.start = state.filters.start ? (state.filters.start < data.period.start ? state.filters.start : data.period.start) : data.period.start;
           state.filters.end = state.filters.end ? (state.filters.end > data.period.end ? state.filters.end : data.period.end) : data.period.end;

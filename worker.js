@@ -1786,12 +1786,13 @@ function importNormalizedRows(db, users, rows, sourceName) {
   let rejected = 0;
   const errors = [];
   const period = { start: "", end: "" };
+  const metrics = [];
   rows.forEach((row, index) => {
     try {
       const user = matchUser(users, row);
       if (!user) throw new Error("Operador nao encontrado para os identificadores informados.");
       const metricDate = parseDate(row.data);
-      upsertDailyMetric(
+      const metric = upsertDailyMetric(
         db,
         user.id,
         metricDate,
@@ -1808,6 +1809,7 @@ function importNormalizedRows(db, users, rows, sourceName) {
         },
         sourceName,
       );
+      metrics.push(metric);
       extendImportedPeriod(period, metricDate);
       processed += 1;
     } catch (error) {
@@ -1815,13 +1817,14 @@ function importNormalizedRows(db, users, rows, sourceName) {
       errors.push({ row: index + 2, error: error.message });
     }
   });
-  return { processed, rejected, errors, period };
+  return { processed, rejected, errors, period, metrics };
 }
 
 function import0800Rows(db, users, rows, sourceName) {
   const aggregates = new Map();
   const errors = [];
   const period = { start: "", end: "" };
+  const metrics = [];
   rows.forEach((row, index) => {
     try {
       const rawOperator = resolve0800OperatorRaw(row);
@@ -1858,7 +1861,7 @@ function import0800Rows(db, users, rows, sourceName) {
   });
 
   for (const aggregate of aggregates.values()) {
-    upsertDailyMetric(
+    const metric = upsertDailyMetric(
       db,
       aggregate.userId,
       aggregate.metricDate,
@@ -1871,15 +1874,17 @@ function import0800Rows(db, users, rows, sourceName) {
       },
       sourceName,
     );
+    metrics.push(metric);
   }
 
-  return { processed: aggregates.size, rejected: errors.length, errors, period };
+  return { processed: aggregates.size, rejected: errors.length, errors, period, metrics };
 }
 
 function importNuvidioRows(db, users, rows, sourceName) {
   const aggregates = new Map();
   const errors = [];
   const period = { start: "", end: "" };
+  const metrics = [];
   rows.forEach((row, index) => {
     try {
       const user = matchUser(users, {
@@ -1914,7 +1919,7 @@ function importNuvidioRows(db, users, rows, sourceName) {
   });
 
   for (const aggregate of aggregates.values()) {
-    upsertDailyMetric(
+    const metric = upsertDailyMetric(
       db,
       aggregate.userId,
       aggregate.metricDate,
@@ -1927,9 +1932,10 @@ function importNuvidioRows(db, users, rows, sourceName) {
       },
       sourceName,
     );
+    metrics.push(metric);
   }
 
-  return { processed: aggregates.size, rejected: errors.length, errors, period };
+  return { processed: aggregates.size, rejected: errors.length, errors, period, metrics };
 }
 
 function importNuvidioSummaryRows(db, users, rows, sourceName) {
@@ -1937,6 +1943,7 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
   let rejected = 0;
   const errors = [];
   const period = { start: "", end: "" };
+  const metrics = [];
 
   rows.forEach((row, index) => {
     try {
@@ -1948,7 +1955,7 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
       });
       if (!user) throw new Error("Operador da Nuvidio não encontrado no cadastro.");
       const metricDate = parseDate(row.data);
-      upsertDailyMetric(
+      const metric = upsertDailyMetric(
         db,
         user.id,
         metricDate,
@@ -1965,6 +1972,7 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
         },
         sourceName,
       );
+      metrics.push(metric);
       extendImportedPeriod(period, metricDate);
       processed += 1;
     } catch (error) {
@@ -1973,7 +1981,7 @@ function importNuvidioSummaryRows(db, users, rows, sourceName) {
     }
   });
 
-  return { processed, rejected, errors, period };
+  return { processed, rejected, errors, period, metrics };
 }
 
 function registerImportLog(db, userId, sourceName, processed, rejected) {
@@ -2035,6 +2043,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
   let rejected = 0;
   const errors = [];
   const period = { start: "", end: "" };
+  const metrics = [];
 
   rows.forEach((row, index) => {
     try {
@@ -2050,7 +2059,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
       const rejectedValue = toInt(row["0800_reprovadas"]);
       const pending = toInt(row["0800_pendenciadas"]);
       const noAction = toInt(row["0800_sem_acao"]);
-      upsertDailyMetric(
+      const metric = upsertDailyMetric(
         db,
         user.id,
         metricDate,
@@ -2063,6 +2072,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
         },
         sourceName,
       );
+      metrics.push(metric);
       extendImportedPeriod(period, metricDate);
       processed += 1;
     } catch (error) {
@@ -2071,7 +2081,7 @@ function import0800SummaryRows(db, users, rows, sourceName) {
     }
   });
 
-  return { processed, rejected, errors, period };
+  return { processed, rejected, errors, period, metrics };
 }
 
 function buildOverview(db, user, url) {
@@ -3892,38 +3902,58 @@ async function handleApi(request, url, db, env = {}) {
   }
 
   if (url.pathname === "/api/admin/import" && request.method === "POST") {
-    const auth = await requireManager(request, db, env);
-    if (auth.error) return auth.error;
-    const form = await request.formData();
-    const file = form.get("file");
-    const model = String(form.get("model") || "").toLowerCase();
-    if (!(file instanceof File)) {
-      return jsonResponse({ error: "Arquivo nao enviado" }, 400);
+    try {
+      const auth = await requireManager(request, db, env);
+      if (auth.error) return auth.error;
+      const form = await request.formData();
+      const file = form.get("file");
+      const model = String(form.get("model") || "").toLowerCase();
+      if (!(file instanceof File)) {
+        return jsonResponse({ error: "Arquivo nao enviado" }, 400);
+      }
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        return jsonResponse({ error: "No formato atual, use CSV para o teste local." }, 400);
+      }
+      const text = await file.text();
+      const rows = parseCsv(text);
+      if (!rows.length) return jsonResponse({ error: "A planilha esta vazia." }, 400);
+      const first = rows[0];
+      const schema = model === "0800"
+        ? "0800_summary"
+        : model === "nuvidio"
+          ? "nuvidio_summary"
+          : detectImportSchema(first, file.name);
+      let outcome;
+      const importableOperators = db.users.filter((entry) => entry.role === "operator");
+      if (schema === "normalized") outcome = importNormalizedRows(db, importableOperators, rows, file.name);
+      else if (schema === "0800") outcome = import0800Rows(db, importableOperators, rows, file.name);
+      else if (schema === "nuvidio") outcome = importNuvidioRows(db, importableOperators, rows, file.name);
+      else if (schema === "0800_summary") outcome = import0800SummaryRows(db, importableOperators, rows, file.name);
+      else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, importableOperators, rows, file.name);
+      else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
+      const { processed, rejected, errors, period, metrics = [] } = outcome;
+      registerImportLog(db, auth.user.id, file.name, processed, rejected);
+      if (env?.DB) {
+        await ensureD1SchemaCached(env.DB);
+        const touched = new Map();
+        for (const metric of metrics) {
+          if (metric?.id) touched.set(Number(metric.id), metric);
+        }
+        for (const metric of touched.values()) {
+          await persistDailyMetricRecordToD1(env.DB, metric);
+        }
+        await persistMetaStateToD1(env.DB, db, { appSettings: false, importLogs: true, processedKeys: false, counters: true });
+        rememberStorage(db);
+      } else {
+        await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: true });
+      }
+      return jsonResponse({ processed, rejected, period, errors: errors.slice(0, 20) });
+    } catch (error) {
+      return jsonResponse({
+        error: "Erro ao importar base",
+        details: error?.message || String(error),
+      }, 500);
     }
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      return jsonResponse({ error: "No formato atual, use CSV para o teste local." }, 400);
-    }
-    const text = await file.text();
-    const rows = parseCsv(text);
-    if (!rows.length) return jsonResponse({ error: "A planilha esta vazia." }, 400);
-    const first = rows[0];
-    const schema = model === "0800"
-      ? "0800_summary"
-      : model === "nuvidio"
-        ? "nuvidio_summary"
-        : detectImportSchema(first, file.name);
-    let outcome;
-    const importableOperators = db.users.filter((entry) => entry.role === "operator");
-    if (schema === "normalized") outcome = importNormalizedRows(db, importableOperators, rows, file.name);
-    else if (schema === "0800") outcome = import0800Rows(db, importableOperators, rows, file.name);
-    else if (schema === "nuvidio") outcome = importNuvidioRows(db, importableOperators, rows, file.name);
-    else if (schema === "0800_summary") outcome = import0800SummaryRows(db, importableOperators, rows, file.name);
-    else if (schema === "nuvidio_summary") outcome = importNuvidioSummaryRows(db, importableOperators, rows, file.name);
-    else return jsonResponse({ error: "Formato de planilha não reconhecido." }, 400);
-    const { processed, rejected, errors, period } = outcome;
-    registerImportLog(db, auth.user.id, file.name, processed, rejected);
-    await persistStorage(db, env, { users: false, dailyMetrics: true, qualityScores: false, meta: true });
-    return jsonResponse({ processed, rejected, period, errors: errors.slice(0, 20) });
   }
 
   return jsonResponse({ error: "Rota nao encontrada" }, 404);
